@@ -1,5 +1,7 @@
 import { getDraftBySlug, getVersionById } from "@/db/queries/drafts";
 import { authenticateSession } from "@/lib/api/auth";
+import { readAccessCookie } from "@/lib/drafts/access";
+import { resolveDraftView } from "@/lib/drafts/view-access";
 import { getStorage } from "@/lib/storage";
 
 export const runtime = "nodejs";
@@ -24,10 +26,16 @@ export async function GET(
   const draft = await getDraftBySlug(slug);
   if (!draft || !draft.currentVersionId) return notFoundResponse();
 
-  if (draft.visibility === "private") {
-    const session = await authenticateSession(req);
-    if (!session || session.userId !== draft.ownerId) return notFoundResponse();
-  }
+  // Authorize against the single resolver. The raw HTML is never served without
+  // a grant: a password draft with no valid access cookie is a 404 here (the
+  // password prompt lives on the shell page, not this route).
+  const session = await authenticateSession(req);
+  const accessToken = readAccessCookie(req.headers.get("cookie"), draft.id);
+  const resolution = resolveDraftView(draft, {
+    userId: session?.userId ?? null,
+    accessToken,
+  });
+  if (resolution.state !== "granted") return notFoundResponse();
 
   const version = await getVersionById(draft.id, draft.currentVersionId);
   if (!version) return notFoundResponse();

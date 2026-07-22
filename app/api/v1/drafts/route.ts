@@ -3,7 +3,7 @@ import { authenticateApiRequest, isFailure } from "@/lib/api/auth";
 import { insufficientScope, internalError, invalidRequest, unauthorized } from "@/lib/api/responses";
 import { serializeDraft } from "@/lib/api/serialize";
 import { readUpload } from "@/lib/api/upload";
-import { createDraftWithFirstVersion } from "@/lib/drafts/service";
+import { createDraftWithFirstVersion, PasswordRequiredError } from "@/lib/drafts/service";
 import { listDraftsQuerySchema } from "@/lib/validation/api";
 
 export const runtime = "nodejs";
@@ -22,12 +22,16 @@ export async function POST(req: Request): Promise<Response> {
       ownerId: actor.userId,
       title: upload.title,
       visibility: upload.visibility ?? "private",
+      password: upload.password,
       bytes: upload.bytes,
       source: actor.kind === "token" ? "api_token" : "browser",
       tokenId: actor.kind === "token" ? actor.tokenId : undefined,
     });
     return Response.json({ draft: serializeDraft(draft, version.versionNumber) }, { status: 201 });
   } catch (error) {
+    if (error instanceof PasswordRequiredError) {
+      return invalidRequest("A password is required for password-protected drafts.");
+    }
     console.error("POST /api/v1/drafts failed", error);
     return internalError();
   }

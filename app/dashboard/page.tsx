@@ -57,6 +57,7 @@ export default async function DashboardPage({
           <option value="">all visibilities</option>
           <option value="public">public</option>
           <option value="private">private</option>
+          <option value="password">password</option>
         </select>
         <label className="flex items-center gap-1.5 text-ink-muted">
           <input type="checkbox" name="recent" value="1" defaultChecked={params.recent === "1"} className="accent-lime" />

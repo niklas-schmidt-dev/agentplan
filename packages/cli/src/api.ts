@@ -73,12 +73,13 @@ export class AgentPlanApi {
   private uploadForm(
     bytes: Uint8Array,
     filename: string,
-    fields: { title?: string; visibility?: string },
+    fields: { title?: string; visibility?: string; password?: string },
   ): FormData {
     const form = new FormData();
     form.set("file", new File([new Uint8Array(bytes)], filename, { type: "text/html" }));
     if (fields.title) form.set("title", fields.title);
     if (fields.visibility) form.set("visibility", fields.visibility);
+    if (fields.password) form.set("password", fields.password);
     return form;
   }
 
@@ -93,7 +94,7 @@ export class AgentPlanApi {
   createDraft(
     bytes: Uint8Array,
     filename: string,
-    fields: { title?: string; visibility?: string },
+    fields: { title?: string; visibility?: string; password?: string },
   ): Promise<{ draft: ApiDraft }> {
     return this.request("/api/v1/drafts", {
       method: "POST",

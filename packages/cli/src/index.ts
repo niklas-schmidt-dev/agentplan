@@ -18,6 +18,7 @@ Usage:
   agentplan logout                      remove the stored token
   agentplan upload <file.html>          upload a new draft (private by default)
     --public | --private                set visibility
+    --password <password>               protect the draft with a password
     --title <title>                     set the draft title
     --draft <id>                        add a version to an existing draft
     --json                              machine-readable output on stdout
@@ -101,10 +102,20 @@ function printDraft(draft: ApiDraft, action: string): void {
 
 async function commandUpload(
   file: string | undefined,
-  flags: { public?: boolean; private?: boolean; title?: string; draft?: string; json?: boolean },
+  flags: {
+    public?: boolean;
+    private?: boolean;
+    password?: string;
+    title?: string;
+    draft?: string;
+    json?: boolean;
+  },
 ): Promise<void> {
   if (!file) fail("Usage: agentplan upload <file.html>", 2);
-  if (flags.public && flags.private) fail("Use either --public or --private, not both.", 2);
+  const chosen = [flags.public, flags.private, flags.password !== undefined].filter(Boolean).length;
+  if (chosen > 1) {
+    fail("Use only one of --public, --private, or --password.", 2);
+  }
 
   const { bytes, filename } = await readHtmlFile(file);
   const api = await resolveApi();
@@ -119,9 +130,17 @@ async function commandUpload(
     return;
   }
 
+  const visibility = flags.public
+    ? "public"
+    : flags.password !== undefined
+      ? "password"
+      : flags.private
+        ? "private"
+        : undefined;
   const result = await api.createDraft(bytes, filename, {
     title: flags.title,
-    visibility: flags.public ? "public" : flags.private ? "private" : undefined,
+    visibility,
+    password: flags.password,
   });
   if (flags.json) {
     process.stdout.write(`${JSON.stringify(result)}\n`);
@@ -175,6 +194,7 @@ async function main(): Promise<void> {
     options: {
       public: { type: "boolean" },
       private: { type: "boolean" },
+      password: { type: "string" },
       title: { type: "string" },
       draft: { type: "string" },
       json: { type: "boolean" },

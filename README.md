@@ -11,8 +11,9 @@ npx agentplan upload ./plan.html
 ```
 
 Every upload gets a stable link like `https://agentplan.app/p/launch-plan-x7k2`,
-immutable version history, and owner-controlled `public` / `private` visibility
-(private is the default).
+immutable version history, and owner-controlled visibility — `private` (owner
+only, the default), `public` (anyone with the link), or `password` (anyone with
+the link and the password).
 
 ## How it works
 
@@ -100,6 +101,7 @@ agentplan login                          # store an API token (created in the da
 agentplan logout
 agentplan upload ./plan.html             # new draft, private by default
 agentplan upload ./plan.html --public
+agentplan upload ./plan.html --password hunter2   # password-protected
 agentplan upload ./plan.html --title "Launch plan"
 agentplan upload ./plan.html --draft <id>   # add a new version to an existing draft
 agentplan upload ./plan.html --json      # machine-readable output on stdout
@@ -147,6 +149,10 @@ threat model. In short:
   parent DOM, navigate the parent, or make credentialed requests to AgentPlan.
 - All HTML lives in a private R2 bucket; visibility is an application-level decision
   enforced on every request. Private drafts return `404` to non-owners.
+- Password-protected drafts store a salted scrypt hash of the password. Entering
+  the correct password issues an HMAC-signed, draft-scoped, HttpOnly access cookie
+  (12h); the content route serves the HTML only with a valid cookie (or to the
+  owner) and never caches it publicly. The owner always bypasses the prompt.
 - API tokens are stored only as SHA-256 hashes and compared in constant time.
 - Only `.env.example` placeholders are committed; CI scans every push for secrets.
 

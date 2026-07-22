@@ -1,14 +1,10 @@
 import { notFound } from "next/navigation";
-import {
-  deleteDraftAction,
-  renameDraftAction,
-  restoreVersionAction,
-  setVisibilityAction,
-} from "@/app/dashboard/actions";
+import { deleteDraftAction, renameDraftAction, restoreVersionAction } from "@/app/dashboard/actions";
 import { CopyButton } from "@/components/dashboard/copy-button";
 import { DangerButton } from "@/components/dashboard/danger-button";
 import { DashboardHeader } from "@/components/dashboard/header";
 import { NewVersionForm } from "@/components/dashboard/upload-form";
+import { VisibilityControls } from "@/components/dashboard/visibility-controls";
 import { getDraftForOwner, listVersions } from "@/db/queries/drafts";
 import { requireUser } from "@/lib/auth/session";
 import { formatBytes, formatRelativeTime, shortHash } from "@/lib/format";
@@ -65,26 +61,11 @@ export default async function DraftDetailPage({
             open ↗
           </a>
 
-          <form action={setVisibilityAction} className="ml-auto flex items-center gap-1">
-            <input type="hidden" name="draftId" value={draft.id} />
-            <span className="mr-1 text-ink-faint">visibility:</span>
-            {(["private", "public"] as const).map((option) => (
-              <button
-                key={option}
-                type="submit"
-                name="visibility"
-                value={option}
-                aria-pressed={draft.visibility === option}
-                className={
-                  draft.visibility === option
-                    ? "rounded bg-lime px-2 py-1 font-medium text-canvas"
-                    : "rounded border border-edge px-2 py-1 text-ink-muted transition-colors hover:border-lime hover:text-lime"
-                }
-              >
-                {option}
-              </button>
-            ))}
-          </form>
+          <VisibilityControls
+            draftId={draft.id}
+            visibility={draft.visibility}
+            hasPassword={draft.passwordHash !== null}
+          />
 
           <form action={deleteDraftAction}>
             <input type="hidden" name="draftId" value={draft.id} />

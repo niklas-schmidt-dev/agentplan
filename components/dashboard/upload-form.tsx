@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState } from "react";
+import { useActionState, useState } from "react";
 import { uploadDraftAction, uploadVersionAction, type UploadState } from "@/app/dashboard/actions";
 
 const inputClass =
@@ -8,6 +8,7 @@ const inputClass =
 
 export function NewDraftForm() {
   const [state, action, pending] = useActionState<UploadState, FormData>(uploadDraftAction, null);
+  const [visibility, setVisibility] = useState<"private" | "public" | "password">("private");
 
   return (
     <form action={action} className="flex flex-col gap-3">
@@ -19,17 +20,35 @@ export function NewDraftForm() {
         title <span className="text-ink-faint">(optional, defaults to filename)</span>
         <input type="text" name="title" maxLength={200} className={inputClass} />
       </label>
-      <fieldset className="flex items-center gap-4 font-mono text-xs text-ink-muted">
+      <fieldset className="flex flex-wrap items-center gap-4 font-mono text-xs text-ink-muted">
         <legend className="sr-only">Visibility</legend>
-        <label className="flex items-center gap-1.5">
-          <input type="radio" name="visibility" value="private" defaultChecked className="accent-lime" />
-          private
-        </label>
-        <label className="flex items-center gap-1.5">
-          <input type="radio" name="visibility" value="public" className="accent-lime" />
-          public
-        </label>
+        {(["private", "public", "password"] as const).map((option) => (
+          <label key={option} className="flex items-center gap-1.5">
+            <input
+              type="radio"
+              name="visibility"
+              value={option}
+              checked={visibility === option}
+              onChange={() => setVisibility(option)}
+              className="accent-lime"
+            />
+            {option}
+          </label>
+        ))}
       </fieldset>
+      {visibility === "password" ? (
+        <label className="flex flex-col gap-1 font-mono text-xs text-ink-muted">
+          password
+          <input
+            type="password"
+            name="password"
+            minLength={6}
+            required
+            placeholder="at least 6 characters"
+            className={inputClass}
+          />
+        </label>
+      ) : null}
       {state?.error ? (
         <p role="alert" className="font-mono text-xs text-danger">
           {state.error}

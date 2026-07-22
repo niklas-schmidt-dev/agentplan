@@ -17,13 +17,14 @@ export async function signUp(request: APIRequestContext): Promise<{ email: strin
 export async function uploadDraft(
   request: APIRequestContext,
   html: string,
-  options: { title?: string; visibility?: "public" | "private" } = {},
+  options: { title?: string; visibility?: "public" | "private" | "password"; password?: string } = {},
 ): Promise<{ id: string; slug: string; url: string; title: string }> {
   const response = await request.post("/api/v1/drafts", {
     multipart: {
       file: { name: "e2e.html", mimeType: "text/html", buffer: Buffer.from(html) },
       ...(options.title ? { title: options.title } : {}),
       ...(options.visibility ? { visibility: options.visibility } : {}),
+      ...(options.password ? { password: options.password } : {}),
     },
   });
   expect(response.status()).toBe(201);

@@ -8,7 +8,14 @@ import {
   unauthorized,
 } from "@/lib/api/responses";
 import { serializeDraft } from "@/lib/api/serialize";
-import { setDraftTitle, setDraftVisibility, softDeleteDraft } from "@/lib/drafts/service";
+import {
+  DraftNotFoundError,
+  PasswordRequiredError,
+  setDraftPassword,
+  setDraftTitle,
+  setDraftVisibility,
+  softDeleteDraft,
+} from "@/lib/drafts/service";
 import { patchDraftSchema, uuidSchema } from "@/lib/validation/api";
 import type { Draft } from "@/db/schema";
 
@@ -60,18 +67,25 @@ export async function PATCH(req: Request, { params }: Params): Promise<Response>
 
   try {
     const tokenId = actor.kind === "token" ? actor.tokenId : undefined;
+    const who = { userId: actor.userId, tokenId };
     let updated = draft;
     if (patch.data.title !== undefined) {
-      updated = await setDraftTitle(updated, patch.data.title, { userId: actor.userId, tokenId });
+      updated = await setDraftTitle(updated, patch.data.title, who);
     }
     if (patch.data.visibility !== undefined) {
-      updated = await setDraftVisibility(updated, patch.data.visibility, {
-        userId: actor.userId,
-        tokenId,
-      });
+      // Handles the password requirement and clears the hash when leaving password mode.
+      updated = await setDraftVisibility(updated, patch.data.visibility, who, patch.data.password);
+    } else if (patch.data.password !== undefined) {
+      // A password with no visibility change means: set/rotate the password
+      // (which also makes the draft password-protected).
+      updated = await setDraftPassword(updated, patch.data.password, who);
     }
     return Response.json({ draft: serializeDraft(updated, await currentVersionNumber(updated)) });
   } catch (error) {
+    if (error instanceof PasswordRequiredError) {
+      return invalidRequest("A password is required for password-protected drafts.");
+    }
+    if (error instanceof DraftNotFoundError) return notFound();
     console.error("PATCH /api/v1/drafts/:id failed", error);
     return internalError();
   }
