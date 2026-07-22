@@ -16,9 +16,10 @@ import {
   PATCH as patchDraftRoute,
 } from "@/app/api/v1/drafts/[id]/route";
 import { POST as restoreRoute } from "@/app/api/v1/drafts/[id]/versions/[versionId]/restore/route";
+import { POST as addVersionRoute } from "@/app/api/v1/drafts/[id]/versions/route";
 import { GET as listDraftsRoute, POST as createDraftRoute } from "@/app/api/v1/drafts/route";
 import { GET as contentRoute } from "@/app/p/[slug]/content/route";
-import { POST as createTokenRoute } from "@/app/api/v1/tokens/route";
+import { GET as listTokensRoute, POST as createTokenRoute } from "@/app/api/v1/tokens/route";
 import { DELETE as revokeTokenRoute } from "@/app/api/v1/tokens/[id]/route";
 import { closeDb } from "@/db/client";
 import { listVersions } from "@/db/queries/drafts";
@@ -290,6 +291,46 @@ describe.skipIf(!hasDb)("authorization matrix (integration)", () => {
     });
   });
 
+  describe("version upload", () => {
+    it("returns a fresh updatedAt matching the persisted draft (not a stale copy)", async () => {
+      const created = await createDraftRoute(
+        uploadRequest({ cookie: owner.cookie, title: "Versioned" }),
+      );
+      const draft = (await created.json()).draft;
+
+      const form = new FormData();
+      form.set(
+        "file",
+        new File(["<!doctype html><h1>v2</h1>"], "v2.html", { type: "text/html" }),
+      );
+      const uploadRes = await addVersionRoute(
+        new Request(`${BASE}/api/v1/drafts/${draft.id}/versions`, {
+          method: "POST",
+          body: form,
+          headers: { cookie: owner.cookie },
+        }),
+        params(draft.id),
+      );
+      expect(uploadRes.status).toBe(201);
+      const uploaded = (await uploadRes.json()).draft;
+      expect(uploaded.version).toBe(2);
+
+      // The POST response's updatedAt must equal what a fresh GET reports —
+      // before the fix it echoed the pre-upload timestamp.
+      const fetched = await getDraftRoute(
+        jsonRequest(`${BASE}/api/v1/drafts/${draft.id}`, "GET", undefined, {
+          cookie: owner.cookie,
+        }),
+        params(draft.id),
+      );
+      const current = (await fetched.json()).draft;
+      expect(uploaded.updatedAt).toBe(current.updatedAt);
+      expect(new Date(uploaded.updatedAt).getTime()).toBeGreaterThan(
+        new Date(draft.updatedAt).getTime(),
+      );
+    });
+  });
+
   describe("restore version", () => {
     it("owner write token restores; other user gets 404", async () => {
       const versions = await listVersions(privateDraft.id);
@@ -362,10 +403,10 @@ describe.skipIf(!hasDb)("authorization matrix (integration)", () => {
       expect(okAfter.status).toBe(401);
     });
 
-    it("expired tokens fail", async () => {
+    it("expired tokens fail and are not listed as active", async () => {
       const expired = await createToken({
         userId: owner.userId,
-        name: "expired",
+        name: "expired-token",
         scopes: ["drafts:read"],
         expiresAt: new Date(Date.now() - 1000),
       });
@@ -373,6 +414,13 @@ describe.skipIf(!hasDb)("authorization matrix (integration)", () => {
         jsonRequest(`${BASE}/api/v1/drafts`, "GET", undefined, { bearer: expired.token }),
       );
       expect(res.status).toBe(401);
+
+      // The expired token must not appear in the owner's active token list.
+      const list = await listTokensRoute(
+        jsonRequest(`${BASE}/api/v1/tokens`, "GET", undefined, { cookie: owner.cookie }),
+      );
+      const names = (await list.json()).tokens.map((t: { name: string }) => t.name);
+      expect(names).not.toContain("expired-token");
     });
 
     it("delete draft: other user 404, owner 204, gone afterwards", async () => {

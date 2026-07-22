@@ -14,6 +14,14 @@ import { getStorage, storageKeyFor } from "@/lib/storage";
 
 export type UploadSource = "browser" | "api_token";
 
+/** Thrown when a draft is soft-deleted mid-operation; callers map this to 404. */
+export class DraftNotFoundError extends Error {
+  constructor() {
+    super("Draft not found");
+    this.name = "DraftNotFoundError";
+  }
+}
+
 const HTML_CONTENT_TYPE = "text/html; charset=utf-8";
 const SLUG_ATTEMPTS = 5;
 
@@ -118,7 +126,7 @@ export async function addVersionToDraft(params: {
   tokenId?: string;
   auditType?: "draft.version_created" | "draft.version_restored";
   auditMetadata?: Record<string, unknown>;
-}): Promise<DraftVersion> {
+}): Promise<{ version: DraftVersion; draft: Draft }> {
   const db = getDb();
   const versionId = randomUUID();
   const storageKey = storageKeyFor(params.draft.ownerId, params.draft.id, versionId);
@@ -127,14 +135,15 @@ export async function addVersionToDraft(params: {
   await getStorage().put(storageKey, params.bytes, HTML_CONTENT_TYPE);
 
   try {
-    const version = await db.transaction(async (tx) => {
-      // Serialize version numbering per draft.
+    const result = await db.transaction(async (tx) => {
+      // Serialize version numbering per draft. A draft that was soft-deleted
+      // between the caller's check and this lock is a 404, not a server error.
       const [locked] = await tx
         .select({ id: drafts.id, deletedAt: drafts.deletedAt })
         .from(drafts)
         .where(eq(drafts.id, params.draft.id))
         .for("update");
-      if (!locked || locked.deletedAt) throw new Error("Draft not found");
+      if (!locked || locked.deletedAt) throw new DraftNotFoundError();
 
       const [row] = await tx
         .select({ maxVersion: max(draftVersions.versionNumber) })
@@ -158,11 +167,15 @@ export async function addVersionToDraft(params: {
         .returning();
       if (!version) throw new Error("Version insert returned no rows");
 
-      await tx
+      // Return the freshly updated draft so callers serialize a current
+      // updatedAt / currentVersionId rather than their stale input copy.
+      const [updatedDraft] = await tx
         .update(drafts)
         .set({ currentVersionId: versionId, updatedAt: sql`now()` })
-        .where(eq(drafts.id, params.draft.id));
-      return version;
+        .where(eq(drafts.id, params.draft.id))
+        .returning();
+      if (!updatedDraft) throw new DraftNotFoundError();
+      return { version, draft: updatedDraft };
     });
 
     await recordAuditEvent({
@@ -171,12 +184,12 @@ export async function addVersionToDraft(params: {
       draftId: params.draft.id,
       tokenId: params.tokenId,
       metadata: {
-        versionNumber: version.versionNumber,
+        versionNumber: result.version.versionNumber,
         sizeBytes: params.bytes.byteLength,
         ...params.auditMetadata,
       },
     });
-    return version;
+    return result;
   } catch (error) {
     await getStorage()
       .delete(storageKey)
@@ -191,7 +204,7 @@ export async function restoreVersion(params: {
   version: DraftVersion;
   source: UploadSource;
   tokenId?: string;
-}): Promise<DraftVersion> {
+}): Promise<{ version: DraftVersion; draft: Draft }> {
   const bytes = await getStorage().get(params.version.storageKey);
   if (!bytes) throw new Error("Stored content for this version is missing");
   return addVersionToDraft({
