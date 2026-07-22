@@ -16,6 +16,7 @@ import { users, type Draft } from "@/db/schema";
 import {
   addVersionToDraft,
   createDraftWithFirstVersion,
+  DraftNotFoundError,
   restoreVersion,
   setDraftVisibility,
   softDeleteDraft,
@@ -76,9 +77,21 @@ describe.skipIf(!hasDb)("upload pipeline (integration)", () => {
     expect(stored).toHaveLength(1);
   });
 
-  it("adds version 2 and moves the current pointer without touching version 1", async () => {
-    const v2 = await addVersionToDraft({ draft, bytes: htmlV2, source: "api_token" });
+  it("adds version 2, moves the pointer, and returns a fresh updatedAt", async () => {
+    const before = await getDraftBySlug(draft.slug);
+    const { version: v2, draft: updatedDraft } = await addVersionToDraft({
+      draft,
+      bytes: htmlV2,
+      source: "api_token",
+    });
     expect(v2.versionNumber).toBe(2);
+
+    // The returned draft reflects the write, not the caller's stale input copy.
+    expect(updatedDraft.currentVersionId).toBe(v2.id);
+    expect(updatedDraft.updatedAt.getTime()).toBeGreaterThanOrEqual(
+      before!.updatedAt.getTime(),
+    );
+    expect(updatedDraft.updatedAt.getTime()).toBeGreaterThan(draft.updatedAt.getTime());
 
     const reloaded = await getDraftBySlug(draft.slug);
     expect(reloaded?.currentVersionId).toBe(v2.id);
@@ -94,13 +107,35 @@ describe.skipIf(!hasDb)("upload pipeline (integration)", () => {
     const v1 = versions.find((v) => v.versionNumber === 1);
     expect(v1).toBeDefined();
 
-    const restored = await restoreVersion({ draft, version: v1!, source: "browser" });
+    const { version: restored } = await restoreVersion({ draft, version: v1!, source: "browser" });
     expect(restored.versionNumber).toBe(3);
     expect(restored.contentSha256).toBe(v1!.contentSha256);
     expect(restored.id).not.toBe(v1!.id);
 
     const reloaded = await getVersionById(draft.id, restored.id);
     expect(reloaded?.storageKey).not.toBe(v1!.storageKey);
+  });
+
+  it("adding a version to a soft-deleted draft throws DraftNotFoundError", async () => {
+    const created = await createDraftWithFirstVersion({
+      ownerId,
+      title: "Doomed",
+      visibility: "private",
+      bytes: htmlV1,
+      source: "browser",
+    });
+    await softDeleteDraft(created.draft, { userId: ownerId });
+
+    await expect(
+      addVersionToDraft({ draft: created.draft, bytes: htmlV2, source: "browser" }),
+    ).rejects.toBeInstanceOf(DraftNotFoundError);
+
+    // The orphaned object from the failed upload was cleaned up.
+    const leftover = await filesUnder(
+      path.join(storageRoot, "drafts", ownerId, created.draft.id),
+    );
+    // Only the original version 1 object remains; the rejected upload left none.
+    expect(leftover).toHaveLength(1);
   });
 
   it("database failure leaves no orphaned object behind", async () => {

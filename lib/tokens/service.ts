@@ -1,4 +1,4 @@
-import { and, desc, eq, isNull, sql } from "drizzle-orm";
+import { and, desc, eq, gt, isNull, or, sql } from "drizzle-orm";
 import { getDb } from "@/db/client";
 import { apiTokens, type ApiToken } from "@/db/schema";
 import { recordAuditEvent } from "@/lib/audit/events";
@@ -39,11 +39,19 @@ export async function createToken(params: {
   return { token: generated.token, record };
 }
 
+/** Active = not revoked and not expired. Expired tokens can't authenticate, so
+ *  they must not be listed as active (they'd otherwise look usable). */
 export async function listTokensForUser(userId: string): Promise<ApiToken[]> {
   return getDb()
     .select()
     .from(apiTokens)
-    .where(and(eq(apiTokens.userId, userId), isNull(apiTokens.revokedAt)))
+    .where(
+      and(
+        eq(apiTokens.userId, userId),
+        isNull(apiTokens.revokedAt),
+        or(isNull(apiTokens.expiresAt), gt(apiTokens.expiresAt, sql`now()`)),
+      ),
+    )
     .orderBy(desc(apiTokens.createdAt));
 }
 

@@ -3,7 +3,7 @@ import { authenticateApiRequest, isFailure } from "@/lib/api/auth";
 import { insufficientScope, internalError, notFound, unauthorized } from "@/lib/api/responses";
 import { serializeDraft, serializeVersion } from "@/lib/api/serialize";
 import { readUpload } from "@/lib/api/upload";
-import { addVersionToDraft } from "@/lib/drafts/service";
+import { addVersionToDraft, DraftNotFoundError } from "@/lib/drafts/service";
 import { uuidSchema } from "@/lib/validation/api";
 
 export const runtime = "nodejs";
@@ -25,17 +25,22 @@ export async function POST(req: Request, { params }: Params): Promise<Response> 
   if (upload instanceof Response) return upload;
 
   try {
-    const version = await addVersionToDraft({
+    const { version, draft: updatedDraft } = await addVersionToDraft({
       draft,
       bytes: upload.bytes,
       source: actor.kind === "token" ? "api_token" : "browser",
       tokenId: actor.kind === "token" ? actor.tokenId : undefined,
     });
     return Response.json(
-      { draft: serializeDraft(draft, version.versionNumber), version: serializeVersion(version) },
+      {
+        draft: serializeDraft(updatedDraft, version.versionNumber),
+        version: serializeVersion(version),
+      },
       { status: 201 },
     );
   } catch (error) {
+    // Draft soft-deleted between the ownership check and the write: it's gone.
+    if (error instanceof DraftNotFoundError) return notFound();
     console.error("POST /api/v1/drafts/:id/versions failed", error);
     return internalError();
   }
