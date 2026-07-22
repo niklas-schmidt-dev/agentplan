@@ -1,0 +1,15 @@
+node_modules/
+.next/
+dist/
+coverage/
+.vercel/
+
+.env
+.env.*
+!.env.example
+!.env.test.example
+
+*.pem
+*.key
+*.log
+.DS_Store
