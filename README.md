@@ -18,8 +18,8 @@ immutable version history, and owner-controlled `public` / `private` visibility
 
 - **Next.js (App Router)** application deployed on Vercel with the Node.js runtime.
 - **PlanetScale Postgres** with Drizzle ORM for drafts, versions, tokens, and audit events.
-- **Private Vercel Blob** storage for all uploaded HTML — visibility is enforced by the
-  application, never by the storage layer.
+- **Private Cloudflare R2 bucket** (S3-compatible API) for all uploaded HTML —
+  visibility is enforced by the application, never by the storage layer.
 - **Better Auth** with GitHub OAuth for browser sessions; scoped API tokens
   (`ap_live_…`, stored as SHA-256 hashes) for agents and the CLI.
 - Uploaded HTML is treated as hostile. It is never rendered into the application DOM;
@@ -43,7 +43,7 @@ tests/          Unit, integration, and security tests
 
 1. `npm ci`
 2. Copy `.env.example` to `.env` and fill in values (PlanetScale URLs, GitHub OAuth
-   app, Better Auth secret, Blob token). The landing page renders without any secrets.
+   app, Better Auth secret, R2 credentials). The landing page renders without any secrets.
 3. `npm run db:migrate` (uses `DATABASE_URL_DIRECT`)
 4. `npm run dev`
 
