@@ -28,9 +28,9 @@ The core security invariants are:
    raw HTML is served only to the owner or a request bearing a valid cookie for
    that specific draft, and is never publicly cached. A grant for one draft cannot
    unlock another.
-3. **API tokens are never stored or logged in full.** Only a visible prefix and a
+4. **API tokens are never stored or logged in full.** Only a visible prefix and a
    SHA-256 hash are persisted; comparisons are constant-time.
-4. **No secrets in the repository.** Only `.env.example` placeholders are committed.
+5. **No secrets in the repository.** Only `.env.example` placeholders are committed.
 
 ## Scope
 

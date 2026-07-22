@@ -58,6 +58,7 @@ describe("readAccessCookie", () => {
     const header = `other=1; ${accessCookieName(DRAFT_A)}=${token}; foo=bar`;
     expect(readAccessCookie(header, DRAFT_A)).toBe(token);
     expect(readAccessCookie(header, DRAFT_B)).toBeUndefined();
+    expect(readAccessCookie(`${accessCookieName(DRAFT_A)}=%`, DRAFT_A)).toBeUndefined();
     expect(readAccessCookie(null, DRAFT_A)).toBeUndefined();
   });
 });

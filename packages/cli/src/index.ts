@@ -20,6 +20,7 @@ Usage:
   agentplan upload <file.html>          upload a new draft (private by default)
     --public | --private                set visibility
     --password <password>               protect the draft with a password
+    --password-stdin                    read the draft password from stdin (safer)
     --title <title>                     set the draft title
     --draft <id>                        add a version to an existing draft
     --json                              machine-readable output on stdout
@@ -95,6 +96,22 @@ async function readHtmlFile(filePath: string): Promise<{ bytes: Uint8Array; file
   return { bytes: new Uint8Array(await readFile(filePath)), filename };
 }
 
+async function readPasswordFromStdin(): Promise<string> {
+  if (process.stdin.isTTY) {
+    fail("--password-stdin requires a pipe or redirected stdin.", 2);
+  }
+  process.stdin.setEncoding("utf8");
+  let password = "";
+  for await (const chunk of process.stdin) {
+    password += chunk;
+    if (password.length > 130) fail("The password exceeds the 128 character limit.", 2);
+  }
+  password = password.replace(/\r?\n$/, "");
+  if (!password) fail("No password was provided on stdin.", 2);
+  if (password.length > 128) fail("The password exceeds the 128 character limit.", 2);
+  return password;
+}
+
 function printDraft(draft: ApiDraft, action: string): void {
   process.stdout.write(
     `${action} ${draft.title}\nVisibility: ${draft.visibility}\nVersion: ${draft.version ?? "-"}\n${draft.url}\n`,
@@ -103,16 +120,21 @@ function printDraft(draft: ApiDraft, action: string): void {
 
 async function commandUpload(file: string | undefined, flags: UploadFlags): Promise<void> {
   if (!file) fail("Usage: agentplan upload <file.html>", 2);
-  const chosen = [flags.public, flags.private, flags.password !== undefined].filter(Boolean).length;
+  if (flags.password !== undefined && flags["password-stdin"]) {
+    fail("Use only one of --password or --password-stdin.", 2);
+  }
+  const hasPasswordOption = flags.password !== undefined || flags["password-stdin"];
+  const chosen = [flags.public, flags.private, hasPasswordOption].filter(Boolean).length;
   if (chosen > 1) {
-    fail("Use only one of --public, --private, or --password.", 2);
+    fail("Use only one of --public, --private, or a password option.", 2);
   }
   if (flags.draft && hasNewDraftOnlyOptions(flags)) {
     fail(
-      "--draft only uploads a new version; --public, --private, --password, and --title apply only when creating a draft.",
+      "--draft only uploads a new version; visibility, password, and title options apply only when creating a draft.",
       2,
     );
   }
+  const password = flags["password-stdin"] ? await readPasswordFromStdin() : flags.password;
 
   const { bytes, filename } = await readHtmlFile(file);
   const api = await resolveApi();
@@ -129,7 +151,7 @@ async function commandUpload(file: string | undefined, flags: UploadFlags): Prom
 
   const visibility = flags.public
     ? "public"
-    : flags.password !== undefined
+    : password !== undefined
       ? "password"
       : flags.private
         ? "private"
@@ -137,7 +159,7 @@ async function commandUpload(file: string | undefined, flags: UploadFlags): Prom
   const result = await api.createDraft(bytes, filename, {
     title: flags.title,
     visibility,
-    password: flags.password,
+    password,
   });
   if (flags.json) {
     process.stdout.write(`${JSON.stringify(result)}\n`);
@@ -192,6 +214,7 @@ async function main(): Promise<void> {
       public: { type: "boolean" },
       private: { type: "boolean" },
       password: { type: "string" },
+      "password-stdin": { type: "boolean" },
       title: { type: "string" },
       draft: { type: "string" },
       json: { type: "boolean" },

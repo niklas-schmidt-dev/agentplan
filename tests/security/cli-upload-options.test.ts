@@ -12,6 +12,7 @@ describe("CLI existing-draft upload options", () => {
     { private: true },
     { password: "secret" },
     { password: "" },
+    { "password-stdin": true },
     { title: "Renamed" },
     { title: "" },
   ])("rejects silently ignored new-draft option %o", (option) => {

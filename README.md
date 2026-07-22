@@ -101,7 +101,8 @@ agentplan login                          # store an API token (created in the da
 agentplan logout
 agentplan upload ./plan.html             # new draft, private by default
 agentplan upload ./plan.html --public
-agentplan upload ./plan.html --password hunter2   # password-protected
+agentplan upload ./plan.html --password hunter2   # password-protected (visible in process args)
+agentplan upload ./plan.html --password-stdin     # safer: read password from piped/redirected stdin
 agentplan upload ./plan.html --title "Launch plan"
 agentplan upload ./plan.html --draft <id>   # add a new version to an existing draft
 agentplan upload ./plan.html --json      # machine-readable output on stdout
