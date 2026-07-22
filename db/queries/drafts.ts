@@ -1,4 +1,4 @@
-import { and, desc, eq, ilike, isNull } from "drizzle-orm";
+import { and, desc, eq, gte, ilike, isNull, sql } from "drizzle-orm";
 import { getDb } from "@/db/client";
 import { draftVersions, drafts, type Draft, type DraftVersion, type Visibility } from "@/db/schema";
 
@@ -27,11 +27,16 @@ export type DraftListItem = Draft & {
 
 export async function listDraftsForOwner(
   ownerId: string,
-  filters: { search?: string; visibility?: Visibility } = {},
+  filters: { search?: string; visibility?: Visibility; updatedWithinDays?: number } = {},
 ): Promise<DraftListItem[]> {
   const conditions = [eq(drafts.ownerId, ownerId), isNull(drafts.deletedAt)];
   if (filters.visibility) conditions.push(eq(drafts.visibility, filters.visibility));
   if (filters.search) conditions.push(ilike(drafts.title, `%${filters.search}%`));
+  if (filters.updatedWithinDays) {
+    conditions.push(
+      gte(drafts.updatedAt, sql`now() - make_interval(days => ${filters.updatedWithinDays})`),
+    );
+  }
 
   const rows = await getDb()
     .select({
