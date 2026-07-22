@@ -11,6 +11,7 @@ import { serializeDraft } from "@/lib/api/serialize";
 import {
   DraftNotFoundError,
   PasswordRequiredError,
+  PasswordVisibilityConflictError,
   setDraftPassword,
   setDraftTitle,
   setDraftVisibility,
@@ -84,6 +85,9 @@ export async function PATCH(req: Request, { params }: Params): Promise<Response>
   } catch (error) {
     if (error instanceof PasswordRequiredError) {
       return invalidRequest("A password is required for password-protected drafts.");
+    }
+    if (error instanceof PasswordVisibilityConflictError) {
+      return invalidRequest("A password cannot be combined with public or private visibility.");
     }
     if (error instanceof DraftNotFoundError) return notFound();
     console.error("PATCH /api/v1/drafts/:id failed", error);

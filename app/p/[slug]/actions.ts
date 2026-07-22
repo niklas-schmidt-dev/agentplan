@@ -6,12 +6,13 @@ import { getDraftBySlug } from "@/db/queries/drafts";
 import { recordAuditEvent } from "@/lib/audit/events";
 import { accessCookieName, issueDraftAccess } from "@/lib/drafts/access";
 import { verifyPassword } from "@/lib/drafts/password";
+import { draftPasswordSchema } from "@/lib/validation/api";
 
 const ACCESS_TTL_SECONDS = 12 * 60 * 60;
 
 export async function submitDraftPassword(formData: FormData): Promise<void> {
   const slug = String(formData.get("slug") ?? "");
-  const password = String(formData.get("password") ?? "");
+  const password = draftPasswordSchema.safeParse(formData.get("password"));
   const encodedSlug = encodeURIComponent(slug);
 
   const draft = await getDraftBySlug(slug);
@@ -21,7 +22,7 @@ export async function submitDraftPassword(formData: FormData): Promise<void> {
     redirect(`/p/${encodedSlug}`);
   }
 
-  if (!(await verifyPassword(password, draft.passwordHash))) {
+  if (!password.success || !(await verifyPassword(password.data, draft.passwordHash))) {
     await recordAuditEvent({
       type: "draft.visibility_changed",
       draftId: draft.id,

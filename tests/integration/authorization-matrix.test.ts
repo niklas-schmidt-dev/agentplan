@@ -306,6 +306,41 @@ describe.skipIf(!hasDb)("authorization matrix (integration)", () => {
       expect((await res.json()).error.code).toBe("INVALID_REQUEST");
     });
 
+    it("a password without visibility protects the draft and conflicting visibility is rejected", async () => {
+      const protectedResponse = await createDraftRoute(
+        uploadRequest({ cookie: owner.cookie, password: "implicit-pw", title: "Implicit" }),
+      );
+      expect(protectedResponse.status).toBe(201);
+      const protectedDraft = (await protectedResponse.json()).draft;
+      expect(protectedDraft.visibility).toBe("password");
+      const anonymous = await contentRoute(
+        new Request(`${BASE}/p/${protectedDraft.slug}/content`),
+        contentParams(protectedDraft.slug),
+      );
+      expect(anonymous.status).toBe(404);
+
+      const conflictingCreate = await createDraftRoute(
+        uploadRequest({
+          cookie: owner.cookie,
+          visibility: "public",
+          password: "discarded-pw",
+          title: "Conflict",
+        }),
+      );
+      expect(conflictingCreate.status).toBe(400);
+
+      const conflictingPatch = await patchDraftRoute(
+        jsonRequest(
+          `${BASE}/api/v1/drafts/${protectedDraft.id}`,
+          "PATCH",
+          { visibility: "public", password: "discarded-pw" },
+          { cookie: owner.cookie },
+        ),
+        params(protectedDraft.id),
+      );
+      expect(conflictingPatch.status).toBe(400);
+    });
+
     it("gates content on a valid, draft-scoped access cookie", async () => {
       const created = await createDraftRoute(
         uploadRequest({

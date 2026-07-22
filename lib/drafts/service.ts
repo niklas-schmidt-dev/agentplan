@@ -31,6 +31,14 @@ export class PasswordRequiredError extends Error {
   }
 }
 
+/** Thrown when a password is paired with a non-password visibility. */
+export class PasswordVisibilityConflictError extends Error {
+  constructor() {
+    super("A password cannot be combined with public or private visibility");
+    this.name = "PasswordVisibilityConflictError";
+  }
+}
+
 const HTML_CONTENT_TYPE = "text/html; charset=utf-8";
 const SLUG_ATTEMPTS = 5;
 
@@ -58,7 +66,7 @@ export async function createDraftWithFirstVersion(params: {
   bytes: Uint8Array;
   source: UploadSource;
   tokenId?: string;
-  /** Required plaintext when visibility is "password"; ignored otherwise. */
+  /** Required plaintext when visibility is "password"; invalid otherwise. */
   password?: string;
 }): Promise<{ draft: Draft; version: DraftVersion }> {
   const db = getDb();
@@ -69,6 +77,9 @@ export async function createDraftWithFirstVersion(params: {
 
   if (params.visibility === "password" && !params.password) {
     throw new PasswordRequiredError();
+  }
+  if (params.visibility !== "password" && params.password !== undefined) {
+    throw new PasswordVisibilityConflictError();
   }
   const passwordHash =
     params.visibility === "password" ? await hashPassword(params.password!) : null;
@@ -243,6 +254,10 @@ export async function setDraftVisibility(
   password?: string,
 ): Promise<Draft> {
   const db = getDb();
+
+  if (visibility !== "password" && password !== undefined) {
+    throw new PasswordVisibilityConflictError();
+  }
 
   let passwordHash: string | null | undefined;
   if (visibility === "password") {
