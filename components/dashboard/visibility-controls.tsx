@@ -8,15 +8,23 @@ import {
 } from "@/app/dashboard/actions";
 import type { Visibility } from "@/db/schema";
 
-export function VisibilityControls({
-  draftId,
-  visibility,
-  hasPassword,
-}: {
+type VisibilityControlsProps = {
   draftId: string;
   visibility: Visibility;
   hasPassword: boolean;
-}) {
+};
+
+export function VisibilityControls(props: VisibilityControlsProps) {
+  // A server-action visibility change remounts the stateful controls so an
+  // open password form cannot survive after switching to public/private.
+  return <VisibilityControlsState key={props.visibility} {...props} />;
+}
+
+function VisibilityControlsState({
+  draftId,
+  visibility,
+  hasPassword,
+}: VisibilityControlsProps) {
   const [showPasswordPanel, setShowPasswordPanel] = useState(visibility === "password");
   const [state, action, pending] = useActionState<PasswordActionState, FormData>(
     setDraftPasswordAction,
