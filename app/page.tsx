@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { SignInButton } from "@/components/auth-buttons";
 
 export default function LandingPage() {
   return (
@@ -27,6 +28,7 @@ export default function LandingPage() {
           <span className="text-ink-faint">$ </span>
           <span className="text-lime">npx agentplan</span> upload ./plan.html
         </pre>
+        <SignInButton />
       </section>
 
       <footer className="font-mono text-xs text-ink-faint">
