@@ -65,14 +65,20 @@ export async function PATCH(req: Request, { params }: Params): Promise<Response>
   if (!patch.success) {
     return invalidRequest(patch.error.issues[0]?.message ?? "Invalid body.");
   }
+  // Validate the only state-dependent password precondition before applying
+  // any field, so a rejected multi-field PATCH cannot persist a partial title.
+  if (
+    patch.data.visibility === "password" &&
+    patch.data.password === undefined &&
+    !draft.passwordHash
+  ) {
+    return invalidRequest("A password is required for password-protected drafts.");
+  }
 
   try {
     const tokenId = actor.kind === "token" ? actor.tokenId : undefined;
     const who = { userId: actor.userId, tokenId };
     let updated = draft;
-    if (patch.data.title !== undefined) {
-      updated = await setDraftTitle(updated, patch.data.title, who);
-    }
     if (patch.data.visibility !== undefined) {
       // Handles the password requirement and clears the hash when leaving password mode.
       updated = await setDraftVisibility(updated, patch.data.visibility, who, patch.data.password);
@@ -80,6 +86,9 @@ export async function PATCH(req: Request, { params }: Params): Promise<Response>
       // A password with no visibility change means: set/rotate the password
       // (which also makes the draft password-protected).
       updated = await setDraftPassword(updated, patch.data.password, who);
+    }
+    if (patch.data.title !== undefined) {
+      updated = await setDraftTitle(updated, patch.data.title, who);
     }
     return Response.json({ draft: serializeDraft(updated, await currentVersionNumber(updated)) });
   } catch (error) {

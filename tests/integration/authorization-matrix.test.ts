@@ -436,12 +436,17 @@ describe.skipIf(!hasDb)("authorization matrix (integration)", () => {
 
       // public → password without a password is rejected (no stored hash to reuse).
       const missingPw = await patchDraftRoute(
-        jsonRequest(`${BASE}/api/v1/drafts/${draft.id}`, "PATCH", { visibility: "password" }, {
-          cookie: owner.cookie,
-        }),
+        jsonRequest(
+          `${BASE}/api/v1/drafts/${draft.id}`,
+          "PATCH",
+          { visibility: "password", title: "Must not persist" },
+          { cookie: owner.cookie },
+        ),
         params(draft.id),
       );
       expect(missingPw.status).toBe(400);
+      const unchanged = await getDraftForOwner(draft.id, owner.userId);
+      expect(unchanged?.title).toBe("Toggler");
 
       // Providing a password re-protects it.
       const rePassworded = await patchDraftRoute(
