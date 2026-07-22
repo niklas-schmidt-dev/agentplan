@@ -1,5 +1,5 @@
 import { getDraftBySlug, getVersionById } from "@/db/queries/drafts";
-import { getOptionalUser } from "@/lib/auth/session";
+import { authenticateSession } from "@/lib/api/auth";
 import { getStorage } from "@/lib/storage";
 
 export const runtime = "nodejs";
@@ -17,7 +17,7 @@ function notFoundResponse(): Response {
 }
 
 export async function GET(
-  _req: Request,
+  req: Request,
   { params }: { params: Promise<{ slug: string }> },
 ): Promise<Response> {
   const { slug } = await params;
@@ -25,8 +25,8 @@ export async function GET(
   if (!draft || !draft.currentVersionId) return notFoundResponse();
 
   if (draft.visibility === "private") {
-    const user = await getOptionalUser();
-    if (!user || user.id !== draft.ownerId) return notFoundResponse();
+    const session = await authenticateSession(req);
+    if (!session || session.userId !== draft.ownerId) return notFoundResponse();
   }
 
   const version = await getVersionById(draft.id, draft.currentVersionId);
