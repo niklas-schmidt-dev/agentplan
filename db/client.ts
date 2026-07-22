@@ -29,3 +29,10 @@ export function getDb(): Database {
   }
   return cachedDb;
 }
+
+/** Test helper: release the pool so test runners can exit cleanly. */
+export async function closeDb(): Promise<void> {
+  await globalForDb.agentplanPool?.end();
+  globalForDb.agentplanPool = undefined;
+  cachedDb = undefined;
+}
