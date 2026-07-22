@@ -1,0 +1,93 @@
+import { getDraftForOwner, getVersionById } from "@/db/queries/drafts";
+import { authenticateApiRequest, isFailure, type ApiActor } from "@/lib/api/auth";
+import {
+  insufficientScope,
+  internalError,
+  invalidRequest,
+  notFound,
+  unauthorized,
+} from "@/lib/api/responses";
+import { serializeDraft } from "@/lib/api/serialize";
+import { setDraftTitle, setDraftVisibility, softDeleteDraft } from "@/lib/drafts/service";
+import { patchDraftSchema, uuidSchema } from "@/lib/validation/api";
+import type { Draft } from "@/db/schema";
+
+export const runtime = "nodejs";
+
+type Params = { params: Promise<{ id: string }> };
+
+async function currentVersionNumber(draft: Draft): Promise<number | null> {
+  if (!draft.currentVersionId) return null;
+  const version = await getVersionById(draft.id, draft.currentVersionId);
+  return version?.versionNumber ?? null;
+}
+
+/** Owner-scoped fetch; invalid UUIDs and other users' drafts both read as 404. */
+async function loadOwnedDraft(actor: ApiActor, rawId: string): Promise<Draft | null> {
+  const id = uuidSchema.safeParse(rawId);
+  if (!id.success) return null;
+  return getDraftForOwner(id.data, actor.userId);
+}
+
+export async function GET(req: Request, { params }: Params): Promise<Response> {
+  const actor = await authenticateApiRequest(req, "drafts:read");
+  if (isFailure(actor)) {
+    return actor.failure === "scope" ? insufficientScope(actor.scope) : unauthorized();
+  }
+  const draft = await loadOwnedDraft(actor, (await params).id);
+  if (!draft) return notFound();
+  return Response.json({ draft: serializeDraft(draft, await currentVersionNumber(draft)) });
+}
+
+export async function PATCH(req: Request, { params }: Params): Promise<Response> {
+  const actor = await authenticateApiRequest(req, "drafts:write");
+  if (isFailure(actor)) {
+    return actor.failure === "scope" ? insufficientScope(actor.scope) : unauthorized();
+  }
+  const draft = await loadOwnedDraft(actor, (await params).id);
+  if (!draft) return notFound();
+
+  let body: unknown;
+  try {
+    body = await req.json();
+  } catch {
+    return invalidRequest("Expected a JSON body.");
+  }
+  const patch = patchDraftSchema.safeParse(body);
+  if (!patch.success) {
+    return invalidRequest(patch.error.issues[0]?.message ?? "Invalid body.");
+  }
+
+  try {
+    const tokenId = actor.kind === "token" ? actor.tokenId : undefined;
+    let updated = draft;
+    if (patch.data.title !== undefined) {
+      updated = await setDraftTitle(updated, patch.data.title, { userId: actor.userId, tokenId });
+    }
+    if (patch.data.visibility !== undefined) {
+      updated = await setDraftVisibility(updated, patch.data.visibility, {
+        userId: actor.userId,
+        tokenId,
+      });
+    }
+    return Response.json({ draft: serializeDraft(updated, await currentVersionNumber(updated)) });
+  } catch (error) {
+    console.error("PATCH /api/v1/drafts/:id failed", error);
+    return internalError();
+  }
+}
+
+export async function DELETE(req: Request, { params }: Params): Promise<Response> {
+  const actor = await authenticateApiRequest(req, "drafts:write");
+  if (isFailure(actor)) {
+    return actor.failure === "scope" ? insufficientScope(actor.scope) : unauthorized();
+  }
+  const draft = await loadOwnedDraft(actor, (await params).id);
+  if (!draft) return notFound();
+
+  await softDeleteDraft(draft, {
+    userId: actor.userId,
+    tokenId: actor.kind === "token" ? actor.tokenId : undefined,
+  });
+  return new Response(null, { status: 204 });
+}

@@ -13,3 +13,9 @@ coverage/
 *.key
 *.log
 .DS_Store
+
+next-env.d.ts
+*.tsbuildinfo
+.data/
+playwright-report/
+test-results/

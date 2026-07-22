@@ -1,0 +1,24 @@
+{
+  "name": "agentplan",
+  "version": "0.1.0",
+  "description": "CLI for agentplan.app — publish agent-generated HTML behind stable links.",
+  "license": "MIT",
+  "type": "module",
+  "bin": {
+    "agentplan": "./dist/index.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "typescript": "^5.9.0"
+  }
+}
