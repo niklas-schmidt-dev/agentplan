@@ -30,7 +30,7 @@ export async function submitDraftPassword(formData: FormData): Promise<void> {
     redirect(`/p/${encodedSlug}?error=1`);
   }
 
-  const token = issueDraftAccess(draft.id, ACCESS_TTL_SECONDS);
+  const token = issueDraftAccess(draft.id, draft.passwordHash, ACCESS_TTL_SECONDS);
   const store = await cookies();
   store.set(accessCookieName(draft.id), token, {
     httpOnly: true,

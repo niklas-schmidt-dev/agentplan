@@ -18,15 +18,28 @@ export function accessCookieName(draftId: string): string {
   return `${ACCESS_COOKIE_PREFIX}${draftId}`;
 }
 
-function sign(payload: string): string {
-  return createHmac("sha256", secret()).update(payload).digest("base64url");
+function sign(payload: string, passwordHash: string): string {
+  return createHmac("sha256", secret())
+    .update("draft-access\0")
+    .update(passwordHash)
+    .update("\0")
+    .update(payload)
+    .digest("base64url");
 }
 
-/** Returns a token proving password access to `draftId`, valid for `ttlSeconds`. */
-export function issueDraftAccess(draftId: string, ttlSeconds = DEFAULT_TTL_SECONDS): string {
+/**
+ * Returns a token proving password access to `draftId`, valid for `ttlSeconds`.
+ * Binding the signature to the stored password hash invalidates every existing
+ * grant when the owner rotates or removes the password.
+ */
+export function issueDraftAccess(
+  draftId: string,
+  passwordHash: string,
+  ttlSeconds = DEFAULT_TTL_SECONDS,
+): string {
   const expiresAt = Math.floor(Date.now() / 1000) + ttlSeconds;
   const payload = `${draftId}.${expiresAt}`;
-  return `${payload}.${sign(payload)}`;
+  return `${payload}.${sign(payload, passwordHash)}`;
 }
 
 /** Reads a specific draft's access token out of a raw Cookie header string. */
@@ -42,14 +55,18 @@ export function readAccessCookie(cookieHeader: string | null, draftId: string): 
   return undefined;
 }
 
-export function verifyDraftAccess(token: string | undefined, draftId: string): boolean {
-  if (!token) return false;
+export function verifyDraftAccess(
+  token: string | undefined,
+  draftId: string,
+  passwordHash: string | null,
+): boolean {
+  if (!token || !passwordHash) return false;
   const lastDot = token.lastIndexOf(".");
   if (lastDot <= 0) return false;
   const payload = token.slice(0, lastDot);
   const signature = token.slice(lastDot + 1);
 
-  const expected = sign(payload);
+  const expected = sign(payload, passwordHash);
   const provided = Buffer.from(signature);
   const expectedBuf = Buffer.from(expected);
   if (provided.length !== expectedBuf.length || !timingSafeEqual(provided, expectedBuf)) {

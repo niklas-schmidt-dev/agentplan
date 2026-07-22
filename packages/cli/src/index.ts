@@ -7,6 +7,7 @@ import { createInterface } from "node:readline/promises";
 import { parseArgs } from "node:util";
 import { AgentPlanApi, ApiError, DEFAULT_API_URL, type ApiDraft } from "./api.js";
 import { clearConfig, loadConfig, saveConfig } from "./config.js";
+import { hasNewDraftOnlyOptions, type UploadFlags } from "./upload-options.js";
 import { isSafeHttpUrl } from "./url.js";
 
 const MAX_UPLOAD_BYTES = 2 * 1024 * 1024;
@@ -100,21 +101,17 @@ function printDraft(draft: ApiDraft, action: string): void {
   );
 }
 
-async function commandUpload(
-  file: string | undefined,
-  flags: {
-    public?: boolean;
-    private?: boolean;
-    password?: string;
-    title?: string;
-    draft?: string;
-    json?: boolean;
-  },
-): Promise<void> {
+async function commandUpload(file: string | undefined, flags: UploadFlags): Promise<void> {
   if (!file) fail("Usage: agentplan upload <file.html>", 2);
   const chosen = [flags.public, flags.private, flags.password !== undefined].filter(Boolean).length;
   if (chosen > 1) {
     fail("Use only one of --public, --private, or --password.", 2);
+  }
+  if (flags.draft && hasNewDraftOnlyOptions(flags)) {
+    fail(
+      "--draft only uploads a new version; --public, --private, --password, and --title apply only when creating a draft.",
+      2,
+    );
   }
 
   const { bytes, filename } = await readHtmlFile(file);

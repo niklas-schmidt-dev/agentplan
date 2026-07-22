@@ -4,7 +4,7 @@ export type ApiDraft = {
   id: string;
   title: string;
   slug: string;
-  visibility: "public" | "private";
+  visibility: "public" | "private" | "password";
   version: number | null;
   url: string;
   createdAt: string;

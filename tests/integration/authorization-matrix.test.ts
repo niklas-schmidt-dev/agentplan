@@ -22,7 +22,7 @@ import { GET as contentRoute } from "@/app/p/[slug]/content/route";
 import { GET as listTokensRoute, POST as createTokenRoute } from "@/app/api/v1/tokens/route";
 import { DELETE as revokeTokenRoute } from "@/app/api/v1/tokens/[id]/route";
 import { closeDb } from "@/db/client";
-import { listVersions } from "@/db/queries/drafts";
+import { getDraftForOwner, listVersions } from "@/db/queries/drafts";
 import { getAuth } from "@/lib/auth/auth";
 import { accessCookieName, issueDraftAccess } from "@/lib/drafts/access";
 import { createToken } from "@/lib/tokens/service";
@@ -327,7 +327,9 @@ describe.skipIf(!hasDb)("authorization matrix (integration)", () => {
       expect(anon.status).toBe(404);
 
       // A valid access cookie for THIS draft → 200, and never publicly cached.
-      const grant = issueDraftAccess(draft.id);
+      const storedDraft = await getDraftForOwner(draft.id, owner.userId);
+      expect(storedDraft?.passwordHash).toBeTruthy();
+      const grant = issueDraftAccess(draft.id, storedDraft!.passwordHash!);
       const granted = await contentRoute(
         contentReqWithCookie(draft.slug, `${accessCookieName(draft.id)}=${grant}`),
         contentParams(draft.slug),
@@ -336,12 +338,32 @@ describe.skipIf(!hasDb)("authorization matrix (integration)", () => {
       expect(granted.headers.get("cache-control")).toBe("private, no-store");
 
       // A valid grant for a DIFFERENT draft id must not unlock this one.
-      const otherGrant = issueDraftAccess("99999999-9999-9999-9999-999999999999");
+      const otherGrant = issueDraftAccess(
+        "99999999-9999-9999-9999-999999999999",
+        storedDraft!.passwordHash!,
+      );
       const wrong = await contentRoute(
         contentReqWithCookie(draft.slug, `${accessCookieName(draft.id)}=${otherGrant}`),
         contentParams(draft.slug),
       );
       expect(wrong.status).toBe(404);
+
+      // Rotating the password invalidates every grant signed against the old hash.
+      const rotated = await patchDraftRoute(
+        jsonRequest(
+          `${BASE}/api/v1/drafts/${draft.id}`,
+          "PATCH",
+          { password: "rotated-pw" },
+          { cookie: owner.cookie },
+        ),
+        params(draft.id),
+      );
+      expect(rotated.status).toBe(200);
+      const afterRotation = await contentRoute(
+        contentReqWithCookie(draft.slug, `${accessCookieName(draft.id)}=${grant}`),
+        contentParams(draft.slug),
+      );
+      expect(afterRotation.status).toBe(404);
 
       // The owner always sees it without any access cookie.
       const asOwner = await contentRoute(

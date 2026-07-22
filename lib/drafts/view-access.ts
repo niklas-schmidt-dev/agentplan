@@ -12,8 +12,9 @@ export type ViewResolution =
  *
  * - owner (signed in)         → always granted
  * - public                    → granted
- * - password + valid token    → granted
- * - password + no/bad token   → password prompt required
+ * - password + hash + valid token → granted
+ * - password + hash + no/bad token → password prompt required
+ * - password + missing hash   → not-found (fail closed)
  * - private (non-owner)       → indistinguishable not-found
  * - missing / deleted / no version → not-found
  */
@@ -29,7 +30,8 @@ export function resolveDraftView(
   if (draft.visibility === "public") return { state: "granted", draft };
 
   if (draft.visibility === "password") {
-    return verifyDraftAccess(viewer.accessToken, draft.id)
+    if (!draft.passwordHash) return { state: "not-found" };
+    return verifyDraftAccess(viewer.accessToken, draft.id, draft.passwordHash)
       ? { state: "granted", draft }
       : { state: "password", draft };
   }
