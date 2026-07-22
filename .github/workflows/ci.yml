@@ -1,0 +1,116 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  secret-scan:
+    name: Secret scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Scan tracked files for secrets
+        run: |
+          # Fail if anything that looks like a live credential is committed.
+          # .env.example placeholders (empty assignments) are allowed.
+          if git grep -nIE \
+            '(ghp_[A-Za-z0-9]{20,}|gho_[A-Za-z0-9]{20,}|sk-ant-[A-Za-z0-9]|BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY|postgres(ql)?://[^ ]*:[^ @]+@|BLOB_READ_WRITE_TOKEN=.+|R2_SECRET_ACCESS_KEY=.+|BETTER_AUTH_SECRET=.+)' \
+            -- . ':(exclude).github/workflows/ci.yml'; then
+            echo "::error::Potential secret found in tracked files."
+            exit 1
+          fi
+          echo "No secrets detected."
+      - name: Ensure no .env files are tracked
+        run: |
+          if git ls-files | grep -E '^\.env(\..*)?$' | grep -vE '\.example$'; then
+            echo "::error::A real .env file is tracked."
+            exit 1
+          fi
+
+  test:
+    name: Lint, typecheck, test, build
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: agentplan_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgres://postgres:postgres@localhost:5432/agentplan_test
+      DATABASE_URL_DIRECT: postgres://postgres:postgres@localhost:5432/agentplan_test
+      TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/agentplan_test
+      STORAGE_DRIVER: fs
+      STORAGE_FS_ROOT: .data/ci-storage
+      BETTER_AUTH_SECRET: ci-secret-not-for-production-00000000
+      BETTER_AUTH_URL: http://localhost:3000
+      NEXT_PUBLIC_APP_URL: http://localhost:3000
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - name: Apply database migrations
+        run: npm run db:migrate
+      - name: Lint
+        run: npm run lint
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Build the CLI
+        run: npm run build -w agentplan
+      - name: Unit, security, and integration tests
+        run: npm run test
+      - name: Production build
+        run: npm run build
+
+  e2e:
+    name: End-to-end security tests
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: agentplan_e2e
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgres://postgres:postgres@localhost:5432/agentplan_e2e
+      DATABASE_URL_DIRECT: postgres://postgres:postgres@localhost:5432/agentplan_e2e
+      STORAGE_DRIVER: fs
+      STORAGE_FS_ROOT: .data/e2e-storage
+      BETTER_AUTH_SECRET: ci-secret-not-for-production-00000000
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run db:migrate
+      - name: Install Playwright browser
+        run: npx playwright install --with-deps chromium
+      - name: Run e2e security suite
+        run: npm run test:e2e

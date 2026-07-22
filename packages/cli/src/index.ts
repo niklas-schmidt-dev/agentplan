@@ -7,6 +7,7 @@ import { createInterface } from "node:readline/promises";
 import { parseArgs } from "node:util";
 import { AgentPlanApi, ApiError, DEFAULT_API_URL, type ApiDraft } from "./api.js";
 import { clearConfig, loadConfig, saveConfig } from "./config.js";
+import { isSafeHttpUrl } from "./url.js";
 
 const MAX_UPLOAD_BYTES = 2 * 1024 * 1024;
 
@@ -151,10 +152,21 @@ async function commandOpen(id: string | undefined): Promise<void> {
   if (!id) fail("Usage: agentplan open <id>", 2);
   const api = await resolveApi();
   const { draft } = await api.getDraft(id);
-  const opener =
-    process.platform === "darwin" ? "open" : process.platform === "win32" ? "start" : "xdg-open";
-  spawn(opener, [draft.url], { shell: process.platform === "win32", detached: true, stdio: "ignore" }).unref();
-  process.stderr.write(`Opening ${draft.url}\n`);
+  // The URL comes from an HTTP response and is untrusted; refuse anything that
+  // is not a plain, metacharacter-free http(s) URL before handing it to the OS.
+  if (!isSafeHttpUrl(draft.url)) fail(`Server returned an unsafe URL: ${draft.url}`);
+  const url = draft.url;
+
+  // Never launch through a shell: pass the URL as a discrete argument so no
+  // interpreter can act on its contents.
+  const [opener, args] =
+    process.platform === "darwin"
+      ? ["open", [url]]
+      : process.platform === "win32"
+        ? ["cmd", ["/c", "start", "", url]]
+        : ["xdg-open", [url]];
+  spawn(opener, args, { shell: false, detached: true, stdio: "ignore" }).unref();
+  process.stderr.write(`Opening ${url}\n`);
 }
 
 async function main(): Promise<void> {
