@@ -65,36 +65,31 @@ export async function listUsersWithUsage({
   const db = getDb();
   const boundedLimit = Math.min(Math.max(Math.trunc(limit), 1), 100);
   const boundedOffset = Math.max(Math.trunc(offset), 0);
-  const pageUserIds = () =>
-    db
-      .select({ id: users.id })
-      .from(users)
-      .orderBy(asc(users.createdAt), asc(users.id))
-      .limit(boundedLimit)
-      .offset(boundedOffset);
+  const allUsers = await db
+    .select()
+    .from(users)
+    .orderBy(asc(users.createdAt), asc(users.id))
+    .limit(boundedLimit)
+    .offset(boundedOffset);
+  if (allUsers.length === 0) return [];
+  const pageUserIds = allUsers.map((user) => user.id);
 
-  const [allUsers, draftAgg, storageAgg, tokenAgg] = await Promise.all([
-    db
-      .select()
-      .from(users)
-      .orderBy(asc(users.createdAt), asc(users.id))
-      .limit(boundedLimit)
-      .offset(boundedOffset),
+  const [draftAgg, storageAgg, tokenAgg] = await Promise.all([
     db
       .select({ ownerId: drafts.ownerId, drafts: count() })
       .from(drafts)
-      .where(and(liveDraftFilter, inArray(drafts.ownerId, pageUserIds())))
+      .where(and(liveDraftFilter, inArray(drafts.ownerId, pageUserIds)))
       .groupBy(drafts.ownerId),
     db
       .select({ ownerId: drafts.ownerId, bytes: sum(draftVersions.sizeBytes) })
       .from(draftVersions)
       .innerJoin(drafts, eq(draftVersions.draftId, drafts.id))
-      .where(and(liveDraftFilter, inArray(drafts.ownerId, pageUserIds())))
+      .where(and(liveDraftFilter, inArray(drafts.ownerId, pageUserIds)))
       .groupBy(drafts.ownerId),
     db
       .select({ userId: apiTokens.userId, tokens: count() })
       .from(apiTokens)
-      .where(and(activeTokenFilter, inArray(apiTokens.userId, pageUserIds())))
+      .where(and(activeTokenFilter, inArray(apiTokens.userId, pageUserIds)))
       .groupBy(apiTokens.userId),
   ]);
 
@@ -133,7 +128,7 @@ export async function setUserRole(
       .select({ role: users.role })
       .from(users)
       .where(eq(users.id, targetUserId));
-    if (!target) return undefined;
+    if (!target) throw new Error("User not found");
 
     if (target.role === "admin" && role === "user") {
       const [adminRow] = await tx
@@ -150,9 +145,9 @@ export async function setUserRole(
       .set({ role })
       .where(eq(users.id, targetUserId))
       .returning({ id: users.id, email: users.email });
+    if (!result) throw new Error("User not found");
     return result;
   });
-  if (!updated) return;
   await recordAuditEvent({
     type: "user.role_changed",
     userId: actor.userId,

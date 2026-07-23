@@ -91,6 +91,9 @@ describe.skipIf(!hasDb)("admin tools (integration)", () => {
     expect(target?.role).toBe("user");
 
     await expect(setUserRole({ userId: actorId }, actorId, "admin")).rejects.toThrow(/own role/);
+    await expect(
+      setUserRole({ userId: actorId }, "missing-admin-test-user", "admin"),
+    ).rejects.toThrow(/not found/);
   });
 
   it("serializes concurrent demotions so an admin always remains", async () => {
