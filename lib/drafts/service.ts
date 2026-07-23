@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { and, eq, isNull, max, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, max, sql } from "drizzle-orm";
 import { getDb } from "@/db/client";
 import {
   draftVersions,
@@ -11,6 +11,7 @@ import {
 import { recordAuditEvent } from "@/lib/audit/events";
 import { hashPassword } from "@/lib/drafts/password";
 import { generateSlug } from "@/lib/drafts/slug";
+import { assertUploadAllowed } from "@/lib/limits/enforce";
 import { getStorage, storageKeyFor } from "@/lib/storage";
 
 export type UploadSource = "browser" | "api_token";
@@ -84,6 +85,11 @@ export async function createDraftWithFirstVersion(params: {
   const passwordHash =
     params.visibility === "password" ? await hashPassword(params.password!) : null;
 
+  await assertUploadAllowed({
+    userId: params.ownerId,
+    sizeBytes: params.bytes.byteLength,
+    newDraft: true,
+  });
   await getStorage().put(storageKey, params.bytes, HTML_CONTENT_TYPE);
 
   try {
@@ -161,6 +167,11 @@ export async function addVersionToDraft(params: {
   const storageKey = storageKeyFor(params.draft.ownerId, params.draft.id, versionId);
   const contentSha256 = sha256Hex(params.bytes);
 
+  const limits = await assertUploadAllowed({
+    userId: params.draft.ownerId,
+    sizeBytes: params.bytes.byteLength,
+    newDraft: false,
+  });
   await getStorage().put(storageKey, params.bytes, HTML_CONTENT_TYPE);
 
   try {
@@ -204,8 +215,39 @@ export async function addVersionToDraft(params: {
         .where(eq(drafts.id, params.draft.id))
         .returning();
       if (!updatedDraft) throw new DraftNotFoundError();
-      return { version, draft: updatedDraft };
+
+      // Version retention: a stable link must keep accepting uploads, so old
+      // versions are pruned instead of hard-failing at a cap. The newest
+      // (current) version is always inside the keep window.
+      let pruned: { id: string; storageKey: string }[] = [];
+      if (limits.keepVersionsPerDraft !== null) {
+        pruned = await tx
+          .select({ id: draftVersions.id, storageKey: draftVersions.storageKey })
+          .from(draftVersions)
+          .where(eq(draftVersions.draftId, params.draft.id))
+          .orderBy(desc(draftVersions.versionNumber))
+          .offset(limits.keepVersionsPerDraft);
+        if (pruned.length) {
+          await tx.delete(draftVersions).where(
+            inArray(
+              draftVersions.id,
+              pruned.map((p) => p.id),
+            ),
+          );
+        }
+      }
+      return { version, draft: updatedDraft, pruned };
     });
+
+    // Best-effort: the rows are already gone, so a failed delete strands one
+    // small object with no reference. Logged and accepted — not worth a retry queue.
+    for (const stale of result.pruned) {
+      await getStorage()
+        .delete(stale.storageKey)
+        .catch((error) =>
+          console.error("Failed to delete pruned version object", stale.storageKey, error),
+        );
+    }
 
     await recordAuditEvent({
       type: params.auditType ?? "draft.version_created",
@@ -215,10 +257,11 @@ export async function addVersionToDraft(params: {
       metadata: {
         versionNumber: result.version.versionNumber,
         sizeBytes: params.bytes.byteLength,
+        ...(result.pruned.length ? { prunedVersions: result.pruned.length } : {}),
         ...params.auditMetadata,
       },
     });
-    return result;
+    return { version: result.version, draft: result.draft };
   } catch (error) {
     await getStorage()
       .delete(storageKey)

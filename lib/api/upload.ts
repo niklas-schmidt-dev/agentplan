@@ -1,7 +1,10 @@
 import { apiError, invalidRequest } from "@/lib/api/responses";
 import { draftFieldsSchema } from "@/lib/validation/api";
-import { titleFromFilename, validateUpload } from "@/lib/validation/upload";
+import { MAX_UPLOAD_BYTES, titleFromFilename, validateUpload } from "@/lib/validation/upload";
 import type { Visibility } from "@/db/schema";
+
+// Allowance for multipart framing and the small metadata fields.
+const MAX_REQUEST_BYTES = MAX_UPLOAD_BYTES + 64 * 1024;
 
 export type ParsedUpload = {
   bytes: Uint8Array;
@@ -12,6 +15,16 @@ export type ParsedUpload = {
 
 /** Parses and validates a multipart upload. Returns a Response on rejection. */
 export async function readUpload(req: Request): Promise<ParsedUpload | Response> {
+  // Reject declared-oversized bodies before buffering a single byte.
+  const contentLength = Number(req.headers.get("content-length"));
+  if (Number.isFinite(contentLength) && contentLength > MAX_REQUEST_BYTES) {
+    return apiError(
+      413,
+      "FILE_TOO_LARGE",
+      `The file exceeds the ${MAX_UPLOAD_BYTES / (1024 * 1024)} MiB limit.`,
+    );
+  }
+
   let form: FormData;
   try {
     form = await req.formData();

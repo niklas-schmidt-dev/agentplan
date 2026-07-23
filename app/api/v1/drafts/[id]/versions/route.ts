@@ -1,6 +1,12 @@
 import { getDraftForOwner, listVersions } from "@/db/queries/drafts";
 import { authenticateApiRequest, isFailure } from "@/lib/api/auth";
-import { insufficientScope, internalError, notFound, unauthorized } from "@/lib/api/responses";
+import {
+  insufficientScope,
+  internalError,
+  limitErrorResponse,
+  notFound,
+  unauthorized,
+} from "@/lib/api/responses";
 import { serializeDraft, serializeVersion } from "@/lib/api/serialize";
 import { readUpload } from "@/lib/api/upload";
 import { addVersionToDraft, DraftNotFoundError } from "@/lib/drafts/service";
@@ -41,6 +47,8 @@ export async function POST(req: Request, { params }: Params): Promise<Response> 
   } catch (error) {
     // Draft soft-deleted between the ownership check and the write: it's gone.
     if (error instanceof DraftNotFoundError) return notFound();
+    const limited = limitErrorResponse(error);
+    if (limited) return limited;
     console.error("POST /api/v1/drafts/:id/versions failed", error);
     return internalError();
   }
