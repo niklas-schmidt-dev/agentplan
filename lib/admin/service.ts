@@ -156,9 +156,7 @@ export async function setUserRole(
 }
 
 type UserDeletionMetadata = {
-  actorUserId: string;
   targetUserId: string;
-  targetEmail: string;
   storageKeys: string[];
   storageCleanup: "pending" | "complete";
   objectsDeleted?: number;
@@ -168,18 +166,14 @@ function parsePendingDeletionMetadata(metadata: unknown): UserDeletionMetadata |
   if (!metadata || typeof metadata !== "object") return null;
   const candidate = metadata as Partial<UserDeletionMetadata>;
   if (
-    typeof candidate.actorUserId !== "string" ||
     typeof candidate.targetUserId !== "string" ||
-    typeof candidate.targetEmail !== "string" ||
     !Array.isArray(candidate.storageKeys) ||
     !candidate.storageKeys.every((key) => typeof key === "string")
   ) {
     return null;
   }
   return {
-    actorUserId: candidate.actorUserId,
     targetUserId: candidate.targetUserId,
-    targetEmail: candidate.targetEmail,
     storageKeys: candidate.storageKeys,
     storageCleanup: candidate.storageCleanup === "complete" ? "complete" : "pending",
     objectsDeleted: candidate.objectsDeleted,
@@ -199,7 +193,6 @@ async function purgeUserDeletionObjects(
       .set({
         eventType: "user.deleted",
         metadata: {
-          ...metadata,
           storageCleanup: "complete",
           objectsDeleted: metadata.storageKeys.length,
         },
@@ -207,7 +200,7 @@ async function purgeUserDeletionObjects(
       .where(and(eq(auditEvents.id, eventId), eq(auditEvents.eventType, "user.deletion_pending")));
     return true;
   } catch (error) {
-    console.error("User storage cleanup remains pending", metadata.targetUserId, error);
+    console.error("User storage cleanup remains pending", eventId, error);
     return false;
   }
 }
@@ -265,10 +258,16 @@ export async function deleteUserCompletely(
     }
 
     const [target] = await tx
-      .select({ id: users.id, email: users.email, role: users.role })
+      .select({ id: users.id, role: users.role })
       .from(users)
       .where(eq(users.id, targetUserId));
     if (!target) return undefined;
+
+    // Uploads take this same lock before writing an object and committing its
+    // row. Once held here, the key snapshot cannot miss an in-flight upload.
+    await tx.execute(
+      sql`select pg_advisory_xact_lock(hashtext('agentplan:user-storage'), hashtext(${targetUserId}))`,
+    );
 
     if (target.role === "admin") {
       const [adminRow] = await tx
@@ -287,9 +286,7 @@ export async function deleteUserCompletely(
       .where(eq(drafts.ownerId, targetUserId));
 
     const metadata: UserDeletionMetadata = {
-      actorUserId: actor.userId,
       targetUserId,
-      targetEmail: target.email,
       storageKeys: versions.map((version) => version.storageKey),
       storageCleanup: "pending",
     };

@@ -9,7 +9,7 @@ const storageRoot = mkdtempSync(path.join(os.tmpdir(), "agentplan-admin-"));
 process.env.STORAGE_DRIVER = "fs";
 process.env.STORAGE_FS_ROOT = storageRoot;
 
-import { eq, inArray } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import { closeDb, getDb } from "@/db/client";
 import { appSettings, auditEvents, drafts, users } from "@/db/schema";
 import {
@@ -34,7 +34,13 @@ async function createUser(): Promise<string> {
   const id = `admin-test-${randomUUID()}`;
   await getDb()
     .insert(users)
-    .values({ id, name: "Admin Test User", email: `${id}@example.test`, emailVerified: true });
+    .values({
+      id,
+      name: "Admin Test User",
+      email: `${id}@example.test`,
+      emailVerified: true,
+      role: "admin",
+    });
   createdUserIds.push(id);
   return id;
 }
@@ -71,10 +77,10 @@ describe.skipIf(!hasDb)("admin tools (integration)", () => {
     await makeAdmin(actorId);
 
     await setSignupsEnabled({ userId: actorId }, false);
-    await expect(evaluateSignup()).rejects.toThrow(SignupsDisabledError);
+    await expect(evaluateSignup("candidate@example.test")).rejects.toThrow(SignupsDisabledError);
 
     await setSignupsEnabled({ userId: actorId }, true);
-    await expect(evaluateSignup()).resolves.toEqual({ role: "user" });
+    await expect(evaluateSignup("candidate@example.test")).resolves.toEqual({ role: "user" });
   });
 
   it("setUserRole promotes and demotes, but never the actor themselves", async () => {
@@ -142,6 +148,56 @@ describe.skipIf(!hasDb)("admin tools (integration)", () => {
     await expect(deleteUserCompletely({ userId: adminId }, victimId)).resolves.toBeUndefined();
   });
 
+  it("serializes an in-flight upload with account deletion so no object is orphaned", async () => {
+    const adminId = await createUser();
+    const victimId = await createUser();
+    await makeAdmin(adminId);
+    const storage = getStorage();
+    const realPut = storage.put.bind(storage);
+    let releasePut!: () => void;
+    let markPutStarted!: () => void;
+    const putGate = new Promise<void>((resolve) => {
+      releasePut = resolve;
+    });
+    const putStarted = new Promise<void>((resolve) => {
+      markPutStarted = resolve;
+    });
+    const putSpy = vi
+      .spyOn(storage, "put")
+      .mockImplementation(async (key, body, contentType) => {
+        markPutStarted();
+        await putGate;
+        await realPut(key, body, contentType);
+      });
+
+    try {
+      const upload = createDraftWithFirstVersion({
+        ownerId: victimId,
+        title: "Racing deletion",
+        visibility: "private",
+        bytes: html,
+        source: "browser",
+      });
+      await putStarted;
+
+      let deletionSettled = false;
+      const deletion = deleteUserCompletely({ userId: adminId }, victimId).finally(() => {
+        deletionSettled = true;
+      });
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      expect(deletionSettled).toBe(false);
+
+      releasePut();
+      const [{ version }] = await Promise.all([upload, deletion]);
+      expect(await storage.get(version.storageKey)).toBeNull();
+      const [gone] = await getDb().select().from(users).where(eq(users.id, victimId));
+      expect(gone).toBeUndefined();
+    } finally {
+      releasePut();
+      putSpy.mockRestore();
+    }
+  });
+
   it("rechecks the actor's current role before deleting", async () => {
     const actorId = await createUser();
     const targetId = await createUser();
@@ -195,10 +251,29 @@ describe.skipIf(!hasDb)("admin tools (integration)", () => {
     const [gone] = await getDb().select().from(users).where(eq(users.id, victimId));
     expect(gone).toBeUndefined();
     const [pending] = await getDb()
-      .select({ id: auditEvents.id })
+      .select({
+        id: auditEvents.id,
+        userId: auditEvents.userId,
+        metadata: auditEvents.metadata,
+      })
       .from(auditEvents)
-      .where(eq(auditEvents.eventType, "user.deletion_pending"));
+      .where(
+        and(
+          eq(auditEvents.eventType, "user.deletion_pending"),
+          sql`${auditEvents.metadata}->>'targetUserId' = ${victimId}`,
+        ),
+      );
     expect(pending).toBeDefined();
+    expect(pending?.userId).toBe(adminId);
+    expect(pending?.metadata).toEqual(
+      expect.objectContaining({
+        targetUserId: victimId,
+        storageKeys: expect.arrayContaining([firstVersion.storageKey, secondVersion.storageKey]),
+        storageCleanup: "pending",
+      }),
+    );
+    expect(JSON.stringify(pending?.metadata)).not.toContain(`${victimId}@example.test`);
+    expect(JSON.stringify(pending?.metadata)).not.toContain(`${adminId}@example.test`);
 
     await expect(purgePendingUserDeletionObjects()).resolves.toEqual(
       expect.objectContaining({ purged: expect.any(Number), failed: 0 }),
@@ -206,10 +281,17 @@ describe.skipIf(!hasDb)("admin tools (integration)", () => {
     expect(await storage.get(firstVersion.storageKey)).toBeNull();
     expect(await storage.get(secondVersion.storageKey)).toBeNull();
     const [completed] = await getDb()
-      .select({ eventType: auditEvents.eventType })
+      .select({
+        eventType: auditEvents.eventType,
+        metadata: auditEvents.metadata,
+      })
       .from(auditEvents)
       .where(eq(auditEvents.id, pending!.id));
     expect(completed?.eventType).toBe("user.deleted");
+    expect(completed?.metadata).toEqual({
+      storageCleanup: "complete",
+      objectsDeleted: 2,
+    });
   });
 
   it("rejects signup changes from a demoted admin's stale session", async () => {

@@ -36,6 +36,13 @@
       "when": 1784809735238,
       "tag": "0004_enforce_signup_policy",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1784822400000,
+      "tag": "0005_security_hardening",
+      "breakpoints": true
     }
   ]
 }

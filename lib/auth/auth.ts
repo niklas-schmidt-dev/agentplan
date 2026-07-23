@@ -4,7 +4,13 @@ import { APIError } from "better-auth/api";
 import { nextCookies } from "better-auth/next-js";
 import { getDb } from "@/db/client";
 import * as schema from "@/db/schema";
-import { evaluateSignup, SignupsDisabledError } from "./signup-policy";
+import { sendAuthEmail } from "./email";
+import { authRateLimitStorage } from "./rate-limit";
+import {
+  BootstrapAuthorizationError,
+  evaluateSignup,
+  SignupsDisabledError,
+} from "./signup-policy";
 
 /** GitHub OAuth is optional: without credentials only email/password is offered. */
 export function isGithubConfigured(): boolean {
@@ -21,6 +27,36 @@ function createAuth() {
     database: drizzleAdapter(getDb(), { provider: "pg", usePlural: true, schema }),
     emailAndPassword: {
       enabled: true,
+      requireEmailVerification: true,
+      autoSignIn: false,
+      revokeSessionsOnPasswordReset: true,
+      sendResetPassword: async ({ user, url }) => {
+        await sendAuthEmail({ kind: "reset_password", to: user.email, name: user.name, url });
+      },
+    },
+    emailVerification: {
+      sendOnSignUp: true,
+      sendOnSignIn: true,
+      autoSignInAfterVerification: true,
+      expiresIn: 60 * 60,
+      sendVerificationEmail: async ({ user, url }) => {
+        await sendAuthEmail({ kind: "verify_email", to: user.email, name: user.name, url });
+      },
+    },
+    rateLimit: {
+      enabled: true,
+      customStorage: authRateLimitStorage,
+      // Better Auth's narrow default (3 attempts / 10s / IP) creates a
+      // platform-wide lockout risk behind shared proxies. Keep a distributed
+      // route/IP ceiling here; lib/auth/rate-limit.ts adds the stricter
+      // HMAC-account budgets that stop targeted credential abuse.
+      customRules: {
+        "/sign-up/email": { window: 60, max: 20 },
+        "/sign-in/email": { window: 60, max: 30 },
+        "/request-password-reset": { window: 60, max: 30 },
+        "/forget-password": { window: 60, max: 30 },
+        "/send-verification-email": { window: 60, max: 30 },
+      },
     },
     socialProviders:
       githubClientId && githubClientSecret
@@ -38,10 +74,13 @@ function createAuth() {
         create: {
           before: async (user) => {
             try {
-              const { role } = await evaluateSignup();
+              const { role } = await evaluateSignup(user.email);
               return { data: { ...user, role } };
             } catch (error) {
               if (error instanceof SignupsDisabledError) {
+                throw new APIError("FORBIDDEN", { message: error.message });
+              }
+              if (error instanceof BootstrapAuthorizationError) {
                 throw new APIError("FORBIDDEN", { message: error.message });
               }
               throw error;

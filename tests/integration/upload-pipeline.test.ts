@@ -47,6 +47,7 @@ describe.skipIf(!hasDb)("upload pipeline (integration)", () => {
         name: "Test User",
         email: `${ownerId}@example.test`,
         emailVerified: true,
+        role: "admin",
       });
   });
 
@@ -66,7 +67,8 @@ describe.skipIf(!hasDb)("upload pipeline (integration)", () => {
 
     expect(result.version.versionNumber).toBe(1);
     expect(draft.currentVersionId).toBe(result.version.id);
-    expect(draft.slug).toMatch(/^launch-plan-[a-z0-9]{4}$/);
+    expect(draft.slug).toMatch(/^draft-[A-Za-z0-9_-]{24}$/);
+    expect(draft.slug).not.toContain("launch-plan");
     expect(result.version.contentSha256).toBe(
       createHash("sha256").update(htmlV1).digest("hex"),
     );

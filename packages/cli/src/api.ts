@@ -41,6 +41,9 @@ export class AgentPlanApi {
     try {
       response = await fetch(`${this.baseUrl}${path}`, {
         ...init,
+        // API endpoints are canonical. Refuse redirects so a custom or
+        // compromised endpoint cannot forward the bearer token elsewhere.
+        redirect: "error",
         headers: {
           authorization: `Bearer ${this.token}`,
           ...(init.headers ?? {}),

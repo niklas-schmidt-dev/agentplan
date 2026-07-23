@@ -1,8 +1,15 @@
-import { and, desc, eq, gt, isNull, or, sql } from "drizzle-orm";
+import { and, desc, eq, gt, isNotNull, isNull, lte, or, sql } from "drizzle-orm";
 import { getDb } from "@/db/client";
 import { apiTokens, type ApiToken } from "@/db/schema";
 import { recordAuditEvent } from "@/lib/audit/events";
 import { assertTokenCreationAllowed } from "@/lib/limits/enforce";
+import { RateLimitedError } from "@/lib/limits/errors";
+import {
+  retiredTokenRetentionDays,
+  tokenMutationsPerDay,
+  tokenMutationsPerHour,
+} from "@/lib/limits/plans";
+import { consumeRateLimits } from "@/lib/limits/rate-limit";
 import { constantTimeEqual } from "@/lib/security/compare";
 import { generateApiToken, hashToken, type TokenScope } from "./token";
 
@@ -12,17 +19,33 @@ export type CreatedToken = {
   record: ApiToken;
 };
 
+async function consumeTokenMutationRateLimit(userId: string): Promise<void> {
+  const result = await consumeRateLimits([
+    {
+      key: `tokens:1h:${userId}`,
+      limit: tokenMutationsPerHour(),
+      windowSeconds: 60 * 60,
+    },
+    {
+      key: `tokens:1d:${userId}`,
+      limit: tokenMutationsPerDay(),
+      windowSeconds: 24 * 60 * 60,
+    },
+  ]);
+  if (!result.ok) throw new RateLimitedError(result.retryAfterSeconds);
+}
+
 export async function createToken(params: {
   userId: string;
   name: string;
   scopes: TokenScope[];
   expiresAt?: Date;
 }): Promise<CreatedToken> {
+  await consumeTokenMutationRateLimit(params.userId);
   const generated = generateApiToken();
   const record = await getDb().transaction(async (tx) => {
-    // Token creation has no rate limiter, so the cap check must be atomic with
-    // the insert: the per-user advisory lock serializes concurrent requests
-    // that would otherwise all pass the count while below the cap.
+    // The cap check must be atomic with the insert: the per-user advisory lock
+    // serializes concurrent requests that would otherwise pass a stale count.
     await tx.execute(
       sql`select pg_advisory_xact_lock(hashtext('tokens'), hashtext(${params.userId}))`,
     );
@@ -67,6 +90,7 @@ export async function listTokensForUser(userId: string): Promise<ApiToken[]> {
 }
 
 export async function revokeToken(userId: string, tokenId: string): Promise<boolean> {
+  await consumeTokenMutationRateLimit(userId);
   const [updated] = await getDb()
     .update(apiTokens)
     .set({ revokedAt: sql`now()` })
@@ -77,6 +101,27 @@ export async function revokeToken(userId: string, tokenId: string): Promise<bool
   if (!updated) return false;
   await recordAuditEvent({ type: "token.revoked", userId, tokenId });
   return true;
+}
+
+/** Deletes token rows only after they have been unusable for the retention window. */
+export async function purgeRetiredTokens(): Promise<number> {
+  const days = retiredTokenRetentionDays();
+  const deleted = await getDb()
+    .delete(apiTokens)
+    .where(
+      or(
+        and(
+          isNotNull(apiTokens.revokedAt),
+          lte(apiTokens.revokedAt, sql`now() - make_interval(days => ${days})`),
+        ),
+        and(
+          isNotNull(apiTokens.expiresAt),
+          lte(apiTokens.expiresAt, sql`now() - make_interval(days => ${days})`),
+        ),
+      ),
+    )
+    .returning({ id: apiTokens.id });
+  return deleted.length;
 }
 
 export type BearerActor = {

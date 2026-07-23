@@ -14,7 +14,16 @@ const CONTENT_SANDBOX = "sandbox allow-scripts allow-forms allow-modals allow-po
 function notFoundResponse(): Response {
   return new Response("Not found", {
     status: 404,
-    headers: { "Content-Type": "text/plain; charset=utf-8" },
+    headers: {
+      "Content-Type": "text/plain; charset=utf-8",
+      "X-Content-Type-Options": "nosniff",
+      "Referrer-Policy": "no-referrer",
+      "Strict-Transport-Security": "max-age=63072000; includeSubDomains",
+      "Permissions-Policy": "camera=(), microphone=(), geolocation=()",
+      "Content-Security-Policy": `${CONTENT_SANDBOX}; frame-ancestors 'self'`,
+      "X-Robots-Tag": "noindex",
+      "Cache-Control": "private, no-store",
+    },
   });
 }
 
@@ -57,6 +66,8 @@ export async function GET(
       "Content-Length": String(bytes.byteLength),
       "X-Content-Type-Options": "nosniff",
       "Referrer-Policy": "no-referrer",
+      "Strict-Transport-Security": "max-age=63072000; includeSubDomains",
+      "Permissions-Policy": "camera=(), microphone=(), geolocation=()",
       "Content-Security-Policy": `${CONTENT_SANDBOX}; frame-ancestors 'self'`,
       "X-Robots-Tag": "noindex",
       "Cache-Control":

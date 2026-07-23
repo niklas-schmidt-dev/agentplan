@@ -3,7 +3,7 @@ import { mkdtempSync } from "node:fs";
 import { readdir } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { afterAll, afterEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
 
 // Must be configured before the lazy storage/db singletons are first used.
 const storageRoot = mkdtempSync(path.join(os.tmpdir(), "agentplan-limits-"));
@@ -14,9 +14,13 @@ import { closeDb, getDb } from "@/db/client";
 import { listVersions } from "@/db/queries/drafts";
 import { eq, sql } from "drizzle-orm";
 import { drafts, rateLimits, users, type UserPlan } from "@/db/schema";
+import { POST as createDraftRoute } from "@/app/api/v1/drafts/route";
+import { POST as restoreRoute } from "@/app/api/v1/drafts/[id]/versions/[versionId]/restore/route";
 import { addVersionToDraft, createDraftWithFirstVersion } from "@/lib/drafts/service";
+import { consumeUploadRateLimit } from "@/lib/limits/enforce";
 import { QuotaExceededError, RateLimitedError } from "@/lib/limits/errors";
 import { consumeRateLimit, consumeRateLimits } from "@/lib/limits/rate-limit";
+import { getStorage } from "@/lib/storage";
 import { createToken, revokeToken } from "@/lib/tokens/service";
 
 const hasDb = Boolean(process.env.DATABASE_URL);
@@ -29,13 +33,22 @@ const LIMIT_ENV_VARS = [
   "AP_MAX_ACTIVE_TOKENS_PER_USER",
   "AP_UPLOADS_PER_10MIN",
   "AP_UPLOADS_PER_DAY",
+  "AP_TOKEN_MUTATIONS_PER_HOUR",
+  "AP_TOKEN_MUTATIONS_PER_DAY",
 ];
 
 async function createUser(plan: UserPlan = "free"): Promise<string> {
   const id = `limit-user-${randomUUID()}`;
   await getDb()
     .insert(users)
-    .values({ id, name: "Limit User", email: `${id}@example.test`, emailVerified: true, plan });
+    .values({
+      id,
+      name: "Limit User",
+      email: `${id}@example.test`,
+      emailVerified: true,
+      plan,
+      role: "admin",
+    });
   return id;
 }
 
@@ -229,6 +242,81 @@ describe.skipIf(!hasDb)("abuse limits (integration)", () => {
     await expect(
       createToken({ userId, name: "two", scopes: ["drafts:read"] }),
     ).resolves.toBeDefined();
+  });
+
+  it("creates ten tokens concurrently without exhausting the database pool", async () => {
+    process.env.AP_MAX_ACTIVE_TOKENS_PER_USER = "20";
+    process.env.AP_TOKEN_MUTATIONS_PER_HOUR = "30";
+    process.env.AP_TOKEN_MUTATIONS_PER_DAY = "30";
+    const userId = await createUser();
+
+    const created = await Promise.all(
+      Array.from({ length: 10 }, (_, index) =>
+        createToken({ userId, name: `parallel-${index}`, scopes: ["drafts:read"] }),
+      ),
+    );
+
+    expect(new Set(created.map(({ record }) => record.id)).size).toBe(10);
+  });
+
+  it("rejects an exhausted upload before parsing the multipart body", async () => {
+    process.env.AP_UPLOADS_PER_10MIN = "1";
+    const userId = await createUser();
+    const { token } = await createToken({
+      userId,
+      name: "early-upload-limit",
+      scopes: ["drafts:write"],
+    });
+    await consumeUploadRateLimit(userId);
+
+    const response = await createDraftRoute(
+      new Request("http://localhost/api/v1/drafts", {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${token}`,
+          "content-type": "text/plain",
+        },
+        body: "this must never be parsed as multipart",
+      }),
+    );
+
+    expect(response.status).toBe(429);
+  });
+
+  it("rejects an exhausted restore before retrieving object storage", async () => {
+    const userId = await createUser();
+    const { draft, version } = await createDraftWithFirstVersion({
+      ownerId: userId,
+      title: "Early restore limit",
+      visibility: "private",
+      bytes: html,
+      source: "browser",
+    });
+    process.env.AP_UPLOADS_PER_10MIN = "1";
+    const { token } = await createToken({
+      userId,
+      name: "early-restore-limit",
+      scopes: ["drafts:write"],
+    });
+    const storage = getStorage();
+    const getSpy = vi.spyOn(storage, "get");
+
+    try {
+      const response = await restoreRoute(
+        new Request(
+          `http://localhost/api/v1/drafts/${draft.id}/versions/${version.id}/restore`,
+          {
+            method: "POST",
+            headers: { authorization: `Bearer ${token}` },
+          },
+        ),
+        { params: Promise.resolve({ id: draft.id, versionId: version.id }) },
+      );
+      expect(response.status).toBe(429);
+      expect(getSpy).not.toHaveBeenCalled();
+    } finally {
+      getSpy.mockRestore();
+    }
   });
 
   it("falls back to defaults for unparseable limit overrides", async () => {

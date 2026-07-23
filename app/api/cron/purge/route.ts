@@ -1,7 +1,9 @@
 import { internalError, unauthorized } from "@/lib/api/responses";
 import { purgePendingUserDeletionObjects } from "@/lib/admin/service";
+import { purgeExpiredAuditEvents } from "@/lib/audit/events";
 import { purgeDeletedDrafts, purgeExpiredRateLimits } from "@/lib/drafts/purge";
 import { constantTimeEqual } from "@/lib/security/compare";
+import { purgeRetiredTokens } from "@/lib/tokens/service";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -16,16 +18,20 @@ export async function GET(req: Request): Promise<Response> {
   }
 
   try {
-    const [drafts, users] = await Promise.all([
+    const [drafts, users, tokens] = await Promise.all([
       purgeDeletedDrafts(),
       purgePendingUserDeletionObjects(),
+      purgeRetiredTokens(),
     ]);
     await purgeExpiredRateLimits();
+    const auditEvents = await purgeExpiredAuditEvents();
     return Response.json({
       purged: drafts.purged,
       failed: drafts.failed,
       userDeletionsPurged: users.purged,
       userDeletionsFailed: users.failed,
+      retiredTokensPurged: tokens,
+      auditEventsPurged: auditEvents,
     });
   } catch (error) {
     console.error("GET /api/cron/purge failed", error);

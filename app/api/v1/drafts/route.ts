@@ -14,6 +14,7 @@ import {
   PasswordRequiredError,
   PasswordVisibilityConflictError,
 } from "@/lib/drafts/service";
+import { consumeUploadRateLimit } from "@/lib/limits/enforce";
 import { listDraftsQuerySchema } from "@/lib/validation/api";
 
 export const runtime = "nodejs";
@@ -24,6 +25,13 @@ export async function POST(req: Request): Promise<Response> {
     return actor.failure === "scope" ? insufficientScope(actor.scope) : unauthorized();
   }
 
+  try {
+    await consumeUploadRateLimit(actor.userId);
+  } catch (error) {
+    const limited = limitErrorResponse(error);
+    if (limited) return limited;
+    throw error;
+  }
   const upload = await readUpload(req);
   if (upload instanceof Response) return upload;
 
@@ -39,6 +47,7 @@ export async function POST(req: Request): Promise<Response> {
       bytes: upload.bytes,
       source: actor.kind === "token" ? "api_token" : "browser",
       tokenId: actor.kind === "token" ? actor.tokenId : undefined,
+      rateLimitConsumed: true,
     });
     return Response.json({ draft: serializeDraft(draft, version.versionNumber) }, { status: 201 });
   } catch (error) {
