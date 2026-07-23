@@ -15,11 +15,15 @@ import { appSettings, auditEvents, drafts, users } from "@/db/schema";
 import {
   deleteUserCompletely,
   getAdminStats,
+  listDraftsForAdmin,
   listUsersWithUsage,
   purgePendingUserDeletionObjects,
+  removeDraftAsAdmin,
+  setUserPlan,
   setUserRole,
 } from "@/lib/admin/service";
 import { evaluateSignup, SignupsDisabledError } from "@/lib/auth/signup-policy";
+import { getDraftBySlug } from "@/db/queries/drafts";
 import { addVersionToDraft, createDraftWithFirstVersion } from "@/lib/drafts/service";
 import { getSignupsEnabled, setSignupsEnabled } from "@/lib/settings/service";
 import { getStorage } from "@/lib/storage";
@@ -119,6 +123,109 @@ describe.skipIf(!hasDb)("admin tools (integration)", () => {
       .from(users)
       .where(inArray(users.id, [firstAdminId, secondAdminId]));
     expect(remaining.filter((row) => row.role === "admin")).toHaveLength(1);
+  });
+
+  it("lets a current admin change plans and records the change", async () => {
+    const actorId = await createUser();
+    const targetId = await createUser();
+    await makeAdmin(actorId);
+
+    await setUserPlan({ userId: actorId }, targetId, "unlimited");
+    const [target] = await getDb()
+      .select({ plan: users.plan })
+      .from(users)
+      .where(eq(users.id, targetId));
+    expect(target?.plan).toBe("unlimited");
+
+    const [event] = await getDb()
+      .select({
+        userId: auditEvents.userId,
+        metadata: auditEvents.metadata,
+      })
+      .from(auditEvents)
+      .where(
+        and(
+          eq(auditEvents.eventType, "user.plan_changed"),
+          sql`${auditEvents.metadata}->>'targetUserId' = ${targetId}`,
+        ),
+      );
+    expect(event?.userId).toBe(actorId);
+    expect(event?.metadata).toEqual(
+      expect.objectContaining({
+        targetUserId: targetId,
+        from: "free",
+        to: "unlimited",
+      }),
+    );
+
+    await expect(setUserPlan({ userId: targetId }, actorId, "unlimited")).rejects.toThrow(
+      /current admins/,
+    );
+  });
+
+  it("lists and immediately unpublishes individual uploads for moderation", async () => {
+    const actorId = await createUser();
+    const ownerId = await createUser();
+    await makeAdmin(actorId);
+    const { draft, version } = await createDraftWithFirstVersion({
+      ownerId,
+      title: "Reported upload",
+      visibility: "public",
+      bytes: html,
+      source: "browser",
+    });
+
+    const bySlug = await listDraftsForAdmin({ search: draft.slug });
+    expect(bySlug.total).toBe(1);
+    expect(bySlug.drafts[0]).toEqual(
+      expect.objectContaining({
+        id: draft.id,
+        ownerId,
+        ownerEmail: `${ownerId}@example.test`,
+        currentVersion: expect.objectContaining({
+          versionNumber: 1,
+          sizeBytes: html.byteLength,
+        }),
+      }),
+    );
+    const byOwner = await listDraftsForAdmin({ ownerId });
+    expect(byOwner.drafts.map((row) => row.id)).toContain(draft.id);
+
+    await removeDraftAsAdmin({ userId: actorId }, draft.id);
+    expect(await getDraftBySlug(draft.slug)).toBeNull();
+    expect(await getStorage().get(version.storageKey)).not.toBeNull();
+
+    const [event] = await getDb()
+      .select({
+        userId: auditEvents.userId,
+        draftId: auditEvents.draftId,
+        metadata: auditEvents.metadata,
+      })
+      .from(auditEvents)
+      .where(and(eq(auditEvents.eventType, "draft.moderated"), eq(auditEvents.draftId, draft.id)));
+    expect(event).toEqual({
+      userId: actorId,
+      draftId: draft.id,
+      metadata: { ownerId, slug: draft.slug },
+    });
+    expect((await listDraftsForAdmin({ ownerId })).drafts).not.toContainEqual(
+      expect.objectContaining({ id: draft.id }),
+    );
+
+    const currentAdminId = await createUser();
+    await makeAdmin(currentAdminId);
+    const { draft: stillLive } = await createDraftWithFirstVersion({
+      ownerId,
+      title: "Must stay live",
+      visibility: "public",
+      bytes: html,
+      source: "browser",
+    });
+    await setUserRole({ userId: currentAdminId }, actorId, "user");
+    await expect(removeDraftAsAdmin({ userId: actorId }, stillLive.id)).rejects.toThrow(
+      /current admins/,
+    );
+    expect(await getDraftBySlug(stillLive.slug)).not.toBeNull();
   });
 
   it("deleteUserCompletely removes the user, their rows, and their stored objects", async () => {

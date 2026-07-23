@@ -25,8 +25,9 @@ the link and the password).
   only when `GITHUB_CLIENT_ID`/`GITHUB_CLIENT_SECRET` are set) for browser sessions;
   scoped API tokens (`ap_live_…`, stored as SHA-256 hashes) for agents and the CLI.
   On an empty database, only `ADMIN_BOOTSTRAP_EMAIL` can register; that identity
-  becomes the single initial admin. Admins can disable sign-ups and manage users
-  under `/dashboard/admin`.
+  becomes the single initial admin. Admins can disable sign-ups, change account
+  plans and roles, delete accounts, and moderate individual uploads under
+  `/dashboard/admin`.
 - Uploaded HTML is treated as hostile. It is never rendered into the application DOM;
   it is served from an isolated route and displayed inside a sandboxed iframe
   (`sandbox="allow-scripts allow-forms allow-modals allow-popups"`, no
@@ -175,12 +176,18 @@ Revoked/expired token rows are removed after 30 days, and ordinary audit events
 after 180 days. Pending user-deletion cleanup jobs are retained until object cleanup
 completes; their object keys and target identifier are erased at completion.
 
-To exempt a user from all quotas and upload rate limits (needs `DATABASE_URL`,
-loaded from `.env` automatically):
+Admins can switch a user between `free` and `unlimited` from the user list.
+The CLI remains available for operators (needs `DATABASE_URL`, loaded from
+`.env` automatically):
 
 ```bash
 bun scripts/set-user-plan.ts someone@example.com unlimited   # back to normal: … free
 ```
+
+The admin content view searches live uploads by title, slug, or owner email.
+Removing an upload makes every viewer and API route return not found immediately;
+its private objects follow the same 7-day hard-deletion window as an owner-initiated
+draft deletion.
 
 ## Security
 

@@ -43,9 +43,13 @@ The core security invariants are:
    deletion share a per-user storage lock. Deletion cleanup is durable and strips
    identifiers/object keys after completion; ordinary audit history has finite
    retention.
-9. **No secrets in the repository.** Only `.env.example` placeholders are committed.
-   CI scans the current tree and complete reachable Git history without printing
-   matched values.
+9. **Admin moderation is server-authorized and auditable.** Every plan, role, account,
+   and upload moderation mutation rechecks the actor's current database role.
+   Moderated uploads leave all read paths immediately and are permanently purged
+   by the deleted-draft retention job.
+10. **No secrets in the repository.** Only `.env.example` placeholders are committed.
+    CI scans the current tree and complete reachable Git history without printing
+    matched values.
 
 ## Scope
 
