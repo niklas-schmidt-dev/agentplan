@@ -7,3 +7,4 @@ drizzle/
 playwright-report/
 test-results/
 package-lock.json
+plans/

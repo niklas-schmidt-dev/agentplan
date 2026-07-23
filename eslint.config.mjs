@@ -18,5 +18,6 @@ export default defineConfig([
     "packages/*/dist/**",
     "playwright-report/**",
     "test-results/**",
+    "plans/**",
   ]),
 ]);
