@@ -1,6 +1,7 @@
 import { eq, sql } from "drizzle-orm";
 import { getDb } from "@/db/client";
 import { appSettings, users } from "@/db/schema";
+import { recordAuditEvent } from "@/lib/audit/events";
 
 const SIGNUPS_ENABLED_KEY = "signups_enabled";
 
@@ -34,5 +35,10 @@ export async function setSignupsEnabled(
         target: appSettings.key,
         set: { value: enabled, updatedAt: sql`now()` },
       });
+  });
+  await recordAuditEvent({
+    type: "settings.signups_changed",
+    userId: actor.userId,
+    metadata: { enabled },
   });
 }

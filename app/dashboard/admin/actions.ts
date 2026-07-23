@@ -3,7 +3,6 @@
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { deleteUserCompletely, setUserRole } from "@/lib/admin/service";
-import { recordAuditEvent } from "@/lib/audit/events";
 import { requireAdmin } from "@/lib/auth/session";
 import { setSignupsEnabled } from "@/lib/settings/service";
 
@@ -14,11 +13,6 @@ export async function setSignupsEnabledAction(formData: FormData): Promise<void>
   const admin = await requireAdmin();
   const enabled = formData.get("enabled") === "true";
   await setSignupsEnabled({ userId: admin.id }, enabled);
-  await recordAuditEvent({
-    type: "settings.signups_changed",
-    userId: admin.id,
-    metadata: { enabled },
-  });
   revalidatePath("/dashboard/admin");
 }
 
@@ -27,7 +21,11 @@ export async function setUserRoleAction(formData: FormData): Promise<void> {
   const userId = userIdSchema.safeParse(formData.get("userId"));
   const role = roleSchema.safeParse(formData.get("role"));
   if (userId.success && role.success && userId.data !== admin.id) {
-    await setUserRole({ userId: admin.id }, userId.data, role.data);
+    try {
+      await setUserRole({ userId: admin.id }, userId.data, role.data);
+    } catch (error) {
+      console.error("setUserRoleAction failed", error);
+    }
   }
   revalidatePath("/dashboard/admin");
 }

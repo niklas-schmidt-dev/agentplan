@@ -1,4 +1,4 @@
-import { and, asc, count, eq, gt, isNull, or, sql, sum } from "drizzle-orm";
+import { and, asc, count, eq, gt, inArray, isNull, or, sql, sum } from "drizzle-orm";
 import { getDb, withDbAdvisoryLock } from "@/db/client";
 import { apiTokens, draftVersions, drafts, users, type User, type UserRole } from "@/db/schema";
 import { recordAuditEvent } from "@/lib/audit/events";
@@ -21,14 +21,16 @@ export type AdminStats = {
 
 export async function getAdminStats(): Promise<AdminStats> {
   const db = getDb();
-  const [userRow] = await db.select({ value: count() }).from(users);
-  const [draftRow] = await db.select({ value: count() }).from(drafts).where(liveDraftFilter);
-  const [versionRow] = await db
-    .select({ value: count(), bytes: sum(draftVersions.sizeBytes) })
-    .from(draftVersions)
-    .innerJoin(drafts, eq(draftVersions.draftId, drafts.id))
-    .where(liveDraftFilter);
-  const [tokenRow] = await db.select({ value: count() }).from(apiTokens).where(activeTokenFilter);
+  const [[userRow], [draftRow], [versionRow], [tokenRow]] = await Promise.all([
+    db.select({ value: count() }).from(users),
+    db.select({ value: count() }).from(drafts).where(liveDraftFilter),
+    db
+      .select({ value: count(), bytes: sum(draftVersions.sizeBytes) })
+      .from(draftVersions)
+      .innerJoin(drafts, eq(draftVersions.draftId, drafts.id))
+      .where(liveDraftFilter),
+    db.select({ value: count() }).from(apiTokens).where(activeTokenFilter),
+  ]);
 
   return {
     users: userRow?.value ?? 0,
@@ -45,25 +47,48 @@ export type AdminUserRow = User & {
   tokenCount: number;
 };
 
-export async function listUsersWithUsage(): Promise<AdminUserRow[]> {
+export async function listUsersWithUsage({
+  limit = 50,
+  offset = 0,
+}: {
+  limit?: number;
+  offset?: number;
+} = {}): Promise<AdminUserRow[]> {
   const db = getDb();
-  const allUsers = await db.select().from(users).orderBy(asc(users.createdAt));
-  const draftAgg = await db
-    .select({ ownerId: drafts.ownerId, drafts: count() })
-    .from(drafts)
-    .where(liveDraftFilter)
-    .groupBy(drafts.ownerId);
-  const storageAgg = await db
-    .select({ ownerId: drafts.ownerId, bytes: sum(draftVersions.sizeBytes) })
-    .from(draftVersions)
-    .innerJoin(drafts, eq(draftVersions.draftId, drafts.id))
-    .where(liveDraftFilter)
-    .groupBy(drafts.ownerId);
-  const tokenAgg = await db
-    .select({ userId: apiTokens.userId, tokens: count() })
-    .from(apiTokens)
-    .where(activeTokenFilter)
-    .groupBy(apiTokens.userId);
+  const boundedLimit = Math.min(Math.max(Math.trunc(limit), 1), 100);
+  const boundedOffset = Math.max(Math.trunc(offset), 0);
+  const pageUserIds = () =>
+    db
+      .select({ id: users.id })
+      .from(users)
+      .orderBy(asc(users.createdAt), asc(users.id))
+      .limit(boundedLimit)
+      .offset(boundedOffset);
+
+  const [allUsers, draftAgg, storageAgg, tokenAgg] = await Promise.all([
+    db
+      .select()
+      .from(users)
+      .orderBy(asc(users.createdAt), asc(users.id))
+      .limit(boundedLimit)
+      .offset(boundedOffset),
+    db
+      .select({ ownerId: drafts.ownerId, drafts: count() })
+      .from(drafts)
+      .where(and(liveDraftFilter, inArray(drafts.ownerId, pageUserIds())))
+      .groupBy(drafts.ownerId),
+    db
+      .select({ ownerId: drafts.ownerId, bytes: sum(draftVersions.sizeBytes) })
+      .from(draftVersions)
+      .innerJoin(drafts, eq(draftVersions.draftId, drafts.id))
+      .where(and(liveDraftFilter, inArray(drafts.ownerId, pageUserIds())))
+      .groupBy(drafts.ownerId),
+    db
+      .select({ userId: apiTokens.userId, tokens: count() })
+      .from(apiTokens)
+      .where(and(activeTokenFilter, inArray(apiTokens.userId, pageUserIds())))
+      .groupBy(apiTokens.userId),
+  ]);
 
   const draftsByOwner = new Map(draftAgg.map((row) => [row.ownerId, row.drafts]));
   const bytesByOwner = new Map(storageAgg.map((row) => [row.ownerId, Number(row.bytes ?? 0)]));

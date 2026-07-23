@@ -1,16 +1,15 @@
+import Link from "next/link";
+import { redirect } from "next/navigation";
 import { DangerButton } from "@/components/dashboard/danger-button";
 import { DashboardHeader } from "@/components/dashboard/header";
 import { getAdminStats, listUsersWithUsage } from "@/lib/admin/service";
 import { isAdmin, requireAdmin } from "@/lib/auth/session";
 import { formatBytes, formatRelativeTime } from "@/lib/format";
 import { getSignupsEnabled } from "@/lib/settings/service";
-import {
-  deleteUserAction,
-  setSignupsEnabledAction,
-  setUserRoleAction,
-} from "./actions";
+import { deleteUserAction, setSignupsEnabledAction, setUserRoleAction } from "./actions";
 
 export const metadata = { title: "Admin" };
+const USERS_PER_PAGE = 50;
 
 function StatTile({ label, value, detail }: { label: string; value: string; detail?: string }) {
   return (
@@ -22,13 +21,27 @@ function StatTile({ label, value, detail }: { label: string; value: string; deta
   );
 }
 
-export default async function AdminPage() {
+export default async function AdminPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ page?: string }>;
+}) {
   const admin = await requireAdmin();
+  const { page: pageParam } = await searchParams;
+  const parsedPage = Number.parseInt(pageParam ?? "1", 10);
+  const page = Number.isSafeInteger(parsedPage) && parsedPage > 0 ? parsedPage : 1;
   const [stats, userRows, signupsEnabled] = await Promise.all([
     getAdminStats(),
-    listUsersWithUsage(),
+    listUsersWithUsage({
+      limit: USERS_PER_PAGE,
+      offset: (page - 1) * USERS_PER_PAGE,
+    }),
     getSignupsEnabled(),
   ]);
+  const totalPages = Math.max(1, Math.ceil(stats.users / USERS_PER_PAGE));
+  if (page > totalPages) {
+    redirect(`/dashboard/admin?page=${totalPages}`);
+  }
 
   return (
     <main className="mx-auto flex min-h-dvh w-full max-w-5xl flex-col gap-6 px-6 py-8">
@@ -125,6 +138,36 @@ export default async function AdminPage() {
             );
           })}
         </ul>
+        {totalPages > 1 ? (
+          <nav
+            aria-label="User list pagination"
+            className="flex items-center justify-between font-mono text-xs text-ink-muted"
+          >
+            {page > 1 ? (
+              <Link
+                className="transition-colors hover:text-lime"
+                href={`/dashboard/admin?page=${page - 1}`}
+              >
+                ← previous
+              </Link>
+            ) : (
+              <span />
+            )}
+            <span>
+              page {page} / {totalPages}
+            </span>
+            {page < totalPages ? (
+              <Link
+                className="transition-colors hover:text-lime"
+                href={`/dashboard/admin?page=${page + 1}`}
+              >
+                next →
+              </Link>
+            ) : (
+              <span />
+            )}
+          </nav>
+        ) : null}
       </section>
     </main>
   );

@@ -206,8 +206,9 @@ Production deployment is a deliberate, credentialed step. Runbook:
 5. Run migrations against production using the direct URL: `npm run db:migrate`.
 6. Deploy, verify auth on the Vercel domain, then attach `agentplan.app` and redirect
    `www` → apex.
-7. Set the GitHub OAuth callback to `https://agentplan.app/api/auth/callback/github`
-   and update `BETTER_AUTH_URL` / `NEXT_PUBLIC_APP_URL`; redeploy.
+7. In every deployment, update `BETTER_AUTH_URL` / `NEXT_PUBLIC_APP_URL`. If GitHub
+   OAuth is enabled, also set its callback to
+   `https://agentplan.app/api/auth/callback/github`; redeploy.
 8. Verify public/private behavior on the final domain.
 
 Choose PlanetScale and Vercel regions in the same geography where possible.

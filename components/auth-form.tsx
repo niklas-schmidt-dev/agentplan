@@ -62,9 +62,25 @@ export function AuthForm({
 
       <form onSubmit={handleSubmit} className="flex flex-col gap-3">
         {mode === "signup" ? (
-          <input type="text" name="name" placeholder="name (optional)" className={inputClass} />
+          <>
+            <label className="sr-only" htmlFor="auth-name">
+              name
+            </label>
+            <input
+              id="auth-name"
+              type="text"
+              name="name"
+              placeholder="name (optional)"
+              autoComplete="name"
+              className={inputClass}
+            />
+          </>
         ) : null}
+        <label className="sr-only" htmlFor="auth-email">
+          email
+        </label>
         <input
+          id="auth-email"
           type="email"
           name="email"
           required
@@ -72,7 +88,11 @@ export function AuthForm({
           autoComplete="email"
           className={inputClass}
         />
+        <label className="sr-only" htmlFor="auth-password">
+          password
+        </label>
         <input
+          id="auth-password"
           type="password"
           name="password"
           required
