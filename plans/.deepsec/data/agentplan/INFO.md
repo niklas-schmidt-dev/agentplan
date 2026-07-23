@@ -26,8 +26,9 @@ administrator-driven user deletion.
   `resolveDraftView` is the single authorization resolver for public,
   private, password-protected, and owner views.
 - `evaluateSignup` decides whether signup is allowed and assigns the first
-  account the admin role. `setUserRole` and `deleteUserCompletely` are
-  privileged admin operations exposed only through `requireAdmin` actions.
+  account the admin role; database triggers serialize that decision and enforce
+  disabled signup policy at insertion. `setUserRole` and
+  `deleteUserCompletely` recheck current admin status under a shared lock.
 - Password access uses a draft-scoped HMAC cookie whose signature is bound to
   the current password hash, so password rotation should revoke old grants.
 
@@ -57,6 +58,8 @@ existence and protected titles should not leak before authorization.
   URL, or object bytes before `resolveDraftView` grants access.
 - First-user admin assignment and quota/rate-limit checks must remain correct
   under concurrent serverless requests, not only sequential tests.
+- User deletion commits a durable storage-cleanup record with the database
+  cascade. Check uploads racing the cleanup-key snapshot and retry behavior.
 
 ## Known false-positives
 
