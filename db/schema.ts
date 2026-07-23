@@ -6,6 +6,7 @@ import {
   jsonb,
   pgEnum,
   pgTable,
+  primaryKey,
   text,
   timestamp,
   uniqueIndex,
@@ -13,6 +14,8 @@ import {
   varchar,
   type AnyPgColumn,
 } from "drizzle-orm/pg-core";
+
+export const userPlan = pgEnum("user_plan", ["free", "unlimited"]);
 
 // --- Better Auth tables (shape must match better-auth's generated schema) ---
 
@@ -22,6 +25,9 @@ export const users = pgTable("users", {
   email: text("email").notNull().unique(),
   emailVerified: boolean("email_verified").default(false).notNull(),
   image: text("image"),
+  // App-managed, invisible to Better Auth. "unlimited" bypasses quotas and
+  // upload rate limits; set via scripts/set-user-plan.ts.
+  plan: userPlan("plan").notNull().default("free"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at")
     .defaultNow()
@@ -182,8 +188,24 @@ export const auditEvents = pgTable(
   (table) => [index("audit_events_draft_id_idx").on(table.draftId)],
 );
 
+export const rateLimits = pgTable(
+  "rate_limits",
+  {
+    // e.g. "uploads:10m:<userId>" or "pw:<draftId>:<clientHash>"; one row per window.
+    key: varchar("key", { length: 120 }).notNull(),
+    windowStart: timestamp("window_start", { withTimezone: true }).notNull(),
+    count: integer("count").notNull().default(0),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.key, table.windowStart] }),
+    index("rate_limits_expires_at_idx").on(table.expiresAt),
+  ],
+);
+
 export type User = typeof users.$inferSelect;
 export type Draft = typeof drafts.$inferSelect;
 export type DraftVersion = typeof draftVersions.$inferSelect;
 export type ApiToken = typeof apiTokens.$inferSelect;
 export type Visibility = (typeof draftVisibility.enumValues)[number];
+export type UserPlan = (typeof userPlan.enumValues)[number];

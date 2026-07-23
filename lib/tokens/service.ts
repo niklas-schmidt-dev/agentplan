@@ -2,6 +2,7 @@ import { and, desc, eq, gt, isNull, or, sql } from "drizzle-orm";
 import { getDb } from "@/db/client";
 import { apiTokens, type ApiToken } from "@/db/schema";
 import { recordAuditEvent } from "@/lib/audit/events";
+import { assertTokenCreationAllowed } from "@/lib/limits/enforce";
 import { constantTimeEqual } from "@/lib/security/compare";
 import { generateApiToken, hashToken, type TokenScope } from "./token";
 
@@ -18,17 +19,27 @@ export async function createToken(params: {
   expiresAt?: Date;
 }): Promise<CreatedToken> {
   const generated = generateApiToken();
-  const [record] = await getDb()
-    .insert(apiTokens)
-    .values({
-      userId: params.userId,
-      name: params.name,
-      tokenPrefix: generated.tokenPrefix,
-      tokenHash: generated.tokenHash,
-      scopes: params.scopes,
-      expiresAt: params.expiresAt ?? null,
-    })
-    .returning();
+  const record = await getDb().transaction(async (tx) => {
+    // Token creation has no rate limiter, so the cap check must be atomic with
+    // the insert: the per-user advisory lock serializes concurrent requests
+    // that would otherwise all pass the count while below the cap.
+    await tx.execute(
+      sql`select pg_advisory_xact_lock(hashtext('tokens'), hashtext(${params.userId}))`,
+    );
+    await assertTokenCreationAllowed(params.userId, tx);
+    const [inserted] = await tx
+      .insert(apiTokens)
+      .values({
+        userId: params.userId,
+        name: params.name,
+        tokenPrefix: generated.tokenPrefix,
+        tokenHash: generated.tokenHash,
+        scopes: params.scopes,
+        expiresAt: params.expiresAt ?? null,
+      })
+      .returning();
+    return inserted;
+  });
   if (!record) throw new Error("Token insert returned no rows");
   await recordAuditEvent({
     type: "token.created",

@@ -18,6 +18,13 @@ const VIEWER_SHELL_CSP = [
 
 const nextConfig: NextConfig = {
   poweredByHeader: false,
+  experimental: {
+    serverActions: {
+      // Default is 1 MB, which would reject dashboard uploads below the 2 MiB
+      // file limit; 3mb covers the file plus multipart framing.
+      bodySizeLimit: "3mb",
+    },
+  },
   async headers() {
     return [
       {

@@ -14,6 +14,7 @@ import {
   setDraftVisibility,
   softDeleteDraft,
 } from "@/lib/drafts/service";
+import { QuotaExceededError, RateLimitedError } from "@/lib/limits/errors";
 import { createToken, revokeToken } from "@/lib/tokens/service";
 import {
   createTokenSchema,
@@ -25,6 +26,16 @@ import { normalizeTitle, titleFromFilename, validateUpload } from "@/lib/validat
 import type { Draft } from "@/db/schema";
 
 export type UploadState = { error: string } | null;
+
+/** User-facing message for quota/rate-limit rejections; null for other errors. */
+function limitErrorMessage(error: unknown): string | null {
+  if (error instanceof QuotaExceededError) return error.message;
+  if (error instanceof RateLimitedError) {
+    const minutes = Math.max(1, Math.ceil(error.retryAfterSeconds / 60));
+    return `Rate limit exceeded. Try again in about ${minutes} minute${minutes === 1 ? "" : "s"}.`;
+  }
+  return null;
+}
 
 async function readUploadFile(formData: FormData): Promise<
   { bytes: Uint8Array; filename: string } | { error: string }
@@ -83,6 +94,8 @@ export async function uploadDraftAction(
     if (error instanceof PasswordRequiredError) {
       return { error: "A password is required for password-protected drafts." };
     }
+    const limitError = limitErrorMessage(error);
+    if (limitError) return { error: limitError };
     console.error("uploadDraftAction failed", error);
     return { error: "Upload failed. Please try again." };
   }
@@ -109,6 +122,8 @@ export async function uploadVersionAction(
   try {
     await addVersionToDraft({ draft, bytes: upload.bytes, source: "browser" });
   } catch (error) {
+    const limitError = limitErrorMessage(error);
+    if (limitError) return { error: limitError };
     console.error("uploadVersionAction failed", error);
     return { error: "Upload failed. Please try again." };
   }
@@ -173,7 +188,14 @@ export async function restoreVersionAction(formData: FormData): Promise<void> {
   if (versionId.success) {
     const version = await getVersionById(draft.id, versionId.data);
     if (version) {
-      await restoreVersion({ draft, version, source: "browser" });
+      try {
+        await restoreVersion({ draft, version, source: "browser" });
+      } catch (error) {
+        // No error channel on this plain form action; a limit rejection just
+        // leaves the page unchanged instead of surfacing a 500.
+        if (!limitErrorMessage(error)) throw error;
+        console.warn("restoreVersionAction rate/quota limited", error);
+      }
     }
   }
   revalidatePath(`/dashboard/drafts/${draft.id}`);
@@ -214,6 +236,8 @@ export async function createTokenAction(
     revalidatePath("/dashboard/settings/tokens");
     return { secret: created.token, name: created.record.name };
   } catch (error) {
+    const limitError = limitErrorMessage(error);
+    if (limitError) return { error: limitError };
     console.error("createTokenAction failed", error);
     return { error: "Could not create the token. Please try again." };
   }

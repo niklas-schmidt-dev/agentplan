@@ -140,6 +140,35 @@ Errors have a stable shape agents can match on:
 { "error": { "code": "INVALID_FILE_TYPE", "message": "Only HTML files are supported." } }
 ```
 
+## Limits & abuse protection
+
+Free-plan limits (all server-enforced; tunable via `AP_*` env vars, defaults in
+`lib/limits/plans.ts`):
+
+| Limit | Default |
+| --- | --- |
+| Upload size | 2 MiB per HTML file |
+| Drafts per user | 100 |
+| Versions kept per draft | 100 (oldest are pruned, uploads never hard-fail) |
+| Total storage per user | 250 MiB |
+| Active API tokens per user | 25 |
+| Uploads per user | 30 / 10 min and 300 / day |
+| Draft password attempts | 10 / 15 min per draft + IP |
+
+Exceeded quotas return `403 QUOTA_EXCEEDED`; rate limits return `429 RATE_LIMITED`
+with a `Retry-After` header. Rate limiting is a fixed-window counter in Postgres, so
+it needs no extra infrastructure and is correct across serverless instances.
+
+Soft-deleted drafts (and their stored objects) are hard-deleted after 7 days by a
+daily cron (`/api/cron/purge`, authorized via `CRON_SECRET`).
+
+To exempt a user from all quotas and upload rate limits (needs `DATABASE_URL`,
+loaded from `.env` automatically):
+
+```bash
+bun scripts/set-user-plan.ts someone@example.com unlimited   # back to normal: … free
+```
+
 ## Security
 
 AgentPlan hosts arbitrary, hostile HTML. See [SECURITY.md](SECURITY.md) for the full
@@ -169,7 +198,7 @@ Production deployment is a deliberate, credentialed step. Runbook:
 4. Configure production env vars in Vercel: `DATABASE_URL`, `DATABASE_URL_DIRECT`,
    `BETTER_AUTH_SECRET`, `BETTER_AUTH_URL`, `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`,
    `NEXT_PUBLIC_APP_URL`, `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`,
-   `R2_BUCKET`.
+   `R2_BUCKET`, `CRON_SECRET` (authorizes the daily purge cron).
 5. Run migrations against production using the direct URL: `npm run db:migrate`.
 6. Deploy, verify auth on the Vercel domain, then attach `agentplan.app` and redirect
    `www` → apex.

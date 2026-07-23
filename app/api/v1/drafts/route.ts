@@ -1,6 +1,12 @@
 import { listDraftsForOwner } from "@/db/queries/drafts";
 import { authenticateApiRequest, isFailure } from "@/lib/api/auth";
-import { insufficientScope, internalError, invalidRequest, unauthorized } from "@/lib/api/responses";
+import {
+  insufficientScope,
+  internalError,
+  invalidRequest,
+  limitErrorResponse,
+  unauthorized,
+} from "@/lib/api/responses";
 import { serializeDraft } from "@/lib/api/serialize";
 import { readUpload } from "@/lib/api/upload";
 import {
@@ -42,6 +48,8 @@ export async function POST(req: Request): Promise<Response> {
     if (error instanceof PasswordVisibilityConflictError) {
       return invalidRequest("A password cannot be combined with public or private visibility.");
     }
+    const limited = limitErrorResponse(error);
+    if (limited) return limited;
     console.error("POST /api/v1/drafts failed", error);
     return internalError();
   }

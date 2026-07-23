@@ -1,3 +1,5 @@
+import { QuotaExceededError, RateLimitedError } from "@/lib/limits/errors";
+
 export type ApiErrorCode =
   | "UNAUTHORIZED"
   | "INSUFFICIENT_SCOPE"
@@ -6,6 +8,8 @@ export type ApiErrorCode =
   | "INVALID_FILE_TYPE"
   | "FILE_TOO_LARGE"
   | "EMPTY_FILE"
+  | "QUOTA_EXCEEDED"
+  | "RATE_LIMITED"
   | "INTERNAL_ERROR";
 
 // Error codes are part of the public contract — agents match on them. Add new
@@ -27,3 +31,20 @@ export const invalidRequest = (message: string): Response =>
 
 export const internalError = (): Response =>
   apiError(500, "INTERNAL_ERROR", "Something went wrong.");
+
+/** Maps quota/rate-limit errors to their API responses; null for anything else. */
+export function limitErrorResponse(error: unknown): Response | null {
+  if (error instanceof QuotaExceededError) {
+    return apiError(403, "QUOTA_EXCEEDED", error.message);
+  }
+  if (error instanceof RateLimitedError) {
+    const response = apiError(
+      429,
+      "RATE_LIMITED",
+      `Rate limit exceeded. Retry in ${error.retryAfterSeconds} seconds.`,
+    );
+    response.headers.set("Retry-After", String(error.retryAfterSeconds));
+    return response;
+  }
+  return null;
+}

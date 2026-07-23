@@ -48,7 +48,12 @@ export default async function DraftViewerPage({
 
   if (resolution.state === "password") {
     const { error } = await searchParams;
-    return <DraftPasswordForm slug={slug} error={error === "1"} />;
+    return (
+      <DraftPasswordForm
+        slug={slug}
+        error={error === "rate" ? "rate-limited" : error === "1" ? "wrong-password" : undefined}
+      />
+    );
   }
 
   return (

@@ -1,6 +1,8 @@
 import { submitDraftPassword } from "@/app/p/[slug]/actions";
 
-export function DraftPasswordForm({ slug, error }: { slug: string; error?: boolean }) {
+export type PasswordFormError = "wrong-password" | "rate-limited";
+
+export function DraftPasswordForm({ slug, error }: { slug: string; error?: PasswordFormError }) {
   return (
     <main className="flex min-h-dvh flex-col items-center justify-center gap-6 px-6">
       <div className="flex w-full max-w-sm flex-col gap-4 rounded-lg border border-edge bg-surface p-6">
@@ -25,7 +27,9 @@ export function DraftPasswordForm({ slug, error }: { slug: string; error?: boole
           />
           {error ? (
             <p role="alert" className="font-mono text-xs text-danger">
-              Incorrect password. Try again.
+              {error === "rate-limited"
+                ? "Too many attempts. Try again in a few minutes."
+                : "Incorrect password. Try again."}
             </p>
           ) : null}
           <button

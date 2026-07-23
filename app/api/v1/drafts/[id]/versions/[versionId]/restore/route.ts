@@ -1,6 +1,12 @@
 import { getDraftForOwner, getVersionById } from "@/db/queries/drafts";
 import { authenticateApiRequest, isFailure } from "@/lib/api/auth";
-import { insufficientScope, internalError, notFound, unauthorized } from "@/lib/api/responses";
+import {
+  insufficientScope,
+  internalError,
+  limitErrorResponse,
+  notFound,
+  unauthorized,
+} from "@/lib/api/responses";
 import { serializeDraft, serializeVersion } from "@/lib/api/serialize";
 import { DraftNotFoundError, restoreVersion } from "@/lib/drafts/service";
 import { uuidSchema } from "@/lib/validation/api";
@@ -41,6 +47,8 @@ export async function POST(req: Request, { params }: Params): Promise<Response> 
     );
   } catch (error) {
     if (error instanceof DraftNotFoundError) return notFound();
+    const limited = limitErrorResponse(error);
+    if (limited) return limited;
     console.error("POST restore failed", error);
     return internalError();
   }

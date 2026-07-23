@@ -1,5 +1,10 @@
 import { authenticateSession } from "@/lib/api/auth";
-import { internalError, invalidRequest, unauthorized } from "@/lib/api/responses";
+import {
+  internalError,
+  invalidRequest,
+  limitErrorResponse,
+  unauthorized,
+} from "@/lib/api/responses";
 import { serializeToken } from "@/lib/api/serialize";
 import { createToken, listTokensForUser } from "@/lib/tokens/service";
 import { createTokenSchema } from "@/lib/validation/api";
@@ -47,6 +52,8 @@ export async function POST(req: Request): Promise<Response> {
       { status: 201 },
     );
   } catch (error) {
+    const limited = limitErrorResponse(error);
+    if (limited) return limited;
     console.error("POST /api/v1/tokens failed", error);
     return internalError();
   }

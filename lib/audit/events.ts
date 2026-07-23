@@ -8,6 +8,7 @@ export type AuditEventType =
   | "draft.visibility_changed"
   | "draft.title_changed"
   | "draft.deleted"
+  | "draft.purged"
   | "token.created"
   | "token.revoked";
 
