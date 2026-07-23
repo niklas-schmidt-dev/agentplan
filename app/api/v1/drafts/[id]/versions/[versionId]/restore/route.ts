@@ -9,6 +9,7 @@ import {
 } from "@/lib/api/responses";
 import { serializeDraft, serializeVersion } from "@/lib/api/serialize";
 import { DraftNotFoundError, restoreVersion } from "@/lib/drafts/service";
+import { consumeUploadRateLimit } from "@/lib/limits/enforce";
 import { uuidSchema } from "@/lib/validation/api";
 
 export const runtime = "nodejs";
@@ -32,11 +33,13 @@ export async function POST(req: Request, { params }: Params): Promise<Response> 
   if (!version) return notFound();
 
   try {
+    await consumeUploadRateLimit(actor.userId);
     const { version: restored, draft: updatedDraft } = await restoreVersion({
       draft,
       version,
       source: actor.kind === "token" ? "api_token" : "browser",
       tokenId: actor.kind === "token" ? actor.tokenId : undefined,
+      rateLimitConsumed: true,
     });
     return Response.json(
       {

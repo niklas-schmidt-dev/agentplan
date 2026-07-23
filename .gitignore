@@ -20,3 +20,6 @@ next-env.d.ts
 .data/
 playwright-report/
 test-results/
+
+# Vetted security audits are delivered privately, not published with source.
+plans/security-audit-*.md

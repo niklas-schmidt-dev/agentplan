@@ -29,8 +29,23 @@ The core security invariants are:
    that specific draft, and is never publicly cached. A grant for one draft cannot
    unlock another.
 4. **API tokens are never stored or logged in full.** Only a visible prefix and a
-   SHA-256 hash are persisted; comparisons are constant-time.
-5. **No secrets in the repository.** Only `.env.example` placeholders are committed.
+   SHA-256 hash are persisted; comparisons are constant-time. Create/revoke churn
+   is rate-limited and retired records have finite retention.
+5. **Protected URLs do not disclose titles.** Private and password-protected drafts
+   use high-entropy random slugs. A public-to-protected transition rotates the slug.
+6. **Initial administration is operator-authorized.** An empty database accepts
+   only the normalized `ADMIN_BOOTSTRAP_EMAIL`; the database independently requires
+   the first row to be marked admin and serializes the bootstrap race.
+7. **Email/password identities prove mailbox control.** New accounts receive no
+   application session until verification. Signup and recovery responses are
+   non-enumerating and use shared Postgres-backed account/route limits.
+8. **Destructive lifecycle operations are serialized.** Uploads and account
+   deletion share a per-user storage lock. Deletion cleanup is durable and strips
+   identifiers/object keys after completion; ordinary audit history has finite
+   retention.
+9. **No secrets in the repository.** Only `.env.example` placeholders are committed.
+   CI scans the current tree and complete reachable Git history without printing
+   matched values.
 
 ## Scope
 

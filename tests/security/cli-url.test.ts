@@ -1,5 +1,28 @@
 import { describe, expect, it } from "vitest";
-import { isSafeHttpUrl } from "@/packages/cli/src/url";
+import { isSafeHttpUrl, normalizeApiBaseUrl } from "@/packages/cli/src/url";
+
+describe("normalizeApiBaseUrl (bearer-token destination guard)", () => {
+  it("accepts HTTPS and strips one trailing slash", () => {
+    expect(normalizeApiBaseUrl("https://agentplan.app/")).toBe("https://agentplan.app");
+  });
+
+  it("permits HTTP only for local development", () => {
+    expect(normalizeApiBaseUrl("http://localhost:3000/")).toBe("http://localhost:3000");
+    expect(() => normalizeApiBaseUrl("http://agentplan.app")).toThrow(/HTTPS/);
+    expect(() => normalizeApiBaseUrl("http://192.168.1.10:3000")).toThrow(/HTTPS/);
+  });
+
+  it("rejects credentials, query strings, fragments, and malformed input", () => {
+    for (const url of [
+      "https://token@example.com",
+      "https://example.com?forward=elsewhere",
+      "https://example.com#fragment",
+      "not a url",
+    ]) {
+      expect(() => normalizeApiBaseUrl(url), url).toThrow();
+    }
+  });
+});
 
 describe("isSafeHttpUrl (agentplan open injection guard)", () => {
   it("accepts normal agentplan URLs", () => {
@@ -8,6 +31,7 @@ describe("isSafeHttpUrl (agentplan open injection guard)", () => {
   });
 
   it("rejects non-http(s) schemes", () => {
+    expect(isSafeHttpUrl("http://agentplan.app/p/cleartext")).toBe(false);
     expect(isSafeHttpUrl("file:///etc/passwd")).toBe(false);
     expect(isSafeHttpUrl("javascript:alert(1)")).toBe(false);
     expect(isSafeHttpUrl("data:text/html,<script>1</script>")).toBe(false);

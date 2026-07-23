@@ -5,6 +5,9 @@ on:
     branches: [main]
   pull_request:
 
+permissions:
+  contents: read
+
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
@@ -13,21 +16,14 @@ jobs:
   secret-scan:
     name: Secret scan
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           fetch-depth: 0
+          persist-credentials: false
       - name: Scan tracked files for secrets
-        run: |
-          # Fail if anything that looks like a live credential is committed.
-          # .env.example placeholders (empty assignments) are allowed.
-          if git grep -nIE \
-            '(ghp_[A-Za-z0-9]{20,}|gho_[A-Za-z0-9]{20,}|sk-ant-[A-Za-z0-9]|BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY|postgres(ql)?://[^ ]*:[^ @]+@|BLOB_READ_WRITE_TOKEN=.+|R2_SECRET_ACCESS_KEY=.+|BETTER_AUTH_SECRET=.+)' \
-            -- . ':(exclude).github/workflows/ci.yml'; then
-            echo "::error::Potential secret found in tracked files."
-            exit 1
-          fi
-          echo "No secrets detected."
+        run: npm run security:secrets
       - name: Ensure no .env files are tracked
         run: |
           if git ls-files | grep -E '^\.env(\..*)?$' | grep -vE '\.example$'; then
@@ -38,6 +34,7 @@ jobs:
   test:
     name: Lint, typecheck, test, build
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     services:
       postgres:
         image: postgres:17-alpine
@@ -61,12 +58,16 @@ jobs:
       BETTER_AUTH_URL: http://localhost:3000
       NEXT_PUBLIC_APP_URL: http://localhost:3000
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
           node-version: 24
           cache: npm
       - run: npm ci
+      - name: Audit production dependencies
+        run: npm audit --omit=dev --audit-level=high
       - name: Apply database migrations
         run: npm run db:migrate
       - name: Lint
@@ -83,6 +84,7 @@ jobs:
   e2e:
     name: End-to-end security tests
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     services:
       postgres:
         image: postgres:17-alpine
@@ -103,8 +105,10 @@ jobs:
       STORAGE_FS_ROOT: .data/e2e-storage
       BETTER_AUTH_SECRET: ci-secret-not-for-production-00000000
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
           node-version: 24
           cache: npm

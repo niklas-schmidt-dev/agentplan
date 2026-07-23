@@ -20,7 +20,9 @@ import { GET as listDraftsRoute, POST as createDraftRoute } from "@/app/api/v1/d
 import { GET as contentRoute } from "@/app/p/[slug]/content/route";
 import { GET as listTokensRoute, POST as createTokenRoute } from "@/app/api/v1/tokens/route";
 import { DELETE as revokeTokenRoute } from "@/app/api/v1/tokens/[id]/route";
-import { closeDb } from "@/db/client";
+import { count, eq } from "drizzle-orm";
+import { closeDb, getDb } from "@/db/client";
+import { users } from "@/db/schema";
 import { getDraftForOwner, listVersions } from "@/db/queries/drafts";
 import { getAuth } from "@/lib/auth/auth";
 import { accessCookieName, issueDraftAccess } from "@/lib/drafts/access";
@@ -31,9 +33,18 @@ const hasDb = Boolean(process.env.DATABASE_URL);
 const BASE = "http://localhost:3000";
 
 async function signUp(email: string): Promise<{ userId: string; cookie: string }> {
+  const [existing] = await getDb().select({ value: count() }).from(users);
+  if ((existing?.value ?? 0) === 0) {
+    process.env.ADMIN_BOOTSTRAP_EMAIL = email;
+  }
   const auth = getAuth();
-  const { headers, response } = await auth.api.signUpEmail({
+  const { response } = await auth.api.signUpEmail({
     body: { email, password: "test-password-123", name: email.split("@")[0] ?? "user" },
+    returnHeaders: true,
+  });
+  await getDb().update(users).set({ emailVerified: true }).where(eq(users.id, response.user.id));
+  const { headers } = await auth.api.signInEmail({
+    body: { email, password: "test-password-123" },
     returnHeaders: true,
   });
   const setCookie = headers.get("set-cookie") ?? "";
@@ -42,7 +53,7 @@ async function signUp(email: string): Promise<{ userId: string; cookie: string }
     .map((part) => part.split(";")[0]?.trim())
     .filter(Boolean)
     .join("; ");
-  if (!cookie) throw new Error("Sign-up returned no session cookie");
+  if (!cookie) throw new Error("Verified sign-in returned no session cookie");
   return { userId: response.user.id, cookie };
 }
 
@@ -61,7 +72,7 @@ function uploadRequest(fields: {
   if (fields.title) form.set("title", fields.title);
   if (fields.visibility) form.set("visibility", fields.visibility);
   if (fields.password) form.set("password", fields.password);
-  const headers: Record<string, string> = {};
+  const headers: Record<string, string> = { origin: BASE };
   if (fields.cookie) headers.cookie = fields.cookie;
   if (fields.bearer) headers.authorization = `Bearer ${fields.bearer}`;
   return new Request(`${BASE}/api/v1/drafts`, { method: "POST", body: form, headers });
@@ -73,7 +84,10 @@ function jsonRequest(
   body: unknown,
   auth: { cookie?: string; bearer?: string },
 ): Request {
-  const headers: Record<string, string> = { "content-type": "application/json" };
+  const headers: Record<string, string> = {
+    "content-type": "application/json",
+    origin: BASE,
+  };
   if (auth.cookie) headers.cookie = auth.cookie;
   if (auth.bearer) headers.authorization = `Bearer ${auth.bearer}`;
   return new Request(url, {
@@ -144,6 +158,13 @@ describe.skipIf(!hasDb)("authorization matrix (integration)", () => {
       params(privateDraft.id),
     );
     expect((await res.json()).draft.visibility).toBe("private");
+  });
+
+  it("rejects cross-origin session mutations before reading an upload", async () => {
+    const request = uploadRequest({ cookie: owner.cookie, title: "CSRF attempt" });
+    request.headers.set("origin", "https://attacker.example");
+    const res = await createDraftRoute(request);
+    expect(res.status).toBe(401);
   });
 
   describe("view public draft content", () => {
@@ -285,6 +306,9 @@ describe.skipIf(!hasDb)("authorization matrix (integration)", () => {
         params(privateDraft.id),
       );
       expect(back.status).toBe(200);
+      const protectedAgain = (await back.json()).draft;
+      expect(protectedAgain.slug).toMatch(/^draft-[A-Za-z0-9_-]{24}$/);
+      expect(protectedAgain.slug).not.toBe(privateDraft.slug);
       const anonAgain = await contentRoute(
         contentReq(privateDraft.slug),
         contentParams(privateDraft.slug),
@@ -458,6 +482,9 @@ describe.skipIf(!hasDb)("authorization matrix (integration)", () => {
         params(draft.id),
       );
       expect(rePassworded.status).toBe(200);
+      const reProtectedDraft = (await rePassworded.json()).draft;
+      expect(reProtectedDraft.slug).toMatch(/^draft-[A-Za-z0-9_-]{24}$/);
+      expect(reProtectedDraft.slug).not.toBe(draft.slug);
       const gatedAgain = await contentRoute(
         new Request(`${BASE}/p/${draft.slug}/content`),
         contentParams(draft.slug),
@@ -482,7 +509,7 @@ describe.skipIf(!hasDb)("authorization matrix (integration)", () => {
         new Request(`${BASE}/api/v1/drafts/${draft.id}/versions`, {
           method: "POST",
           body: form,
-          headers: { cookie: owner.cookie },
+          headers: { cookie: owner.cookie, origin: BASE },
         }),
         params(draft.id),
       );

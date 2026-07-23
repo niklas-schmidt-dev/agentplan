@@ -17,6 +17,7 @@
     "typecheck": "tsc --noEmit",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
+    "security:secrets": "node scripts/scan-secrets.mjs",
     "test": "vitest run",
     "test:e2e": "playwright test",
     "db:generate": "drizzle-kit generate",
@@ -35,7 +36,12 @@
     "pg": "^8.22.0",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
+    "sharp": "0.35.3",
     "zod": "^4.4.3"
+  },
+  "overrides": {
+    "postcss": "8.5.22",
+    "sharp": "0.35.3"
   },
   "devDependencies": {
     "@playwright/test": "^1.61.1",

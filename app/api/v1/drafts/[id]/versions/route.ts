@@ -10,6 +10,7 @@ import {
 import { serializeDraft, serializeVersion } from "@/lib/api/serialize";
 import { readUpload } from "@/lib/api/upload";
 import { addVersionToDraft, DraftNotFoundError } from "@/lib/drafts/service";
+import { consumeUploadRateLimit } from "@/lib/limits/enforce";
 import { uuidSchema } from "@/lib/validation/api";
 
 export const runtime = "nodejs";
@@ -27,6 +28,13 @@ export async function POST(req: Request, { params }: Params): Promise<Response> 
   const draft = await getDraftForOwner(id.data, actor.userId);
   if (!draft) return notFound();
 
+  try {
+    await consumeUploadRateLimit(actor.userId);
+  } catch (error) {
+    const limited = limitErrorResponse(error);
+    if (limited) return limited;
+    throw error;
+  }
   const upload = await readUpload(req);
   if (upload instanceof Response) return upload;
 
@@ -36,6 +44,7 @@ export async function POST(req: Request, { params }: Params): Promise<Response> 
       bytes: upload.bytes,
       source: actor.kind === "token" ? "api_token" : "browser",
       tokenId: actor.kind === "token" ? actor.tokenId : undefined,
+      rateLimitConsumed: true,
     });
     return Response.json(
       {

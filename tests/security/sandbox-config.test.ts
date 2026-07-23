@@ -52,6 +52,34 @@ describe("content route ships hardened headers", () => {
   it("sends nosniff, no-referrer, and visibility-aware caching", () => {
     expect(source).toContain('"X-Content-Type-Options": "nosniff"');
     expect(source).toContain('"Referrer-Policy": "no-referrer"');
+    expect(source).toContain('"Strict-Transport-Security": "max-age=63072000; includeSubDomains"');
     expect(source).toContain("private, no-store");
+  });
+});
+
+describe("application-wide response hardening", () => {
+  const source = readCode("next.config.ts");
+  const proxySource = readCode("proxy.ts");
+
+  it("sets transport, framing, MIME, referrer, and browser capability controls", () => {
+    expect(source).toContain('"Strict-Transport-Security"');
+    expect(source).toContain("includeSubDomains");
+    expect(source).toContain('"X-Frame-Options", value: "DENY"');
+    expect(source).toContain('"X-Content-Type-Options", value: "nosniff"');
+    expect(source).toContain('"Permissions-Policy"');
+    expect(source).toContain('"Cross-Origin-Opener-Policy"');
+  });
+
+  it("marks every API response private and varies on both auth mechanisms", () => {
+    expect(source).toContain('source: "/api/:path*"');
+    expect(source).toContain('"Cache-Control", value: "private, no-store"');
+    expect(source).toContain('"Vary", value: "Authorization, Cookie"');
+  });
+
+  it("uses a per-request script nonce and never allows inline application scripts", () => {
+    expect(proxySource).toContain("'nonce-${nonce}'");
+    expect(proxySource).toContain("'strict-dynamic'");
+    expect(proxySource).not.toContain("script-src 'self' 'unsafe-inline'");
+    expect(proxySource).toContain("frame-ancestors 'none'");
   });
 });

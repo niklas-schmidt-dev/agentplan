@@ -4,6 +4,7 @@ import { getDb } from "@/db/client";
 import {
   draftVersions,
   drafts,
+  users,
   type Draft,
   type DraftVersion,
   type Visibility,
@@ -57,8 +58,9 @@ function isUniqueViolation(error: unknown): boolean {
 }
 
 /**
- * Upload flow: write bytes to private storage first, then commit metadata in
- * one transaction. If the transaction fails, try to remove the orphaned object.
+ * Upload flow: serialize account lifecycle, write private storage, and commit
+ * metadata as one transaction-scoped unit. If the transaction fails after the
+ * object write, try to remove the orphaned object.
  */
 export async function createDraftWithFirstVersion(params: {
   ownerId: string;
@@ -67,6 +69,8 @@ export async function createDraftWithFirstVersion(params: {
   bytes: Uint8Array;
   source: UploadSource;
   tokenId?: string;
+  /** Set only when the authenticated route reserved the rate budget before reading the body. */
+  rateLimitConsumed?: boolean;
   /** Required plaintext when visibility is "password"; invalid otherwise. */
   password?: string;
 }): Promise<{ draft: Draft; version: DraftVersion }> {
@@ -85,15 +89,26 @@ export async function createDraftWithFirstVersion(params: {
   const passwordHash =
     params.visibility === "password" ? await hashPassword(params.password!) : null;
 
-  await consumeUploadRateLimit(params.ownerId);
-  await getStorage().put(storageKey, params.bytes, HTML_CONTENT_TYPE);
+  if (!params.rateLimitConsumed) await consumeUploadRateLimit(params.ownerId);
 
+  let stored = false;
   try {
     let lastError: unknown;
     for (let attempt = 0; attempt < SLUG_ATTEMPTS; attempt++) {
-      const slug = generateSlug(params.title);
+      const slug = generateSlug(params.title, params.visibility === "public");
       try {
         const result = await db.transaction(async (tx) => {
+          // Account deletion takes the same lock before capturing storage keys.
+          // Keeping the bounded object write inside this transaction makes the
+          // database row and deletion cleanup inventory one serialized unit.
+          await tx.execute(
+            sql`select pg_advisory_xact_lock(hashtext('agentplan:user-storage'), hashtext(${params.ownerId}))`,
+          );
+          const [owner] = await tx
+            .select({ id: users.id })
+            .from(users)
+            .where(eq(users.id, params.ownerId));
+          if (!owner) throw new DraftNotFoundError();
           await lockAndAssertUploadQuota(
             {
               userId: params.ownerId,
@@ -102,6 +117,8 @@ export async function createDraftWithFirstVersion(params: {
             },
             tx,
           );
+          await getStorage().put(storageKey, params.bytes, HTML_CONTENT_TYPE);
+          stored = true;
           const [draft] = await tx
             .insert(drafts)
             .values({
@@ -151,9 +168,13 @@ export async function createDraftWithFirstVersion(params: {
     }
     throw lastError ?? new Error("Could not generate a unique slug");
   } catch (error) {
-    await getStorage()
-      .delete(storageKey)
-      .catch((cleanupError) => console.error("Failed to clean up orphaned object", storageKey, cleanupError));
+    if (stored) {
+      await getStorage()
+        .delete(storageKey)
+        .catch((cleanupError) =>
+          console.error("Failed to clean up orphaned object", storageKey, cleanupError),
+        );
+    }
     throw error;
   }
 }
@@ -165,17 +186,27 @@ export async function addVersionToDraft(params: {
   tokenId?: string;
   auditType?: "draft.version_created" | "draft.version_restored";
   auditMetadata?: Record<string, unknown>;
+  /** Set only when the caller consumed the budget before resource retrieval. */
+  rateLimitConsumed?: boolean;
 }): Promise<{ version: DraftVersion; draft: Draft }> {
   const db = getDb();
   const versionId = randomUUID();
   const storageKey = storageKeyFor(params.draft.ownerId, params.draft.id, versionId);
   const contentSha256 = sha256Hex(params.bytes);
 
-  await consumeUploadRateLimit(params.draft.ownerId);
-  await getStorage().put(storageKey, params.bytes, HTML_CONTENT_TYPE);
+  if (!params.rateLimitConsumed) await consumeUploadRateLimit(params.draft.ownerId);
 
+  let stored = false;
   try {
     const result = await db.transaction(async (tx) => {
+      await tx.execute(
+        sql`select pg_advisory_xact_lock(hashtext('agentplan:user-storage'), hashtext(${params.draft.ownerId}))`,
+      );
+      const [owner] = await tx
+        .select({ id: users.id })
+        .from(users)
+        .where(eq(users.id, params.draft.ownerId));
+      if (!owner) throw new DraftNotFoundError();
       const limits = await lockAndAssertUploadQuota(
         {
           userId: params.draft.ownerId,
@@ -184,6 +215,8 @@ export async function addVersionToDraft(params: {
         },
         tx,
       );
+      await getStorage().put(storageKey, params.bytes, HTML_CONTENT_TYPE);
+      stored = true;
       // Serialize version numbering per draft. A draft that was soft-deleted
       // between the caller's check and this lock is a 404, not a server error.
       const [locked] = await tx
@@ -271,9 +304,13 @@ export async function addVersionToDraft(params: {
     });
     return { version: result.version, draft: result.draft };
   } catch (error) {
-    await getStorage()
-      .delete(storageKey)
-      .catch((cleanupError) => console.error("Failed to clean up orphaned object", storageKey, cleanupError));
+    if (stored) {
+      await getStorage()
+        .delete(storageKey)
+        .catch((cleanupError) =>
+          console.error("Failed to clean up orphaned object", storageKey, cleanupError),
+        );
+    }
     throw error;
   }
 }
@@ -284,7 +321,9 @@ export async function restoreVersion(params: {
   version: DraftVersion;
   source: UploadSource;
   tokenId?: string;
+  rateLimitConsumed?: boolean;
 }): Promise<{ version: DraftVersion; draft: Draft }> {
+  if (!params.rateLimitConsumed) await consumeUploadRateLimit(params.draft.ownerId);
   const bytes = await getStorage().get(params.version.storageKey);
   if (!bytes) throw new Error("Stored content for this version is missing");
   return addVersionToDraft({
@@ -292,6 +331,7 @@ export async function restoreVersion(params: {
     bytes,
     source: params.source,
     tokenId: params.tokenId,
+    rateLimitConsumed: true,
     auditType: "draft.version_restored",
     auditMetadata: { restoredFromVersion: params.version.versionNumber },
   });
@@ -328,6 +368,9 @@ export async function setDraftVisibility(
     .update(drafts)
     .set({
       visibility,
+      ...(draft.visibility === "public" && visibility !== "public"
+        ? { slug: generateSlug("", false) }
+        : {}),
       ...(passwordHash !== undefined ? { passwordHash } : {}),
       updatedAt: sql`now()`,
     })
@@ -354,7 +397,12 @@ export async function setDraftPassword(
   const passwordHash = await hashPassword(password);
   const [updated] = await db
     .update(drafts)
-    .set({ visibility: "password", passwordHash, updatedAt: sql`now()` })
+    .set({
+      visibility: "password",
+      passwordHash,
+      ...(draft.visibility === "public" ? { slug: generateSlug("", false) } : {}),
+      updatedAt: sql`now()`,
+    })
     .where(and(eq(drafts.id, draft.id), isNull(drafts.deletedAt)))
     .returning();
   if (!updated) throw new DraftNotFoundError();

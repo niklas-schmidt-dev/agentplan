@@ -1,17 +1,48 @@
 "use client";
 
-import { useActionState, useState } from "react";
-import { uploadDraftAction, uploadVersionAction, type UploadState } from "@/app/dashboard/actions";
+import { useState } from "react";
+import { useRouter } from "next/navigation";
 
 const inputClass =
   "rounded border border-edge bg-surface px-3 py-2 font-mono text-sm text-ink placeholder:text-ink-faint";
 
+async function uploadError(response: Response): Promise<string> {
+  try {
+    const body = (await response.json()) as { error?: { message?: string } };
+    return body.error?.message ?? "Upload failed. Please try again.";
+  } catch {
+    return "Upload failed. Please try again.";
+  }
+}
+
 export function NewDraftForm() {
-  const [state, action, pending] = useActionState<UploadState, FormData>(uploadDraftAction, null);
+  const router = useRouter();
+  const [error, setError] = useState<string | null>(null);
+  const [pending, setPending] = useState(false);
   const [visibility, setVisibility] = useState<"private" | "public" | "password">("private");
 
+  async function submit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const form = event.currentTarget;
+    setPending(true);
+    setError(null);
+    const response = await fetch("/api/v1/drafts", {
+      method: "POST",
+      body: new FormData(form),
+      redirect: "error",
+    }).catch(() => null);
+    setPending(false);
+    if (!response?.ok) {
+      setError(response ? await uploadError(response) : "Upload failed. Please try again.");
+      return;
+    }
+    const body = (await response.json()) as { draft: { id: string } };
+    router.push(`/dashboard/drafts/${body.draft.id}`);
+    router.refresh();
+  }
+
   return (
-    <form action={action} className="flex flex-col gap-3">
+    <form onSubmit={submit} className="flex flex-col gap-3">
       <label className="flex flex-col gap-1 font-mono text-xs text-ink-muted">
         html file
         <input type="file" name="file" accept=".html,.htm,text/html" required className={inputClass} />
@@ -49,9 +80,9 @@ export function NewDraftForm() {
           />
         </label>
       ) : null}
-      {state?.error ? (
+      {error ? (
         <p role="alert" className="font-mono text-xs text-danger">
-          {state.error}
+          {error}
         </p>
       ) : null}
       <button
@@ -66,11 +97,31 @@ export function NewDraftForm() {
 }
 
 export function NewVersionForm({ draftId }: { draftId: string }) {
-  const [state, action, pending] = useActionState<UploadState, FormData>(uploadVersionAction, null);
+  const router = useRouter();
+  const [error, setError] = useState<string | null>(null);
+  const [pending, setPending] = useState(false);
+
+  async function submit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const form = event.currentTarget;
+    setPending(true);
+    setError(null);
+    const response = await fetch(`/api/v1/drafts/${encodeURIComponent(draftId)}/versions`, {
+      method: "POST",
+      body: new FormData(form),
+      redirect: "error",
+    }).catch(() => null);
+    setPending(false);
+    if (!response?.ok) {
+      setError(response ? await uploadError(response) : "Upload failed. Please try again.");
+      return;
+    }
+    form.reset();
+    router.refresh();
+  }
 
   return (
-    <form action={action} className="flex flex-wrap items-end gap-3">
-      <input type="hidden" name="draftId" value={draftId} />
+    <form onSubmit={submit} className="flex flex-wrap items-end gap-3">
       <label className="flex flex-col gap-1 font-mono text-xs text-ink-muted">
         upload new version
         <input type="file" name="file" accept=".html,.htm,text/html" required className={inputClass} />
@@ -82,9 +133,9 @@ export function NewVersionForm({ draftId }: { draftId: string }) {
       >
         {pending ? "uploading…" : "upload version"}
       </button>
-      {state?.error ? (
+      {error ? (
         <p role="alert" className="w-full font-mono text-xs text-danger">
-          {state.error}
+          {error}
         </p>
       ) : null}
     </form>

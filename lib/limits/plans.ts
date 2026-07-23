@@ -48,3 +48,19 @@ export function passwordAttemptsPerWindow(): number {
 export function deletedDraftRetentionDays(): number {
   return envInt("AP_DELETED_RETENTION_DAYS", 7);
 }
+
+export function tokenMutationsPerHour(): number {
+  return envInt("AP_TOKEN_MUTATIONS_PER_HOUR", 60);
+}
+
+export function tokenMutationsPerDay(): number {
+  return envInt("AP_TOKEN_MUTATIONS_PER_DAY", 200);
+}
+
+export function retiredTokenRetentionDays(): number {
+  return envInt("AP_RETIRED_TOKEN_RETENTION_DAYS", 30);
+}
+
+export function auditRetentionDays(): number {
+  return envInt("AP_AUDIT_RETENTION_DAYS", 180);
+}

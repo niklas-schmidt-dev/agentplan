@@ -3,12 +3,11 @@
 import { spawn } from "node:child_process";
 import { readFile, stat } from "node:fs/promises";
 import path from "node:path";
-import { createInterface } from "node:readline/promises";
 import { parseArgs } from "node:util";
 import { AgentPlanApi, ApiError, DEFAULT_API_URL, type ApiDraft } from "./api.js";
 import { clearConfig, loadConfig, saveConfig } from "./config.js";
 import { hasNewDraftOnlyOptions, type UploadFlags } from "./upload-options.js";
-import { isSafeHttpUrl } from "./url.js";
+import { isSafeHttpUrl, normalizeApiBaseUrl } from "./url.js";
 
 const MAX_UPLOAD_BYTES = 2 * 1024 * 1024;
 
@@ -38,17 +37,57 @@ function fail(message: string, exitCode = 1): never {
 }
 
 function apiUrl(config: { apiUrl?: string }): string {
-  return (process.env.AGENTPLAN_API_URL ?? config.apiUrl ?? DEFAULT_API_URL).replace(/\/$/, "");
+  return normalizeApiBaseUrl(process.env.AGENTPLAN_API_URL ?? config.apiUrl ?? DEFAULT_API_URL);
+}
+
+async function hiddenLine(prompt: string): Promise<string> {
+  const input = process.stdin;
+  if (!input.isTTY || typeof input.setRawMode !== "function") {
+    fail("A secure terminal is required. Set AGENTPLAN_TOKEN to read it from the environment.");
+  }
+  process.stderr.write(prompt);
+  const wasRaw = input.isRaw;
+  input.setRawMode(true);
+  input.setEncoding("utf8");
+  input.resume();
+
+  return new Promise<string>((resolve, reject) => {
+    let value = "";
+    const cleanup = () => {
+      input.removeListener("data", onData);
+      input.setRawMode(Boolean(wasRaw));
+      input.pause();
+      process.stderr.write("\n");
+    };
+    const onData = (chunk: string | Buffer) => {
+      for (const character of String(chunk)) {
+        if (character === "\r" || character === "\n") {
+          cleanup();
+          resolve(value);
+          return;
+        }
+        if (character === "\u0003" || character === "\u0004") {
+          cleanup();
+          reject(new Error("Token entry cancelled."));
+          return;
+        }
+        if (character === "\u007f" || character === "\b") {
+          value = value.slice(0, -1);
+          continue;
+        }
+        if (character >= " " && character <= "~" && value.length < 512) value += character;
+      }
+    };
+    input.on("data", onData);
+  });
 }
 
 async function promptForToken(): Promise<string> {
   if (!process.stdin.isTTY) {
     fail("No API token. Set AGENTPLAN_TOKEN or run `agentplan login` in a terminal.");
   }
-  const rl = createInterface({ input: process.stdin, output: process.stderr });
   process.stderr.write("Create a token in the dashboard: Settings → API tokens\n");
-  const token = (await rl.question("Paste your API token: ")).trim();
-  rl.close();
+  const token = (await hiddenLine("Paste your API token: ")).trim();
   if (!token.startsWith("ap_live_")) fail("That does not look like an AgentPlan token.");
   return token;
 }
@@ -201,7 +240,7 @@ async function commandOpen(id: string | undefined): Promise<void> {
     process.platform === "darwin"
       ? ["open", [url]]
       : process.platform === "win32"
-        ? ["cmd", ["/c", "start", "", url]]
+        ? ["rundll32.exe", ["url.dll,FileProtocolHandler", url]]
         : ["xdg-open", [url]];
   spawn(opener, args, { shell: false, detached: true, stdio: "ignore" }).unref();
   process.stderr.write(`Opening ${url}\n`);

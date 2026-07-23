@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { generateSlug, slugify } from "@/lib/drafts/slug";
+import { generateProtectedSlug, generateSlug, slugify } from "@/lib/drafts/slug";
 
 describe("slugify", () => {
   it("lowercases and dashes", () => {
@@ -36,5 +36,18 @@ describe("generateSlug", () => {
   it("produces distinct suffixes", () => {
     const slugs = new Set(Array.from({ length: 50 }, () => generateSlug("t")));
     expect(slugs.size).toBeGreaterThan(1);
+  });
+});
+
+describe("generateProtectedSlug", () => {
+  it("does not disclose the draft title", () => {
+    const slug = generateProtectedSlug();
+    expect(slug).toMatch(/^draft-[A-Za-z0-9_-]{24}$/);
+    expect(slug).not.toContain("launch-plan");
+  });
+
+  it("produces high-entropy distinct values", () => {
+    const slugs = new Set(Array.from({ length: 50 }, () => generateProtectedSlug()));
+    expect(slugs.size).toBe(50);
   });
 });

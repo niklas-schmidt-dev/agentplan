@@ -1,0 +1,5 @@
+Contact: https://github.com/niklas-schmidt-dev/agentplan/security/advisories/new
+Expires: 2027-07-23T00:00:00Z
+Canonical: https://agentplan.app/.well-known/security.txt
+Policy: https://agentplan.app/security
+Preferred-Languages: en

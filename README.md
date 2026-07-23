@@ -21,10 +21,11 @@ the link and the password).
 - **PlanetScale Postgres** with Drizzle ORM for drafts, versions, tokens, and audit events.
 - **Private Cloudflare R2 bucket** (S3-compatible API) for all uploaded HTML —
   visibility is enforced by the application, never by the storage layer.
-- **Better Auth** with email/password and optional GitHub OAuth (offered only when
-  `GITHUB_CLIENT_ID`/`GITHUB_CLIENT_SECRET` are set) for browser sessions; scoped API
-  tokens (`ap_live_…`, stored as SHA-256 hashes) for agents and the CLI. The first
-  registered user becomes the admin; admins can disable sign-ups and manage users
+- **Better Auth** with verified email/password and optional GitHub OAuth (offered
+  only when `GITHUB_CLIENT_ID`/`GITHUB_CLIENT_SECRET` are set) for browser sessions;
+  scoped API tokens (`ap_live_…`, stored as SHA-256 hashes) for agents and the CLI.
+  On an empty database, only `ADMIN_BOOTSTRAP_EMAIL` can register; that identity
+  becomes the single initial admin. Admins can disable sign-ups and manage users
   under `/dashboard/admin`.
 - Uploaded HTML is treated as hostile. It is never rendered into the application DOM;
   it is served from an isolated route and displayed inside a sandboxed iframe
@@ -43,8 +44,9 @@ Agents         • /api/v1 (token auth)
 
 Request paths:
 
-- **Browser** → server actions (`app/dashboard/actions.ts`) → draft/token services →
-  Postgres + R2. Authorization via `requireUser()` and owner-scoped queries.
+- **Browser** → same-origin API routes and small server actions → draft/token services
+  → Postgres + R2. Upload rate reservations happen before multipart parsing.
+  Authorization uses sessions and owner-scoped queries.
 - **Agent / CLI** → `POST /api/v1/drafts` with `Authorization: Bearer ap_live_…` →
   scope-checked → same services.
 - **Viewer** → `/p/{slug}` renders an iframe whose `src` is `/p/{slug}/content`; the
@@ -74,8 +76,10 @@ Requirements: Node.js 24+, npm, and a Postgres instance (a PlanetScale branch or
 local Postgres).
 
 1. `npm ci`
-2. Copy `.env.example` to `.env` and fill in values (PlanetScale URLs, GitHub OAuth
-   app, Better Auth secret, R2 credentials). The landing page renders without any secrets.
+2. Copy `.env.example` to `.env` and fill in values (PlanetScale URLs,
+   `ADMIN_BOOTSTRAP_EMAIL`, Better Auth secret, R2 credentials, and optional GitHub
+   OAuth). Email/password development also needs an email webhook; without one,
+   development suppresses delivery and an unverified account cannot sign in.
 3. `npm run db:migrate` (uses `DATABASE_URL_DIRECT`)
 4. `npm run dev`
 
@@ -116,7 +120,9 @@ agentplan open <id>
 Authentication precedence: `AGENTPLAN_TOKEN` → stored login → interactive prompt.
 Tokens are stored in the OS configuration directory (`~/.config/agentplan` on Linux/macOS)
 with owner-only permissions. `--json` writes only JSON to stdout; diagnostics go to
-stderr; missing or revoked tokens exit non-zero.
+stderr; missing or revoked tokens exit non-zero. Custom API endpoints must use HTTPS;
+cleartext HTTP is accepted only for localhost. Authenticated requests never follow
+redirects, and interactive token entry is hidden.
 
 ## API
 
@@ -156,6 +162,7 @@ Free-plan limits (all server-enforced; tunable via `AP_*` env vars, defaults in
 | Total storage per user | 250 MiB |
 | Active API tokens per user | 25 |
 | Uploads per user | 30 / 10 min and 300 / day |
+| Token create/revoke operations | 60 / hour and 200 / day |
 | Draft password attempts | 10 / 15 min per draft + IP |
 
 Exceeded quotas return `403 QUOTA_EXCEEDED`; rate limits return `429 RATE_LIMITED`
@@ -164,6 +171,9 @@ it needs no extra infrastructure and is correct across serverless instances.
 
 Soft-deleted drafts (and their stored objects) are hard-deleted after 7 days by a
 daily cron (`/api/cron/purge`, authorized via `CRON_SECRET`).
+Revoked/expired token rows are removed after 30 days, and ordinary audit events
+after 180 days. Pending user-deletion cleanup jobs are retained until object cleanup
+completes; their object keys and target identifier are erased at completion.
 
 To exempt a user from all quotas and upload rate limits (needs `DATABASE_URL`,
 loaded from `.env` automatically):
@@ -187,7 +197,11 @@ threat model. In short:
   (12h); the content route serves the HTML only with a valid cookie (or to the
   owner) and never caches it publicly. The owner always bypasses the prompt.
 - API tokens are stored only as SHA-256 hashes and compared in constant time.
-- Only `.env.example` placeholders are committed; CI scans every push for secrets.
+- Protected drafts use random title-independent slugs. Moving a public draft back
+  to private/password rotates its slug.
+- Application pages use a per-request nonce CSP; API responses are private/no-store.
+- Only `.env.example` placeholders are committed; CI scans the working tree and
+  complete reachable history for recognized credential formats.
 
 ## Deployment (Vercel)
 
@@ -199,17 +213,25 @@ Production deployment is a deliberate, credentialed step. Runbook:
    use its PgBouncer (pooled) URL for `DATABASE_URL`; keep the direct URL for
    migrations only.
 4. Configure production env vars in Vercel: `DATABASE_URL`, `DATABASE_URL_DIRECT`,
-   `BETTER_AUTH_SECRET`, `BETTER_AUTH_URL`, `GITHUB_CLIENT_ID`/`GITHUB_CLIENT_SECRET`
-   (optional — without them the login page offers email/password only),
+   `BETTER_AUTH_SECRET`, `BETTER_AUTH_URL`, `ADMIN_BOOTSTRAP_EMAIL`,
+   `AUTH_EMAIL_WEBHOOK_URL`, `AUTH_EMAIL_WEBHOOK_SECRET`, `AUTH_EMAIL_FROM`,
+   `GITHUB_CLIENT_ID`/`GITHUB_CLIENT_SECRET` (optional),
    `NEXT_PUBLIC_APP_URL`, `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`,
    `R2_BUCKET`, `CRON_SECRET` (authorizes the daily purge cron).
+   The email webhook receives bearer-authenticated `POST` JSON with
+   `{ kind, to, name, url, from }`, must deliver the link without logging it, and
+   return a 2xx response.
 5. Run migrations against production using the direct URL: `npm run db:migrate`.
+   Migration `0005_security_hardening.sql` rotates every existing non-public draft
+   slug, intentionally invalidating previously shared private/password URLs.
 6. Deploy, verify auth on the Vercel domain, then attach `agentplan.app` and redirect
    `www` → apex.
 7. In every deployment, update `BETTER_AUTH_URL` / `NEXT_PUBLIC_APP_URL`. If GitHub
    OAuth is enabled, also set its callback to
    `https://agentplan.app/api/auth/callback/github`; redeploy.
-8. Verify public/private behavior on the final domain.
+8. Verify public/private behavior, email verification/reset delivery, API
+   private/no-store headers, `/.well-known/security.txt`, and the nonce CSP on the
+   final domain.
 
 Choose PlanetScale and Vercel regions in the same geography where possible.
 

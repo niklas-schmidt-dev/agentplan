@@ -2,7 +2,7 @@ import { defineConfig, devices } from "@playwright/test";
 
 export default defineConfig({
   testDir: "./tests/e2e",
-  fullyParallel: true,
+  fullyParallel: false,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 2 : 0,
   workers: process.env.CI ? 1 : undefined,
@@ -34,6 +34,8 @@ export default defineConfig({
             process.env.BETTER_AUTH_SECRET ?? "e2e-secret-not-for-production-0000",
           BETTER_AUTH_URL: "http://localhost:3000",
           NEXT_PUBLIC_APP_URL: "http://localhost:3000",
+          ADMIN_BOOTSTRAP_EMAIL:
+            process.env.ADMIN_BOOTSTRAP_EMAIL ?? "e2e-bootstrap@example.test",
         },
       },
 });

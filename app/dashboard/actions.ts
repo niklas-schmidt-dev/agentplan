@@ -5,9 +5,6 @@ import { redirect } from "next/navigation";
 import { getDraftForOwner, getVersionById } from "@/db/queries/drafts";
 import { requireUser } from "@/lib/auth/session";
 import {
-  addVersionToDraft,
-  createDraftWithFirstVersion,
-  PasswordRequiredError,
   restoreVersion,
   setDraftPassword,
   setDraftTitle,
@@ -15,17 +12,11 @@ import {
   softDeleteDraft,
 } from "@/lib/drafts/service";
 import { QuotaExceededError, RateLimitedError } from "@/lib/limits/errors";
+import { consumeUploadRateLimit } from "@/lib/limits/enforce";
 import { createToken, revokeToken } from "@/lib/tokens/service";
-import {
-  createTokenSchema,
-  draftPasswordSchema,
-  uuidSchema,
-  visibilitySchema,
-} from "@/lib/validation/api";
-import { normalizeTitle, titleFromFilename, validateUpload } from "@/lib/validation/upload";
+import { createTokenSchema, draftPasswordSchema, uuidSchema, visibilitySchema } from "@/lib/validation/api";
+import { normalizeTitle } from "@/lib/validation/upload";
 import type { Draft } from "@/db/schema";
-
-export type UploadState = { error: string } | null;
 
 /** User-facing message for quota/rate-limit rejections; null for other errors. */
 function limitErrorMessage(error: unknown): string | null {
@@ -37,98 +28,12 @@ function limitErrorMessage(error: unknown): string | null {
   return null;
 }
 
-async function readUploadFile(formData: FormData): Promise<
-  { bytes: Uint8Array; filename: string } | { error: string }
-> {
-  const file = formData.get("file");
-  if (!(file instanceof File) || file.name === "") {
-    return { error: "Choose an HTML file to upload." };
-  }
-  const validationError = validateUpload({
-    filename: file.name,
-    contentType: file.type || null,
-    sizeBytes: file.size,
-  });
-  if (validationError) return { error: validationError.message };
-  return { bytes: new Uint8Array(await file.arrayBuffer()), filename: file.name };
-}
-
-export async function uploadDraftAction(
-  _prev: UploadState,
-  formData: FormData,
-): Promise<UploadState> {
-  const user = await requireUser();
-
-  const upload = await readUploadFile(formData);
-  if ("error" in upload) return { error: upload.error };
-
-  const rawTitle = formData.get("title");
-  const title =
-    typeof rawTitle === "string" && rawTitle.trim()
-      ? normalizeTitle(rawTitle)
-      : titleFromFilename(upload.filename);
-  const visibility = visibilitySchema.safeParse(formData.get("visibility"));
-  const chosenVisibility = visibility.success ? visibility.data : "private";
-
-  let password: string | undefined;
-  if (chosenVisibility === "password") {
-    const parsed = draftPasswordSchema.safeParse(formData.get("password"));
-    if (!parsed.success) {
-      return { error: parsed.error.issues[0]?.message ?? "Invalid password." };
-    }
-    password = parsed.data;
-  }
-
-  let draftId: string;
-  try {
-    const { draft } = await createDraftWithFirstVersion({
-      ownerId: user.id,
-      title,
-      visibility: chosenVisibility,
-      password,
-      bytes: upload.bytes,
-      source: "browser",
-    });
-    draftId = draft.id;
-  } catch (error) {
-    if (error instanceof PasswordRequiredError) {
-      return { error: "A password is required for password-protected drafts." };
-    }
-    const limitError = limitErrorMessage(error);
-    if (limitError) return { error: limitError };
-    console.error("uploadDraftAction failed", error);
-    return { error: "Upload failed. Please try again." };
-  }
-  redirect(`/dashboard/drafts/${draftId}`);
-}
-
 async function requireOwnedDraft(rawDraftId: unknown): Promise<{ userId: string; draft: Draft }> {
   const user = await requireUser();
   const draftId = uuidSchema.safeParse(rawDraftId);
   const draft = draftId.success ? await getDraftForOwner(draftId.data, user.id) : null;
   if (!draft) redirect("/dashboard");
   return { userId: user.id, draft };
-}
-
-export async function uploadVersionAction(
-  _prev: UploadState,
-  formData: FormData,
-): Promise<UploadState> {
-  const { draft } = await requireOwnedDraft(formData.get("draftId"));
-
-  const upload = await readUploadFile(formData);
-  if ("error" in upload) return { error: upload.error };
-
-  try {
-    await addVersionToDraft({ draft, bytes: upload.bytes, source: "browser" });
-  } catch (error) {
-    const limitError = limitErrorMessage(error);
-    if (limitError) return { error: limitError };
-    console.error("uploadVersionAction failed", error);
-    return { error: "Upload failed. Please try again." };
-  }
-  revalidatePath(`/dashboard/drafts/${draft.id}`);
-  return null;
 }
 
 /** Handles the public/private buttons. Switching to password is done via
@@ -189,7 +94,13 @@ export async function restoreVersionAction(formData: FormData): Promise<void> {
     const version = await getVersionById(draft.id, versionId.data);
     if (version) {
       try {
-        await restoreVersion({ draft, version, source: "browser" });
+        await consumeUploadRateLimit(draft.ownerId);
+        await restoreVersion({
+          draft,
+          version,
+          source: "browser",
+          rateLimitConsumed: true,
+        });
       } catch (error) {
         // No error channel on this plain form action; a limit rejection just
         // leaves the page unchanged instead of surfacing a 500.
@@ -247,7 +158,11 @@ export async function revokeTokenAction(formData: FormData): Promise<void> {
   const user = await requireUser();
   const tokenId = uuidSchema.safeParse(formData.get("tokenId"));
   if (tokenId.success) {
-    await revokeToken(user.id, tokenId.data);
+    try {
+      await revokeToken(user.id, tokenId.data);
+    } catch (error) {
+      if (!limitErrorMessage(error)) throw error;
+    }
   }
   revalidatePath("/dashboard/settings/tokens");
 }

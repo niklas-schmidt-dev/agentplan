@@ -10,11 +10,13 @@ const storageRoot = mkdtempSync(path.join(os.tmpdir(), "agentplan-purge-"));
 process.env.STORAGE_DRIVER = "fs";
 process.env.STORAGE_FS_ROOT = storageRoot;
 
-import { and, eq, lte, sql } from "drizzle-orm";
+import { and, eq, inArray, lte, sql } from "drizzle-orm";
 import { closeDb, getDb } from "@/db/client";
-import { drafts, rateLimits, users } from "@/db/schema";
+import { apiTokens, auditEvents, drafts, rateLimits, users } from "@/db/schema";
+import { purgeExpiredAuditEvents } from "@/lib/audit/events";
 import { purgeDeletedDrafts, purgeExpiredRateLimits } from "@/lib/drafts/purge";
 import { addVersionToDraft, createDraftWithFirstVersion, softDeleteDraft } from "@/lib/drafts/service";
+import { createToken, purgeRetiredTokens } from "@/lib/tokens/service";
 
 const hasDb = Boolean(process.env.DATABASE_URL);
 const html = new TextEncoder().encode("<!doctype html><h1>purge</h1>");
@@ -37,7 +39,13 @@ describe.skipIf(!hasDb)("deleted-draft purge (integration)", () => {
     const ownerId = `purge-user-${randomUUID()}`;
     await getDb()
       .insert(users)
-      .values({ id: ownerId, name: "Purge User", email: `${ownerId}@example.test`, emailVerified: true });
+      .values({
+        id: ownerId,
+        name: "Purge User",
+        email: `${ownerId}@example.test`,
+        emailVerified: true,
+        role: "admin",
+      });
 
     const old = await createDraftWithFirstVersion({
       ownerId,
@@ -93,5 +101,95 @@ describe.skipIf(!hasDb)("deleted-draft purge (integration)", () => {
       .from(rateLimits)
       .where(and(eq(rateLimits.key, key), lte(rateLimits.expiresAt, sql`now()`)));
     expect(rows).toHaveLength(0);
+  });
+
+  it("removes retired tokens after retention while preserving active tokens", async () => {
+    process.env.AP_RETIRED_TOKEN_RETENTION_DAYS = "30";
+    const ownerId = `purge-token-user-${randomUUID()}`;
+    await getDb().insert(users).values({
+      id: ownerId,
+      name: "Token Purge User",
+      email: `${ownerId}@example.test`,
+      emailVerified: true,
+      role: "admin",
+    });
+    try {
+      const revoked = await createToken({
+        userId: ownerId,
+        name: "old-revoked",
+        scopes: ["drafts:read"],
+      });
+      const expired = await createToken({
+        userId: ownerId,
+        name: "old-expired",
+        scopes: ["drafts:read"],
+        expiresAt: new Date(Date.now() - 40 * 24 * 60 * 60 * 1_000),
+      });
+      const active = await createToken({
+        userId: ownerId,
+        name: "active",
+        scopes: ["drafts:read"],
+      });
+      await getDb()
+        .update(apiTokens)
+        .set({ revokedAt: sql`now() - interval '40 days'` })
+        .where(eq(apiTokens.id, revoked.record.id));
+
+      expect(await purgeRetiredTokens()).toBe(2);
+      const remaining = await getDb()
+        .select({ id: apiTokens.id })
+        .from(apiTokens)
+        .where(
+          inArray(apiTokens.id, [
+            revoked.record.id,
+            expired.record.id,
+            active.record.id,
+          ]),
+        );
+      expect(remaining.map(({ id }) => id)).toEqual([active.record.id]);
+    } finally {
+      delete process.env.AP_RETIRED_TOKEN_RETENTION_DAYS;
+    }
+  });
+
+  it("applies finite audit retention without deleting pending cleanup jobs", async () => {
+    process.env.AP_AUDIT_RETENTION_DAYS = "180";
+    try {
+      const inserted = await getDb()
+        .insert(auditEvents)
+        .values([
+          {
+            eventType: "draft.created",
+            metadata: { marker: "stale" },
+            createdAt: sql`now() - interval '200 days'`,
+          },
+          {
+            eventType: "draft.created",
+            metadata: { marker: "recent" },
+          },
+          {
+            eventType: "user.deletion_pending",
+            metadata: {
+              targetUserId: "retention-test",
+              storageKeys: [],
+              storageCleanup: "pending",
+            },
+            createdAt: sql`now() - interval '200 days'`,
+          },
+        ])
+        .returning({ id: auditEvents.id, eventType: auditEvents.eventType });
+
+      expect(await purgeExpiredAuditEvents()).toBeGreaterThanOrEqual(1);
+      const remaining = await getDb()
+        .select({ id: auditEvents.id })
+        .from(auditEvents)
+        .where(inArray(auditEvents.id, inserted.map(({ id }) => id)));
+      expect(remaining.map(({ id }) => id).sort()).toEqual(
+        [inserted[1]!.id, inserted[2]!.id].sort(),
+      );
+      expect(remaining).toHaveLength(2);
+    } finally {
+      delete process.env.AP_AUDIT_RETENTION_DAYS;
+    }
   });
 });

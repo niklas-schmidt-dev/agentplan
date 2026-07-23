@@ -86,7 +86,7 @@ export async function assertTokenCreationAllowed(
   userId: string,
   db: Pick<Database, "select"> = getDb(),
 ): Promise<void> {
-  const limits = limitsForPlan(await getUserPlan(userId));
+  const limits = limitsForPlan(await getUserPlan(userId, db));
   if (limits.maxActiveTokens === null) return;
   const [row] = await db
     .select({ count: sql<number>`count(*)::int` })

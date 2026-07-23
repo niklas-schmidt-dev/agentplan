@@ -1,5 +1,7 @@
+import { and, inArray, lte, ne, sql } from "drizzle-orm";
 import { getDb } from "@/db/client";
 import { auditEvents } from "@/db/schema";
+import { auditRetentionDays } from "@/lib/limits/plans";
 
 export type AuditEventType =
   | "draft.created"
@@ -35,4 +37,25 @@ export async function recordAuditEvent(event: {
   } catch (error) {
     console.error("Failed to record audit event", event.type, error);
   }
+}
+
+/** Applies the documented finite audit-retention window in bounded cron runs. */
+export async function purgeExpiredAuditEvents(batchSize = 500): Promise<number> {
+  const days = auditRetentionDays();
+  const stale = await getDb()
+    .select({ id: auditEvents.id })
+    .from(auditEvents)
+    .where(
+      and(
+        ne(auditEvents.eventType, "user.deletion_pending"),
+        lte(auditEvents.createdAt, sql`now() - make_interval(days => ${days})`),
+      ),
+    )
+    .limit(Math.min(Math.max(Math.trunc(batchSize), 1), 1_000));
+  if (!stale.length) return 0;
+  const deleted = await getDb()
+    .delete(auditEvents)
+    .where(inArray(auditEvents.id, stale.map((row) => row.id)))
+    .returning({ id: auditEvents.id });
+  return deleted.length;
 }

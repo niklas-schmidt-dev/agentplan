@@ -27,6 +27,36 @@ Promise.allSettled([
 }
 
 test.describe("hostile HTML isolation", () => {
+  test("security headers cover unauthenticated, API, and missing content responses", async ({
+    page,
+  }) => {
+    const home = await page.request.get("/");
+    expect(home.headers()["strict-transport-security"]).toContain("includeSubDomains");
+    expect(home.headers()["x-frame-options"]).toBe("DENY");
+    expect(home.headers()["content-security-policy"]).toContain("frame-ancestors 'none'");
+
+    const api = await page.request.get("/api/v1/drafts");
+    expect(api.status()).toBe(401);
+    expect(api.headers()["cache-control"]).toBe("private, no-store");
+    expect(api.headers()["vary"]).toContain("Authorization");
+    expect(api.headers()["vary"]).toContain("Cookie");
+
+    const missingShell = await page.request.get("/p/does-not-exist");
+    expect(missingShell.status()).toBe(404);
+    const missingContent = await page.request.get("/p/does-not-exist/content");
+    expect(missingContent.status()).toBe(404);
+    expect(missingContent.headers()["cache-control"]).toBe("private, no-store");
+    expect(missingContent.headers()["x-content-type-options"]).toBe("nosniff");
+    expect(missingContent.headers()["strict-transport-security"]).toContain(
+      "includeSubDomains",
+    );
+
+    const securityTxt = await page.request.get("/.well-known/security.txt");
+    expect(securityTxt.status()).toBe(200);
+    expect(await securityTxt.text()).toContain("Contact:");
+    expect((await page.request.get("/security")).status()).toBe(200);
+  });
+
   test("uploaded scripts run but cannot escape the sandbox", async ({ page }) => {
     await signUp(page.request);
 
