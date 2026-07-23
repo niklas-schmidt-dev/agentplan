@@ -12,6 +12,7 @@ export type AuditEventType =
   | "token.created"
   | "token.revoked"
   | "user.role_changed"
+  | "user.deletion_pending"
   | "user.deleted"
   | "settings.signups_changed";
 

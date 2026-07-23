@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { mkdtempSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { afterAll, describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it, vi } from "vitest";
 
 // Must be configured before the lazy storage/db singletons are first used.
 const storageRoot = mkdtempSync(path.join(os.tmpdir(), "agentplan-admin-"));
@@ -11,15 +11,16 @@ process.env.STORAGE_FS_ROOT = storageRoot;
 
 import { eq, inArray } from "drizzle-orm";
 import { closeDb, getDb } from "@/db/client";
-import { appSettings, drafts, users } from "@/db/schema";
+import { appSettings, auditEvents, drafts, users } from "@/db/schema";
 import {
   deleteUserCompletely,
   getAdminStats,
   listUsersWithUsage,
+  purgePendingUserDeletionObjects,
   setUserRole,
 } from "@/lib/admin/service";
 import { evaluateSignup, SignupsDisabledError } from "@/lib/auth/signup-policy";
-import { createDraftWithFirstVersion } from "@/lib/drafts/service";
+import { addVersionToDraft, createDraftWithFirstVersion } from "@/lib/drafts/service";
 import { getSignupsEnabled, setSignupsEnabled } from "@/lib/settings/service";
 import { getStorage } from "@/lib/storage";
 import { createToken } from "@/lib/tokens/service";
@@ -155,6 +156,57 @@ describe.skipIf(!hasDb)("admin tools (integration)", () => {
       .from(users)
       .where(eq(users.id, actorId));
     expect(remainingAdmin?.role).toBe("admin");
+  });
+
+  it("queues partial storage cleanup without leaving a live user with broken drafts", async () => {
+    const adminId = await createUser();
+    const victimId = await createUser();
+    await makeAdmin(adminId);
+    const { draft, version: firstVersion } = await createDraftWithFirstVersion({
+      ownerId: victimId,
+      title: "Partially doomed draft",
+      visibility: "private",
+      bytes: html,
+      source: "browser",
+    });
+    const { version: secondVersion } = await addVersionToDraft({
+      draft,
+      bytes: html,
+      source: "browser",
+    });
+
+    const storage = getStorage();
+    const realDelete = storage.delete.bind(storage);
+    let attempts = 0;
+    const deleteSpy = vi.spyOn(storage, "delete").mockImplementation(async (key) => {
+      attempts++;
+      if (attempts === 2) throw new Error("simulated partial storage outage");
+      await realDelete(key);
+    });
+
+    try {
+      await deleteUserCompletely({ userId: adminId }, victimId);
+    } finally {
+      deleteSpy.mockRestore();
+    }
+    const [gone] = await getDb().select().from(users).where(eq(users.id, victimId));
+    expect(gone).toBeUndefined();
+    const [pending] = await getDb()
+      .select({ id: auditEvents.id })
+      .from(auditEvents)
+      .where(eq(auditEvents.eventType, "user.deletion_pending"));
+    expect(pending).toBeDefined();
+
+    await expect(purgePendingUserDeletionObjects()).resolves.toEqual(
+      expect.objectContaining({ purged: expect.any(Number), failed: 0 }),
+    );
+    expect(await storage.get(firstVersion.storageKey)).toBeNull();
+    expect(await storage.get(secondVersion.storageKey)).toBeNull();
+    const [completed] = await getDb()
+      .select({ eventType: auditEvents.eventType })
+      .from(auditEvents)
+      .where(eq(auditEvents.id, pending!.id));
+    expect(completed?.eventType).toBe("user.deleted");
   });
 
   it("rejects signup changes from a demoted admin's stale session", async () => {

@@ -59,7 +59,7 @@ export async function deleteUserAction(
     await deleteUserCompletely({ userId: admin.id }, userId.data);
   } catch (error) {
     console.error("deleteUserAction failed", error);
-    return { error: "Deletion failed. The user and database rows were kept." };
+    return { error: "Deletion failed. No account changes were committed." };
   }
   revalidatePath("/dashboard/admin");
   return null;
