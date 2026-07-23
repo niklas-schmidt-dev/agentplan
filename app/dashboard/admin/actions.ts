@@ -13,7 +13,7 @@ const roleSchema = z.enum(["user", "admin"]);
 export async function setSignupsEnabledAction(formData: FormData): Promise<void> {
   const admin = await requireAdmin();
   const enabled = formData.get("enabled") === "true";
-  await setSignupsEnabled(enabled);
+  await setSignupsEnabled({ userId: admin.id }, enabled);
   await recordAuditEvent({
     type: "settings.signups_changed",
     userId: admin.id,

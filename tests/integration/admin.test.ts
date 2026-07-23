@@ -52,24 +52,27 @@ describe.skipIf(!hasDb)("admin tools (integration)", () => {
   });
 
   it("signups setting defaults to enabled and round-trips the toggle", async () => {
+    const actorId = await createUser();
+    await makeAdmin(actorId);
     await getDb().delete(appSettings).where(eq(appSettings.key, "signups_enabled"));
     expect(await getSignupsEnabled()).toBe(true);
 
-    await setSignupsEnabled(false);
+    await setSignupsEnabled({ userId: actorId }, false);
     expect(await getSignupsEnabled()).toBe(false);
 
-    await setSignupsEnabled(true);
+    await setSignupsEnabled({ userId: actorId }, true);
     expect(await getSignupsEnabled()).toBe(true);
   });
 
   it("evaluateSignup blocks new users while signups are disabled", async () => {
     // Ensure the users table is non-empty so the first-user path can't apply.
-    await createUser();
+    const actorId = await createUser();
+    await makeAdmin(actorId);
 
-    await setSignupsEnabled(false);
+    await setSignupsEnabled({ userId: actorId }, false);
     await expect(evaluateSignup()).rejects.toThrow(SignupsDisabledError);
 
-    await setSignupsEnabled(true);
+    await setSignupsEnabled({ userId: actorId }, true);
     await expect(evaluateSignup()).resolves.toEqual({ role: "user" });
   });
 
@@ -152,6 +155,19 @@ describe.skipIf(!hasDb)("admin tools (integration)", () => {
       .from(users)
       .where(eq(users.id, actorId));
     expect(remainingAdmin?.role).toBe("admin");
+  });
+
+  it("rejects signup changes from a demoted admin's stale session", async () => {
+    const currentAdminId = await createUser();
+    const staleAdminId = await createUser();
+    await makeAdmin(currentAdminId);
+    await makeAdmin(staleAdminId);
+
+    await setUserRole({ userId: currentAdminId }, staleAdminId, "user");
+    await expect(setSignupsEnabled({ userId: staleAdminId }, false)).rejects.toThrow(
+      /current admins/,
+    );
+    expect(await getSignupsEnabled()).toBe(true);
   });
 
   it("stats and per-user usage reflect created data", async () => {

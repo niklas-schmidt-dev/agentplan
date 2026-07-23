@@ -1,6 +1,6 @@
 import { eq, sql } from "drizzle-orm";
 import { getDb } from "@/db/client";
-import { appSettings } from "@/db/schema";
+import { appSettings, users } from "@/db/schema";
 
 const SIGNUPS_ENABLED_KEY = "signups_enabled";
 
@@ -13,12 +13,26 @@ export async function getSignupsEnabled(): Promise<boolean> {
   return row ? row.value === true : true;
 }
 
-export async function setSignupsEnabled(enabled: boolean): Promise<void> {
-  await getDb()
-    .insert(appSettings)
-    .values({ key: SIGNUPS_ENABLED_KEY, value: enabled })
-    .onConflictDoUpdate({
-      target: appSettings.key,
-      set: { value: enabled, updatedAt: sql`now()` },
-    });
+export async function setSignupsEnabled(
+  actor: { userId: string },
+  enabled: boolean,
+): Promise<void> {
+  await getDb().transaction(async (tx) => {
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtext('agentplan:admin-membership'))`);
+    const [currentActor] = await tx
+      .select({ role: users.role })
+      .from(users)
+      .where(eq(users.id, actor.userId));
+    if (currentActor?.role !== "admin") {
+      throw new Error("Only current admins can change signup settings");
+    }
+
+    await tx
+      .insert(appSettings)
+      .values({ key: SIGNUPS_ENABLED_KEY, value: enabled })
+      .onConflictDoUpdate({
+        target: appSettings.key,
+        set: { value: enabled, updatedAt: sql`now()` },
+      });
+  });
 }

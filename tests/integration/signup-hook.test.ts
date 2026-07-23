@@ -75,13 +75,19 @@ describe.skipIf(!hasDb)("better-auth signup hook (integration)", () => {
   });
 
   it("blocks the real sign-up endpoint while sign-ups are disabled", async () => {
-    await setSignupsEnabled(false);
+    const [admin] = await getDb()
+      .select({ id: users.id })
+      .from(users)
+      .where(eq(users.role, "admin"));
+    expect(admin).toBeDefined();
+
+    await setSignupsEnabled({ userId: admin!.id }, false);
     const email = `hook-${randomUUID()}@example.test`;
     await expect(signUp(email)).rejects.toThrow(/disabled/i);
     expect(await roleOf(email)).toBeUndefined();
 
     // Re-enabling lets the same address through.
-    await setSignupsEnabled(true);
+    await setSignupsEnabled({ userId: admin!.id }, true);
     await signUp(email);
     expect(await roleOf(email)).toBe("user");
   });

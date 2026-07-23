@@ -1,5 +1,5 @@
 import { and, asc, count, eq, gt, isNull, or, sql, sum } from "drizzle-orm";
-import { getDb } from "@/db/client";
+import { getDb, withDbAdvisoryLock } from "@/db/client";
 import { apiTokens, draftVersions, drafts, users, type User, type UserRole } from "@/db/schema";
 import { recordAuditEvent } from "@/lib/audit/events";
 import { getStorage } from "@/lib/storage";
@@ -140,11 +140,8 @@ export async function deleteUserCompletely(
   if (actor.userId === targetUserId) {
     throw new Error("Admins cannot delete their own account");
   }
-  const db = getDb();
-  const deleted = await db.transaction(async (tx) => {
-    await tx.execute(sql`select pg_advisory_xact_lock(hashtext('agentplan:admin-membership'))`);
-
-    const [currentActor] = await tx
+  const deleted = await withDbAdvisoryLock("agentplan:admin-membership", async (db) => {
+    const [currentActor] = await db
       .select({ role: users.role })
       .from(users)
       .where(eq(users.id, actor.userId));
@@ -152,14 +149,14 @@ export async function deleteUserCompletely(
       throw new Error("Only current admins can delete users");
     }
 
-    const [target] = await tx
+    const [target] = await db
       .select({ id: users.id, email: users.email, role: users.role })
       .from(users)
       .where(eq(users.id, targetUserId));
     if (!target) return undefined;
 
     if (target.role === "admin") {
-      const [adminRow] = await tx
+      const [adminRow] = await db
         .select({ value: count() })
         .from(users)
         .where(eq(users.role, "admin"));
@@ -168,7 +165,7 @@ export async function deleteUserCompletely(
       }
     }
 
-    const versions = await tx
+    const versions = await db
       .select({ storageKey: draftVersions.storageKey })
       .from(draftVersions)
       .innerJoin(drafts, eq(draftVersions.draftId, drafts.id))
@@ -178,7 +175,7 @@ export async function deleteUserCompletely(
     }
 
     // Cascades sessions, accounts, tokens, drafts, and versions.
-    await tx.delete(users).where(eq(users.id, targetUserId));
+    await db.delete(users).where(eq(users.id, targetUserId));
     return { target, objectsDeleted: versions.length };
   });
   if (!deleted) return;
