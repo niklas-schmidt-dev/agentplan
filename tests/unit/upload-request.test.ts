@@ -35,14 +35,24 @@ describe("readUpload request-size precheck", () => {
   });
 
   it("rejects an oversized streamed body without a content-length header", async () => {
-    const form = new FormData();
-    form.set(
-      "file",
-      new File([new Uint8Array(MAX_UPLOAD_BYTES + 128 * 1024)], "large.html", {
-        type: "text/html",
-      }),
-    );
-    const request = uploadRequest({}, form);
+    let cancelled = false;
+    let emitted = false;
+    const stream = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        if (emitted) return;
+        emitted = true;
+        controller.enqueue(new Uint8Array(MAX_UPLOAD_BYTES + 128 * 1024));
+      },
+      cancel() {
+        cancelled = true;
+      },
+    });
+    const request = new Request("http://localhost/api/v1/drafts", {
+      method: "POST",
+      headers: { "content-type": "multipart/form-data; boundary=x" },
+      body: stream,
+      duplex: "half",
+    } as RequestInit & { duplex: "half" });
     expect(request.headers.get("content-length")).toBeNull();
 
     const result = await readUpload(request);
@@ -51,5 +61,6 @@ describe("readUpload request-size precheck", () => {
     expect(response.status).toBe(413);
     const body = (await response.json()) as { error: { code: string } };
     expect(body.error.code).toBe("FILE_TOO_LARGE");
+    expect(cancelled).toBe(true);
   });
 });

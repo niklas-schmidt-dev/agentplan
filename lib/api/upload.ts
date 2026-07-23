@@ -25,6 +25,7 @@ async function boundedRequest(req: Request): Promise<Request | Response> {
       if (done) break;
       total += value.byteLength;
       if (total > MAX_REQUEST_BYTES) {
+        await reader.cancel();
         return apiError(
           413,
           "FILE_TOO_LARGE",
