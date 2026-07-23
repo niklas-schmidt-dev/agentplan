@@ -1,4 +1,4 @@
-import { and, asc, count, eq, gt, inArray, isNull, or, sql, sum } from "drizzle-orm";
+import { and, asc, count, desc, eq, gt, ilike, inArray, isNull, or, sql, sum } from "drizzle-orm";
 import { getDb } from "@/db/client";
 import {
   apiTokens,
@@ -6,7 +6,10 @@ import {
   draftVersions,
   drafts,
   users,
+  type Draft,
+  type DraftVersion,
   type User,
+  type UserPlan,
   type UserRole,
 } from "@/db/schema";
 import { recordAuditEvent } from "@/lib/audit/events";
@@ -105,6 +108,125 @@ export async function listUsersWithUsage({
   }));
 }
 
+export type AdminDraftRow = Draft & {
+  ownerEmail: string;
+  currentVersion: Pick<DraftVersion, "versionNumber" | "sizeBytes"> | null;
+};
+
+export type AdminDraftPage = {
+  drafts: AdminDraftRow[];
+  total: number;
+};
+
+/** Lists live uploads for moderation, optionally narrowed to one owner. */
+export async function listDraftsForAdmin({
+  search,
+  ownerId,
+  limit = 50,
+  offset = 0,
+}: {
+  search?: string;
+  ownerId?: string;
+  limit?: number;
+  offset?: number;
+} = {}): Promise<AdminDraftPage> {
+  const db = getDb();
+  const boundedLimit = Math.min(Math.max(Math.trunc(limit), 1), 100);
+  const boundedOffset = Math.max(Math.trunc(offset), 0);
+  const normalizedSearch = search?.trim().slice(0, 200);
+  const conditions = [liveDraftFilter];
+  if (ownerId) conditions.push(eq(drafts.ownerId, ownerId));
+  if (normalizedSearch) {
+    const pattern = `%${normalizedSearch}%`;
+    conditions.push(
+      or(ilike(drafts.title, pattern), ilike(drafts.slug, pattern), ilike(users.email, pattern))!,
+    );
+  }
+  const where = and(...conditions);
+
+  const [[totalRow], rows] = await Promise.all([
+    db
+      .select({ value: count() })
+      .from(drafts)
+      .innerJoin(users, eq(drafts.ownerId, users.id))
+      .where(where),
+    db
+      .select({
+        draft: drafts,
+        ownerEmail: users.email,
+        versionNumber: draftVersions.versionNumber,
+        sizeBytes: draftVersions.sizeBytes,
+      })
+      .from(drafts)
+      .innerJoin(users, eq(drafts.ownerId, users.id))
+      .leftJoin(draftVersions, eq(drafts.currentVersionId, draftVersions.id))
+      .where(where)
+      .orderBy(desc(drafts.updatedAt), desc(drafts.id))
+      .limit(boundedLimit)
+      .offset(boundedOffset),
+  ]);
+
+  return {
+    total: totalRow?.value ?? 0,
+    drafts: rows.map((row) => ({
+      ...row.draft,
+      ownerEmail: row.ownerEmail,
+      currentVersion:
+        row.versionNumber === null
+          ? null
+          : {
+              versionNumber: row.versionNumber,
+              sizeBytes: row.sizeBytes ?? 0,
+            },
+    })),
+  };
+}
+
+export async function setUserPlan(
+  actor: { userId: string },
+  targetUserId: string,
+  plan: UserPlan,
+): Promise<void> {
+  const changed = await getDb().transaction(async (tx) => {
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtext('agentplan:admin-membership'))`);
+
+    const [currentActor] = await tx
+      .select({ role: users.role })
+      .from(users)
+      .where(eq(users.id, actor.userId));
+    if (currentActor?.role !== "admin") {
+      throw new Error("Only current admins can change user plans");
+    }
+
+    const [target] = await tx
+      .select({ email: users.email, plan: users.plan })
+      .from(users)
+      .where(eq(users.id, targetUserId));
+    if (!target) throw new Error("User not found");
+    if (target.plan === plan) return null;
+
+    const [updated] = await tx
+      .update(users)
+      .set({ plan })
+      .where(eq(users.id, targetUserId))
+      .returning({ email: users.email });
+    if (!updated) throw new Error("User not found");
+    return { email: updated.email, from: target.plan };
+  });
+  if (!changed) return;
+
+  await recordAuditEvent({
+    type: "user.plan_changed",
+    userId: actor.userId,
+    metadata: {
+      targetUserId,
+      targetEmail: changed.email,
+      from: changed.from,
+      to: plan,
+    },
+  });
+}
+
 export async function setUserRole(
   actor: { userId: string },
   targetUserId: string,
@@ -152,6 +274,46 @@ export async function setUserRole(
     type: "user.role_changed",
     userId: actor.userId,
     metadata: { targetUserId, targetEmail: updated.email, role },
+  });
+}
+
+/**
+ * Immediately removes an upload from every public and authenticated read path.
+ * The existing deleted-draft purge permanently removes its stored versions
+ * after the configured recovery window.
+ */
+export async function removeDraftAsAdmin(
+  actor: { userId: string },
+  draftId: string,
+): Promise<{ ownerId: string; slug: string } | null> {
+  return getDb().transaction(async (tx) => {
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtext('agentplan:admin-membership'))`);
+
+    const [currentActor] = await tx
+      .select({ role: users.role })
+      .from(users)
+      .where(eq(users.id, actor.userId));
+    if (currentActor?.role !== "admin") {
+      throw new Error("Only current admins can moderate uploads");
+    }
+
+    const [removed] = await tx
+      .update(drafts)
+      .set({ deletedAt: sql`now()`, updatedAt: sql`now()` })
+      .where(and(eq(drafts.id, draftId), isNull(drafts.deletedAt)))
+      .returning({ id: drafts.id, ownerId: drafts.ownerId, slug: drafts.slug });
+    if (!removed) return null;
+
+    await tx.insert(auditEvents).values({
+      eventType: "draft.moderated",
+      userId: actor.userId,
+      draftId: removed.id,
+      metadata: {
+        ownerId: removed.ownerId,
+        slug: removed.slug,
+      },
+    });
+    return { ownerId: removed.ownerId, slug: removed.slug };
   });
 }
 

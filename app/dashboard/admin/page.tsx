@@ -47,7 +47,15 @@ export default async function AdminPage({
     <main className="mx-auto flex min-h-dvh w-full max-w-5xl flex-col gap-6 px-6 py-8">
       <DashboardHeader email={admin.email} isAdmin={isAdmin(admin)} />
 
-      <h1 className="font-mono text-sm text-ink-muted">admin</h1>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <h1 className="font-mono text-sm text-ink-muted">admin / users</h1>
+        <Link
+          href="/dashboard/admin/content"
+          className="rounded border border-edge px-3 py-1.5 font-mono text-xs text-ink-muted transition-colors hover:border-lime hover:text-lime"
+        >
+          moderate content →
+        </Link>
+      </div>
 
       <section className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         <StatTile label="users" value={String(stats.users)} />
@@ -104,7 +112,20 @@ export default async function AdminPage({
                     {formatRelativeTime(user.createdAt)}
                   </p>
                 </div>
-                {!isSelf ? <AdminUserActions userId={user.id} role={user.role} /> : null}
+                {user.draftCount > 0 ? (
+                  <Link
+                    href={`/dashboard/admin/content?owner=${encodeURIComponent(user.id)}`}
+                    className="rounded border border-edge px-2 py-1 text-ink-muted transition-colors hover:border-lime hover:text-lime"
+                  >
+                    uploads
+                  </Link>
+                ) : null}
+                <AdminUserActions
+                  userId={user.id}
+                  plan={user.plan}
+                  role={user.role}
+                  isSelf={isSelf}
+                />
               </li>
             );
           })}
