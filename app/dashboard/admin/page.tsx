@@ -2,11 +2,11 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { AdminUserActions } from "@/components/dashboard/admin-user-actions";
 import { DashboardHeader } from "@/components/dashboard/header";
+import { SignupToggleForm } from "@/components/dashboard/signup-toggle-form";
 import { getAdminStats, listUsersWithUsage } from "@/lib/admin/service";
 import { isAdmin, requireAdmin } from "@/lib/auth/session";
 import { formatBytes, formatRelativeTime } from "@/lib/format";
 import { getSignupsEnabled } from "@/lib/settings/service";
-import { setSignupsEnabledAction } from "./actions";
 
 export const metadata = { title: "Admin" };
 const USERS_PER_PAGE = 50;
@@ -72,15 +72,7 @@ export default async function AdminPage({
             When disabled, no new accounts can be created — via email or GitHub.
           </p>
         </div>
-        <form action={setSignupsEnabledAction}>
-          <input type="hidden" name="enabled" value={signupsEnabled ? "false" : "true"} />
-          <button
-            type="submit"
-            className="rounded border border-edge px-3 py-1.5 font-mono text-xs text-ink-muted transition-colors hover:border-lime hover:text-lime"
-          >
-            {signupsEnabled ? "disable sign-ups" : "enable sign-ups"}
-          </button>
-        </form>
+        <SignupToggleForm enabled={signupsEnabled} />
       </section>
 
       <section className="flex flex-col gap-3">

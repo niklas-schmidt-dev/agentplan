@@ -10,11 +10,20 @@ const userIdSchema = z.string().min(1).max(255);
 const roleSchema = z.enum(["user", "admin"]);
 export type AdminActionState = { error: string } | null;
 
-export async function setSignupsEnabledAction(formData: FormData): Promise<void> {
+export async function setSignupsEnabledAction(
+  _previousState: AdminActionState,
+  formData: FormData,
+): Promise<AdminActionState> {
   const admin = await requireAdmin();
   const enabled = formData.get("enabled") === "true";
-  await setSignupsEnabled({ userId: admin.id }, enabled);
+  try {
+    await setSignupsEnabled({ userId: admin.id }, enabled);
+  } catch (error) {
+    console.error("setSignupsEnabledAction failed", error);
+    return { error: "Signup setting change failed. Refresh and try again." };
+  }
   revalidatePath("/dashboard/admin");
+  return null;
 }
 
 export async function setUserRoleAction(
