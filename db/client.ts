@@ -17,15 +17,19 @@ function createPool(): Pool {
   return pool;
 }
 
+function getPool(): Pool {
+  const pool = globalForDb.agentplanPool ?? createPool();
+  globalForDb.agentplanPool = pool;
+  return pool;
+}
+
 // Lazy so that importing this module (e.g. during `next build`) needs no secrets;
 // the pool is only created on first query. Cached on globalThis across dev reloads.
 let cachedDb: Database | undefined;
 
 export function getDb(): Database {
   if (!cachedDb) {
-    const pool = globalForDb.agentplanPool ?? createPool();
-    globalForDb.agentplanPool = pool;
-    cachedDb = drizzle(pool, { schema });
+    cachedDb = drizzle(getPool(), { schema });
   }
   return cachedDb;
 }

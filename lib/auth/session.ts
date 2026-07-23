@@ -1,6 +1,9 @@
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { cache } from "react";
+import { eq } from "drizzle-orm";
+import { getDb } from "@/db/client";
+import { users } from "@/db/schema";
 import { getAuth, type Auth } from "./auth";
 
 type SessionResult = Awaited<ReturnType<Auth["api"]["getSession"]>>;
@@ -17,7 +20,26 @@ export const getOptionalUser = cache(async (): Promise<SessionUser | null> => {
 export async function requireUser(): Promise<SessionUser> {
   const user = await getOptionalUser();
   if (!user) {
-    redirect("/");
+    redirect("/login");
   }
   return user;
+}
+
+export function isAdmin(user: SessionUser): boolean {
+  return user.role === "admin";
+}
+
+export async function requireAdmin(): Promise<SessionUser> {
+  const user = await requireUser();
+  const [currentUser] = await getDb()
+    .select({ role: users.role })
+    .from(users)
+    .where(eq(users.id, user.id))
+    .limit(1);
+  if (currentUser?.role !== "admin") {
+    redirect("/dashboard");
+  }
+  // Return a role value sourced from the live database rather than the
+  // potentially cached Better Auth session payload.
+  return { ...user, role: "admin" };
 }

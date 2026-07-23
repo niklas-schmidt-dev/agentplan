@@ -3,7 +3,7 @@ import { listDraftsForOwner } from "@/db/queries/drafts";
 import { CopyButton } from "@/components/dashboard/copy-button";
 import { DashboardHeader } from "@/components/dashboard/header";
 import { NewDraftForm } from "@/components/dashboard/upload-form";
-import { requireUser } from "@/lib/auth/session";
+import { isAdmin, requireUser } from "@/lib/auth/session";
 import { formatBytes, formatRelativeTime } from "@/lib/format";
 import { draftUrl } from "@/lib/urls";
 import { visibilitySchema } from "@/lib/validation/api";
@@ -28,7 +28,7 @@ export default async function DashboardPage({
 
   return (
     <main className="mx-auto flex min-h-dvh w-full max-w-5xl flex-col gap-6 px-6 py-8">
-      <DashboardHeader email={user.email} />
+      <DashboardHeader email={user.email} isAdmin={isAdmin(user)} />
 
       <details className="rounded-md border border-edge bg-surface p-4" open={drafts.length === 0}>
         <summary className="cursor-pointer font-mono text-sm text-lime">+ new draft</summary>

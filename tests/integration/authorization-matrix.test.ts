@@ -6,7 +6,6 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 process.env.STORAGE_DRIVER = "fs";
 process.env.STORAGE_FS_ROOT = mkdtempSync(path.join(os.tmpdir(), "agentplan-matrix-"));
-process.env.E2E_AUTH = "1";
 process.env.BETTER_AUTH_SECRET ??= "integration-test-secret-not-for-production";
 process.env.BETTER_AUTH_URL ??= "http://localhost:3000";
 

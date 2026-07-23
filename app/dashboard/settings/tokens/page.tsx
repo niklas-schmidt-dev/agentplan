@@ -2,7 +2,7 @@ import { revokeTokenAction } from "@/app/dashboard/actions";
 import { DangerButton } from "@/components/dashboard/danger-button";
 import { DashboardHeader } from "@/components/dashboard/header";
 import { TokenCreatePanel } from "@/components/dashboard/token-create-panel";
-import { requireUser } from "@/lib/auth/session";
+import { isAdmin, requireUser } from "@/lib/auth/session";
 import { formatRelativeTime } from "@/lib/format";
 import { listTokensForUser } from "@/lib/tokens/service";
 
@@ -14,7 +14,7 @@ export default async function TokensPage() {
 
   return (
     <main className="mx-auto flex min-h-dvh w-full max-w-3xl flex-col gap-6 px-6 py-8">
-      <DashboardHeader email={user.email} />
+      <DashboardHeader email={user.email} isAdmin={isAdmin(user)} />
 
       <section className="flex flex-col gap-3">
         <h1 className="font-mono text-sm text-ink-muted">api tokens</h1>

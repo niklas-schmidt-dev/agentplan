@@ -21,8 +21,11 @@ the link and the password).
 - **PlanetScale Postgres** with Drizzle ORM for drafts, versions, tokens, and audit events.
 - **Private Cloudflare R2 bucket** (S3-compatible API) for all uploaded HTML —
   visibility is enforced by the application, never by the storage layer.
-- **Better Auth** with GitHub OAuth for browser sessions; scoped API tokens
-  (`ap_live_…`, stored as SHA-256 hashes) for agents and the CLI.
+- **Better Auth** with email/password and optional GitHub OAuth (offered only when
+  `GITHUB_CLIENT_ID`/`GITHUB_CLIENT_SECRET` are set) for browser sessions; scoped API
+  tokens (`ap_live_…`, stored as SHA-256 hashes) for agents and the CLI. The first
+  registered user becomes the admin; admins can disable sign-ups and manage users
+  under `/dashboard/admin`.
 - Uploaded HTML is treated as hostile. It is never rendered into the application DOM;
   it is served from an isolated route and displayed inside a sandboxed iframe
   (`sandbox="allow-scripts allow-forms allow-modals allow-popups"`, no
@@ -196,14 +199,16 @@ Production deployment is a deliberate, credentialed step. Runbook:
    use its PgBouncer (pooled) URL for `DATABASE_URL`; keep the direct URL for
    migrations only.
 4. Configure production env vars in Vercel: `DATABASE_URL`, `DATABASE_URL_DIRECT`,
-   `BETTER_AUTH_SECRET`, `BETTER_AUTH_URL`, `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`,
+   `BETTER_AUTH_SECRET`, `BETTER_AUTH_URL`, `GITHUB_CLIENT_ID`/`GITHUB_CLIENT_SECRET`
+   (optional — without them the login page offers email/password only),
    `NEXT_PUBLIC_APP_URL`, `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`,
    `R2_BUCKET`, `CRON_SECRET` (authorizes the daily purge cron).
 5. Run migrations against production using the direct URL: `npm run db:migrate`.
 6. Deploy, verify auth on the Vercel domain, then attach `agentplan.app` and redirect
    `www` → apex.
-7. Set the GitHub OAuth callback to `https://agentplan.app/api/auth/callback/github`
-   and update `BETTER_AUTH_URL` / `NEXT_PUBLIC_APP_URL`; redeploy.
+7. In every deployment, update `BETTER_AUTH_URL` / `NEXT_PUBLIC_APP_URL`. If GitHub
+   OAuth is enabled, also set its callback to
+   `https://agentplan.app/api/auth/callback/github`; redeploy.
 8. Verify public/private behavior on the final domain.
 
 Choose PlanetScale and Vercel regions in the same geography where possible.

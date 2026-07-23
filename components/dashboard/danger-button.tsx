@@ -6,10 +6,12 @@ import { useState } from "react";
 export function DangerButton({
   label,
   confirmLabel,
+  disabled = false,
   children,
 }: {
   label: string;
   confirmLabel: string;
+  disabled?: boolean;
   children?: React.ReactNode;
 }) {
   const [arming, setArming] = useState(false);
@@ -18,8 +20,9 @@ export function DangerButton({
     return (
       <button
         type="button"
+        disabled={disabled}
         onClick={() => setArming(true)}
-        className="rounded border border-edge px-2 py-1 font-mono text-xs text-danger transition-colors hover:border-danger"
+        className="rounded border border-edge px-2 py-1 font-mono text-xs text-danger transition-colors hover:border-danger disabled:opacity-60"
       >
         {label}
       </button>
@@ -30,7 +33,8 @@ export function DangerButton({
     <span className="inline-flex items-center gap-2">
       <button
         type="submit"
-        className="rounded border border-danger bg-danger/10 px-2 py-1 font-mono text-xs text-danger transition-colors hover:bg-danger hover:text-canvas"
+        disabled={disabled}
+        className="rounded border border-danger bg-danger/10 px-2 py-1 font-mono text-xs text-danger transition-colors hover:bg-danger hover:text-canvas disabled:opacity-60"
       >
         {confirmLabel}
       </button>
