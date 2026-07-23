@@ -7,6 +7,7 @@ export type ParsedUpload = {
   bytes: Uint8Array;
   title: string;
   visibility: Visibility | undefined;
+  password: string | undefined;
 };
 
 /** Parses and validates a multipart upload. Returns a Response on rejection. */
@@ -35,9 +36,11 @@ export async function readUpload(req: Request): Promise<ParsedUpload | Response>
 
   const titleField = form.get("title");
   const visibilityField = form.get("visibility");
+  const passwordField = form.get("password");
   const fields = draftFieldsSchema.safeParse({
     title: typeof titleField === "string" && titleField ? titleField : undefined,
     visibility: typeof visibilityField === "string" && visibilityField ? visibilityField : undefined,
+    password: typeof passwordField === "string" && passwordField ? passwordField : undefined,
   });
   if (!fields.success) {
     return invalidRequest(fields.error.issues[0]?.message ?? "Invalid fields.");
@@ -47,5 +50,6 @@ export async function readUpload(req: Request): Promise<ParsedUpload | Response>
     bytes: new Uint8Array(await file.arrayBuffer()),
     title: fields.data.title ?? titleFromFilename(file.name),
     visibility: fields.data.visibility,
+    password: fields.data.password,
   };
 }

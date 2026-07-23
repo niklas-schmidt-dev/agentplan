@@ -22,8 +22,9 @@ import { GET as contentRoute } from "@/app/p/[slug]/content/route";
 import { GET as listTokensRoute, POST as createTokenRoute } from "@/app/api/v1/tokens/route";
 import { DELETE as revokeTokenRoute } from "@/app/api/v1/tokens/[id]/route";
 import { closeDb } from "@/db/client";
-import { listVersions } from "@/db/queries/drafts";
+import { getDraftForOwner, listVersions } from "@/db/queries/drafts";
 import { getAuth } from "@/lib/auth/auth";
+import { accessCookieName, issueDraftAccess } from "@/lib/drafts/access";
 import { createToken } from "@/lib/tokens/service";
 
 const hasDb = Boolean(process.env.DATABASE_URL);
@@ -51,6 +52,7 @@ function uploadRequest(fields: {
   bearer?: string;
   visibility?: string;
   title?: string;
+  password?: string;
 }): Request {
   const form = new FormData();
   form.set(
@@ -59,6 +61,7 @@ function uploadRequest(fields: {
   );
   if (fields.title) form.set("title", fields.title);
   if (fields.visibility) form.set("visibility", fields.visibility);
+  if (fields.password) form.set("password", fields.password);
   const headers: Record<string, string> = {};
   if (fields.cookie) headers.cookie = fields.cookie;
   if (fields.bearer) headers.authorization = `Bearer ${fields.bearer}`;
@@ -288,6 +291,179 @@ describe.skipIf(!hasDb)("authorization matrix (integration)", () => {
         contentParams(privateDraft.slug),
       );
       expect(anonAgain.status).toBe(404);
+    });
+  });
+
+  describe("password-protected drafts", () => {
+    const contentReqWithCookie = (slug: string, cookie: string) =>
+      new Request(`${BASE}/p/${slug}/content`, { headers: { cookie } });
+
+    it("create with visibility=password but no password is rejected", async () => {
+      const res = await createDraftRoute(
+        uploadRequest({ cookie: owner.cookie, visibility: "password", title: "No pw" }),
+      );
+      expect(res.status).toBe(400);
+      expect((await res.json()).error.code).toBe("INVALID_REQUEST");
+    });
+
+    it("a password without visibility protects the draft and conflicting visibility is rejected", async () => {
+      const protectedResponse = await createDraftRoute(
+        uploadRequest({ cookie: owner.cookie, password: "implicit-pw", title: "Implicit" }),
+      );
+      expect(protectedResponse.status).toBe(201);
+      const protectedDraft = (await protectedResponse.json()).draft;
+      expect(protectedDraft.visibility).toBe("password");
+      const anonymous = await contentRoute(
+        new Request(`${BASE}/p/${protectedDraft.slug}/content`),
+        contentParams(protectedDraft.slug),
+      );
+      expect(anonymous.status).toBe(404);
+
+      const conflictingCreate = await createDraftRoute(
+        uploadRequest({
+          cookie: owner.cookie,
+          visibility: "public",
+          password: "discarded-pw",
+          title: "Conflict",
+        }),
+      );
+      expect(conflictingCreate.status).toBe(400);
+
+      const conflictingPatch = await patchDraftRoute(
+        jsonRequest(
+          `${BASE}/api/v1/drafts/${protectedDraft.id}`,
+          "PATCH",
+          { visibility: "public", password: "discarded-pw" },
+          { cookie: owner.cookie },
+        ),
+        params(protectedDraft.id),
+      );
+      expect(conflictingPatch.status).toBe(400);
+    });
+
+    it("gates content on a valid, draft-scoped access cookie", async () => {
+      const created = await createDraftRoute(
+        uploadRequest({
+          cookie: owner.cookie,
+          visibility: "password",
+          password: "s3cret-pw",
+          title: "Secret doc",
+        }),
+      );
+      expect(created.status).toBe(201);
+      const draft = (await created.json()).draft;
+      expect(draft.visibility).toBe("password");
+
+      // Anonymous, no access cookie → 404 (the prompt lives on the shell page).
+      const anon = await contentRoute(
+        new Request(`${BASE}/p/${draft.slug}/content`),
+        contentParams(draft.slug),
+      );
+      expect(anon.status).toBe(404);
+
+      // A valid access cookie for THIS draft → 200, and never publicly cached.
+      const storedDraft = await getDraftForOwner(draft.id, owner.userId);
+      expect(storedDraft?.passwordHash).toBeTruthy();
+      const grant = issueDraftAccess(draft.id, storedDraft!.passwordHash!);
+      const granted = await contentRoute(
+        contentReqWithCookie(draft.slug, `${accessCookieName(draft.id)}=${grant}`),
+        contentParams(draft.slug),
+      );
+      expect(granted.status).toBe(200);
+      expect(granted.headers.get("cache-control")).toBe("private, no-store");
+
+      // A valid grant for a DIFFERENT draft id must not unlock this one.
+      const otherGrant = issueDraftAccess(
+        "99999999-9999-9999-9999-999999999999",
+        storedDraft!.passwordHash!,
+      );
+      const wrong = await contentRoute(
+        contentReqWithCookie(draft.slug, `${accessCookieName(draft.id)}=${otherGrant}`),
+        contentParams(draft.slug),
+      );
+      expect(wrong.status).toBe(404);
+
+      // Rotating the password invalidates every grant signed against the old hash.
+      const rotated = await patchDraftRoute(
+        jsonRequest(
+          `${BASE}/api/v1/drafts/${draft.id}`,
+          "PATCH",
+          { password: "rotated-pw" },
+          { cookie: owner.cookie },
+        ),
+        params(draft.id),
+      );
+      expect(rotated.status).toBe(200);
+      const afterRotation = await contentRoute(
+        contentReqWithCookie(draft.slug, `${accessCookieName(draft.id)}=${grant}`),
+        contentParams(draft.slug),
+      );
+      expect(afterRotation.status).toBe(404);
+
+      // The owner always sees it without any access cookie.
+      const asOwner = await contentRoute(
+        contentReqWithCookie(draft.slug, owner.cookie),
+        contentParams(draft.slug),
+      );
+      expect(asOwner.status).toBe(200);
+    });
+
+    it("switching away from password clears the gate; switching back requires a password", async () => {
+      const created = await createDraftRoute(
+        uploadRequest({
+          cookie: owner.cookie,
+          visibility: "password",
+          password: "first-pw",
+          title: "Toggler",
+        }),
+      );
+      const draft = (await created.json()).draft;
+
+      // password → public: content becomes anonymously viewable.
+      const toPublic = await patchDraftRoute(
+        jsonRequest(`${BASE}/api/v1/drafts/${draft.id}`, "PATCH", { visibility: "public" }, {
+          cookie: owner.cookie,
+        }),
+        params(draft.id),
+      );
+      expect(toPublic.status).toBe(200);
+      const nowPublic = await contentRoute(
+        new Request(`${BASE}/p/${draft.slug}/content`),
+        contentParams(draft.slug),
+      );
+      expect(nowPublic.status).toBe(200);
+      expect(nowPublic.headers.get("cache-control")).toContain("public");
+
+      // public → password without a password is rejected (no stored hash to reuse).
+      const missingPw = await patchDraftRoute(
+        jsonRequest(
+          `${BASE}/api/v1/drafts/${draft.id}`,
+          "PATCH",
+          { visibility: "password", title: "Must not persist" },
+          { cookie: owner.cookie },
+        ),
+        params(draft.id),
+      );
+      expect(missingPw.status).toBe(400);
+      const unchanged = await getDraftForOwner(draft.id, owner.userId);
+      expect(unchanged?.title).toBe("Toggler");
+
+      // Providing a password re-protects it.
+      const rePassworded = await patchDraftRoute(
+        jsonRequest(
+          `${BASE}/api/v1/drafts/${draft.id}`,
+          "PATCH",
+          { visibility: "password", password: "second-pw" },
+          { cookie: owner.cookie },
+        ),
+        params(draft.id),
+      );
+      expect(rePassworded.status).toBe(200);
+      const gatedAgain = await contentRoute(
+        new Request(`${BASE}/p/${draft.slug}/content`),
+        contentParams(draft.slug),
+      );
+      expect(gatedAgain.status).toBe(404);
     });
   });
 

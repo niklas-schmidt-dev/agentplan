@@ -3,7 +3,11 @@ import { authenticateApiRequest, isFailure } from "@/lib/api/auth";
 import { insufficientScope, internalError, invalidRequest, unauthorized } from "@/lib/api/responses";
 import { serializeDraft } from "@/lib/api/serialize";
 import { readUpload } from "@/lib/api/upload";
-import { createDraftWithFirstVersion } from "@/lib/drafts/service";
+import {
+  createDraftWithFirstVersion,
+  PasswordRequiredError,
+  PasswordVisibilityConflictError,
+} from "@/lib/drafts/service";
 import { listDraftsQuerySchema } from "@/lib/validation/api";
 
 export const runtime = "nodejs";
@@ -18,16 +22,26 @@ export async function POST(req: Request): Promise<Response> {
   if (upload instanceof Response) return upload;
 
   try {
+    // Supplying a password without an explicit visibility must protect the
+    // draft rather than silently creating a private draft and discarding it.
+    const visibility = upload.visibility ?? (upload.password ? "password" : "private");
     const { draft, version } = await createDraftWithFirstVersion({
       ownerId: actor.userId,
       title: upload.title,
-      visibility: upload.visibility ?? "private",
+      visibility,
+      password: upload.password,
       bytes: upload.bytes,
       source: actor.kind === "token" ? "api_token" : "browser",
       tokenId: actor.kind === "token" ? actor.tokenId : undefined,
     });
     return Response.json({ draft: serializeDraft(draft, version.versionNumber) }, { status: 201 });
   } catch (error) {
+    if (error instanceof PasswordRequiredError) {
+      return invalidRequest("A password is required for password-protected drafts.");
+    }
+    if (error instanceof PasswordVisibilityConflictError) {
+      return invalidRequest("A password cannot be combined with public or private visibility.");
+    }
     console.error("POST /api/v1/drafts failed", error);
     return internalError();
   }

@@ -7,13 +7,20 @@ import { requireUser } from "@/lib/auth/session";
 import {
   addVersionToDraft,
   createDraftWithFirstVersion,
+  PasswordRequiredError,
   restoreVersion,
+  setDraftPassword,
   setDraftTitle,
   setDraftVisibility,
   softDeleteDraft,
 } from "@/lib/drafts/service";
 import { createToken, revokeToken } from "@/lib/tokens/service";
-import { createTokenSchema, uuidSchema, visibilitySchema } from "@/lib/validation/api";
+import {
+  createTokenSchema,
+  draftPasswordSchema,
+  uuidSchema,
+  visibilitySchema,
+} from "@/lib/validation/api";
 import { normalizeTitle, titleFromFilename, validateUpload } from "@/lib/validation/upload";
 import type { Draft } from "@/db/schema";
 
@@ -50,18 +57,32 @@ export async function uploadDraftAction(
       ? normalizeTitle(rawTitle)
       : titleFromFilename(upload.filename);
   const visibility = visibilitySchema.safeParse(formData.get("visibility"));
+  const chosenVisibility = visibility.success ? visibility.data : "private";
+
+  let password: string | undefined;
+  if (chosenVisibility === "password") {
+    const parsed = draftPasswordSchema.safeParse(formData.get("password"));
+    if (!parsed.success) {
+      return { error: parsed.error.issues[0]?.message ?? "Invalid password." };
+    }
+    password = parsed.data;
+  }
 
   let draftId: string;
   try {
     const { draft } = await createDraftWithFirstVersion({
       ownerId: user.id,
       title,
-      visibility: visibility.success ? visibility.data : "private",
+      visibility: chosenVisibility,
+      password,
       bytes: upload.bytes,
       source: "browser",
     });
     draftId = draft.id;
   } catch (error) {
+    if (error instanceof PasswordRequiredError) {
+      return { error: "A password is required for password-protected drafts." };
+    }
     console.error("uploadDraftAction failed", error);
     return { error: "Upload failed. Please try again." };
   }
@@ -95,14 +116,38 @@ export async function uploadVersionAction(
   return null;
 }
 
+/** Handles the public/private buttons. Switching to password is done via
+ *  setDraftPasswordAction, which carries the required password. */
 export async function setVisibilityAction(formData: FormData): Promise<void> {
   const { userId, draft } = await requireOwnedDraft(formData.get("draftId"));
   const visibility = visibilitySchema.safeParse(formData.get("visibility"));
-  if (visibility.success && visibility.data !== draft.visibility) {
+  if (
+    visibility.success &&
+    visibility.data !== "password" &&
+    visibility.data !== draft.visibility
+  ) {
     await setDraftVisibility(draft, visibility.data, { userId });
   }
   revalidatePath(`/dashboard/drafts/${draft.id}`);
   revalidatePath("/dashboard");
+}
+
+export type PasswordActionState = { error: string } | { ok: true } | null;
+
+/** Sets or rotates a draft password and marks it password-protected. */
+export async function setDraftPasswordAction(
+  _prev: PasswordActionState,
+  formData: FormData,
+): Promise<PasswordActionState> {
+  const { userId, draft } = await requireOwnedDraft(formData.get("draftId"));
+  const parsed = draftPasswordSchema.safeParse(formData.get("password"));
+  if (!parsed.success) {
+    return { error: parsed.error.issues[0]?.message ?? "Invalid password." };
+  }
+  await setDraftPassword(draft, parsed.data, { userId });
+  revalidatePath(`/dashboard/drafts/${draft.id}`);
+  revalidatePath("/dashboard");
+  return { ok: true };
 }
 
 export async function renameDraftAction(formData: FormData): Promise<void> {

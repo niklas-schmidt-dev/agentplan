@@ -1,5 +1,7 @@
 import { getDraftBySlug, getVersionById } from "@/db/queries/drafts";
 import { authenticateSession } from "@/lib/api/auth";
+import { readAccessCookie } from "@/lib/drafts/access";
+import { resolveDraftView } from "@/lib/drafts/view-access";
 import { getStorage } from "@/lib/storage";
 
 export const runtime = "nodejs";
@@ -24,10 +26,22 @@ export async function GET(
   const draft = await getDraftBySlug(slug);
   if (!draft || !draft.currentVersionId) return notFoundResponse();
 
-  if (draft.visibility === "private") {
+  // Public content stays independent of the auth backend. Private/password
+  // drafts still authorize through the single resolver below.
+  let userId: string | null = null;
+  let accessToken: string | undefined;
+  if (draft.visibility !== "public") {
     const session = await authenticateSession(req);
-    if (!session || session.userId !== draft.ownerId) return notFoundResponse();
+    userId = session?.userId ?? null;
+    if (draft.visibility === "password") {
+      accessToken = readAccessCookie(req.headers.get("cookie"), draft.id);
+    }
   }
+  const resolution = resolveDraftView(draft, {
+    userId,
+    accessToken,
+  });
+  if (resolution.state !== "granted") return notFoundResponse();
 
   const version = await getVersionById(draft.id, draft.currentVersionId);
   if (!version) return notFoundResponse();

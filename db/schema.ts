@@ -90,7 +90,7 @@ export const verifications = pgTable(
 
 // --- Application tables ---
 
-export const draftVisibility = pgEnum("draft_visibility", ["public", "private"]);
+export const draftVisibility = pgEnum("draft_visibility", ["public", "private", "password"]);
 export const versionSource = pgEnum("version_source", ["browser", "api_token"]);
 
 export const drafts = pgTable(
@@ -103,6 +103,8 @@ export const drafts = pgTable(
     slug: varchar("slug", { length: 80 }).notNull().unique(),
     title: varchar("title", { length: 200 }).notNull(),
     visibility: draftVisibility("visibility").notNull().default("private"),
+    // Salted scrypt hash; set only when visibility is "password", null otherwise.
+    passwordHash: text("password_hash"),
     currentVersionId: uuid("current_version_id").references(
       (): AnyPgColumn => draftVersions.id,
       { onDelete: "set null" },

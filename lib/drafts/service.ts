@@ -9,6 +9,7 @@ import {
   type Visibility,
 } from "@/db/schema";
 import { recordAuditEvent } from "@/lib/audit/events";
+import { hashPassword } from "@/lib/drafts/password";
 import { generateSlug } from "@/lib/drafts/slug";
 import { getStorage, storageKeyFor } from "@/lib/storage";
 
@@ -19,6 +20,22 @@ export class DraftNotFoundError extends Error {
   constructor() {
     super("Draft not found");
     this.name = "DraftNotFoundError";
+  }
+}
+
+/** Thrown when password visibility is requested without a password to set. */
+export class PasswordRequiredError extends Error {
+  constructor() {
+    super("A password is required for password-protected visibility");
+    this.name = "PasswordRequiredError";
+  }
+}
+
+/** Thrown when a password is paired with a non-password visibility. */
+export class PasswordVisibilityConflictError extends Error {
+  constructor() {
+    super("A password cannot be combined with public or private visibility");
+    this.name = "PasswordVisibilityConflictError";
   }
 }
 
@@ -49,12 +66,23 @@ export async function createDraftWithFirstVersion(params: {
   bytes: Uint8Array;
   source: UploadSource;
   tokenId?: string;
+  /** Required plaintext when visibility is "password"; invalid otherwise. */
+  password?: string;
 }): Promise<{ draft: Draft; version: DraftVersion }> {
   const db = getDb();
   const draftId = randomUUID();
   const versionId = randomUUID();
   const storageKey = storageKeyFor(params.ownerId, draftId, versionId);
   const contentSha256 = sha256Hex(params.bytes);
+
+  if (params.visibility === "password" && !params.password) {
+    throw new PasswordRequiredError();
+  }
+  if (params.visibility !== "password" && params.password !== undefined) {
+    throw new PasswordVisibilityConflictError();
+  }
+  const passwordHash =
+    params.visibility === "password" ? await hashPassword(params.password!) : null;
 
   await getStorage().put(storageKey, params.bytes, HTML_CONTENT_TYPE);
 
@@ -72,6 +100,7 @@ export async function createDraftWithFirstVersion(params: {
               slug,
               title: params.title,
               visibility: params.visibility,
+              passwordHash,
             })
             .returning();
           const [version] = await tx
@@ -221,20 +250,69 @@ export async function setDraftVisibility(
   draft: Draft,
   visibility: Visibility,
   actor: { userId: string; tokenId?: string },
+  /** Required only when switching to "password" on a draft that has none set. */
+  password?: string,
 ): Promise<Draft> {
   const db = getDb();
+
+  if (visibility !== "password" && password !== undefined) {
+    throw new PasswordVisibilityConflictError();
+  }
+
+  let passwordHash: string | null | undefined;
+  if (visibility === "password") {
+    if (password) {
+      passwordHash = await hashPassword(password);
+    } else if (!draft.passwordHash) {
+      // No existing password and none supplied — cannot become password-protected.
+      throw new PasswordRequiredError();
+    }
+    // else: keep the existing hash (passwordHash stays undefined = no change).
+  } else {
+    // Leaving password mode clears the stored hash.
+    passwordHash = null;
+  }
+
   const [updated] = await db
     .update(drafts)
-    .set({ visibility, updatedAt: sql`now()` })
+    .set({
+      visibility,
+      ...(passwordHash !== undefined ? { passwordHash } : {}),
+      updatedAt: sql`now()`,
+    })
     .where(and(eq(drafts.id, draft.id), isNull(drafts.deletedAt)))
     .returning();
-  if (!updated) throw new Error("Draft not found");
+  if (!updated) throw new DraftNotFoundError();
   await recordAuditEvent({
     type: "draft.visibility_changed",
     userId: actor.userId,
     draftId: draft.id,
     tokenId: actor.tokenId,
     metadata: { from: draft.visibility, to: visibility },
+  });
+  return updated;
+}
+
+/** Sets or changes a password and ensures the draft is password-protected. */
+export async function setDraftPassword(
+  draft: Draft,
+  password: string,
+  actor: { userId: string; tokenId?: string },
+): Promise<Draft> {
+  const db = getDb();
+  const passwordHash = await hashPassword(password);
+  const [updated] = await db
+    .update(drafts)
+    .set({ visibility: "password", passwordHash, updatedAt: sql`now()` })
+    .where(and(eq(drafts.id, draft.id), isNull(drafts.deletedAt)))
+    .returning();
+  if (!updated) throw new DraftNotFoundError();
+  await recordAuditEvent({
+    type: "draft.visibility_changed",
+    userId: actor.userId,
+    draftId: draft.id,
+    tokenId: actor.tokenId,
+    metadata: { from: draft.visibility, to: "password", passwordChanged: true },
   });
   return updated;
 }
