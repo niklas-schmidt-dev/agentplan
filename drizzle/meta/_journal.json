@@ -29,6 +29,13 @@
       "when": 1784786592637,
       "tag": "0003_famous_forge",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1784809735238,
+      "tag": "0004_enforce_signup_policy",
+      "breakpoints": true
     }
   ]
 }

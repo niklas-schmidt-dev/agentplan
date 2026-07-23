@@ -91,4 +91,23 @@ describe.skipIf(!hasDb)("better-auth signup hook (integration)", () => {
     await signUp(email);
     expect(await roleOf(email)).toBe("user");
   });
+
+  it("enforces disabled signups at the database insert boundary", async () => {
+    const [admin] = await getDb()
+      .select({ id: users.id })
+      .from(users)
+      .where(eq(users.role, "admin"));
+    expect(admin).toBeDefined();
+
+    await setSignupsEnabled({ userId: admin!.id }, false);
+    const id = `hook-boundary-${randomUUID()}`;
+    const email = `${id}@example.test`;
+    createdEmails.push(email);
+    await expect(
+      getDb().insert(users).values({ id, name: "Boundary Test", email, emailVerified: true }),
+    ).rejects.toThrow();
+    expect(await roleOf(email)).toBeUndefined();
+
+    await setSignupsEnabled({ userId: admin!.id }, true);
+  });
 });

@@ -8,6 +8,7 @@ import { setSignupsEnabled } from "@/lib/settings/service";
 
 const userIdSchema = z.string().min(1).max(255);
 const roleSchema = z.enum(["user", "admin"]);
+export type AdminActionState = { error: string } | null;
 
 export async function setSignupsEnabledAction(formData: FormData): Promise<void> {
   const admin = await requireAdmin();
@@ -16,31 +17,41 @@ export async function setSignupsEnabledAction(formData: FormData): Promise<void>
   revalidatePath("/dashboard/admin");
 }
 
-export async function setUserRoleAction(formData: FormData): Promise<void> {
+export async function setUserRoleAction(
+  _previousState: AdminActionState,
+  formData: FormData,
+): Promise<AdminActionState> {
   const admin = await requireAdmin();
   const userId = userIdSchema.safeParse(formData.get("userId"));
   const role = roleSchema.safeParse(formData.get("role"));
-  if (userId.success && role.success && userId.data !== admin.id) {
-    try {
-      await setUserRole({ userId: admin.id }, userId.data, role.data);
-    } catch (error) {
-      console.error("setUserRoleAction failed", error);
-    }
+  if (!userId.success || !role.success || userId.data === admin.id) {
+    return { error: "Invalid role change request." };
+  }
+  try {
+    await setUserRole({ userId: admin.id }, userId.data, role.data);
+  } catch (error) {
+    console.error("setUserRoleAction failed", error);
+    return { error: "Role change failed. Refresh and try again." };
   }
   revalidatePath("/dashboard/admin");
+  return null;
 }
 
-export async function deleteUserAction(formData: FormData): Promise<void> {
+export async function deleteUserAction(
+  _previousState: AdminActionState,
+  formData: FormData,
+): Promise<AdminActionState> {
   const admin = await requireAdmin();
   const userId = userIdSchema.safeParse(formData.get("userId"));
-  if (userId.success && userId.data !== admin.id) {
-    // No error channel on this plain form action; a failed storage cleanup
-    // leaves the row in place (deletion stays retryable) instead of a 500.
-    try {
-      await deleteUserCompletely({ userId: admin.id }, userId.data);
-    } catch (error) {
-      console.error("deleteUserAction failed", error);
-    }
+  if (!userId.success || userId.data === admin.id) {
+    return { error: "Invalid user deletion request." };
+  }
+  try {
+    await deleteUserCompletely({ userId: admin.id }, userId.data);
+  } catch (error) {
+    console.error("deleteUserAction failed", error);
+    return { error: "Deletion failed. The user and database rows were kept." };
   }
   revalidatePath("/dashboard/admin");
+  return null;
 }

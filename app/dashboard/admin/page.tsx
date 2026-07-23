@@ -1,12 +1,12 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { DangerButton } from "@/components/dashboard/danger-button";
+import { AdminUserActions } from "@/components/dashboard/admin-user-actions";
 import { DashboardHeader } from "@/components/dashboard/header";
 import { getAdminStats, listUsersWithUsage } from "@/lib/admin/service";
 import { isAdmin, requireAdmin } from "@/lib/auth/session";
 import { formatBytes, formatRelativeTime } from "@/lib/format";
 import { getSignupsEnabled } from "@/lib/settings/service";
-import { deleteUserAction, setSignupsEnabledAction, setUserRoleAction } from "./actions";
+import { setSignupsEnabledAction } from "./actions";
 
 export const metadata = { title: "Admin" };
 const USERS_PER_PAGE = 50;
@@ -112,28 +112,7 @@ export default async function AdminPage({
                     {formatRelativeTime(user.createdAt)}
                   </p>
                 </div>
-                {!isSelf ? (
-                  <div className="flex items-center gap-2">
-                    <form action={setUserRoleAction}>
-                      <input type="hidden" name="userId" value={user.id} />
-                      <input
-                        type="hidden"
-                        name="role"
-                        value={user.role === "admin" ? "user" : "admin"}
-                      />
-                      <button
-                        type="submit"
-                        className="rounded border border-edge px-2 py-1 text-ink-muted transition-colors hover:border-lime hover:text-lime"
-                      >
-                        {user.role === "admin" ? "remove admin" : "make admin"}
-                      </button>
-                    </form>
-                    <form action={deleteUserAction}>
-                      <input type="hidden" name="userId" value={user.id} />
-                      <DangerButton label="delete" confirmLabel="delete user + data" />
-                    </form>
-                  </div>
-                ) : null}
+                {!isSelf ? <AdminUserActions userId={user.id} role={user.role} /> : null}
               </li>
             );
           })}

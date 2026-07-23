@@ -20,6 +20,7 @@ export async function setSignupsEnabled(
 ): Promise<void> {
   await getDb().transaction(async (tx) => {
     await tx.execute(sql`select pg_advisory_xact_lock(hashtext('agentplan:admin-membership'))`);
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtext('agentplan:signup-policy'))`);
     const [currentActor] = await tx
       .select({ role: users.role })
       .from(users)

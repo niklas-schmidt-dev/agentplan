@@ -188,7 +188,12 @@ describe.skipIf(!hasDb)("admin tools (integration)", () => {
     expect(stats.storageBytes).toBeGreaterThanOrEqual(html.byteLength);
     expect(stats.activeTokens).toBeGreaterThanOrEqual(1);
 
-    const row = (await listUsersWithUsage()).find((candidate) => candidate.id === userId);
+    const row = (
+      await listUsersWithUsage({
+        limit: 100,
+        offset: Math.max(stats.users - 100, 0),
+      })
+    ).find((candidate) => candidate.id === userId);
     expect(row).toBeDefined();
     expect(row?.draftCount).toBe(1);
     expect(row?.storageBytes).toBe(html.byteLength);
