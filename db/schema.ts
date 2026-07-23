@@ -16,6 +16,7 @@ import {
 } from "drizzle-orm/pg-core";
 
 export const userPlan = pgEnum("user_plan", ["free", "unlimited"]);
+export const userRole = pgEnum("user_role", ["user", "admin"]);
 
 // --- Better Auth tables (shape must match better-auth's generated schema) ---
 
@@ -28,6 +29,9 @@ export const users = pgTable("users", {
   // App-managed, invisible to Better Auth. "unlimited" bypasses quotas and
   // upload rate limits; set via scripts/set-user-plan.ts.
   plan: userPlan("plan").notNull().default("free"),
+  // Assigned by the signup hook in lib/auth/auth.ts: the very first user
+  // becomes "admin"; admins manage users and settings under /dashboard/admin.
+  role: userRole("role").notNull().default("user"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at")
     .defaultNow()
@@ -188,6 +192,17 @@ export const auditEvents = pgTable(
   (table) => [index("audit_events_draft_id_idx").on(table.draftId)],
 );
 
+// Admin-managed runtime settings (e.g. "signups_enabled"). A missing key means
+// the setting's default applies; see lib/settings/service.ts.
+export const appSettings = pgTable("app_settings", {
+  key: varchar("key", { length: 64 }).primaryKey(),
+  value: jsonb("value").notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true })
+    .defaultNow()
+    .$onUpdate(() => new Date())
+    .notNull(),
+});
+
 export const rateLimits = pgTable(
   "rate_limits",
   {
@@ -209,3 +224,4 @@ export type DraftVersion = typeof draftVersions.$inferSelect;
 export type ApiToken = typeof apiTokens.$inferSelect;
 export type Visibility = (typeof draftVisibility.enumValues)[number];
 export type UserPlan = (typeof userPlan.enumValues)[number];
+export type UserRole = (typeof userRole.enumValues)[number];

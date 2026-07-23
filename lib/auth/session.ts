@@ -17,7 +17,19 @@ export const getOptionalUser = cache(async (): Promise<SessionUser | null> => {
 export async function requireUser(): Promise<SessionUser> {
   const user = await getOptionalUser();
   if (!user) {
-    redirect("/");
+    redirect("/login");
+  }
+  return user;
+}
+
+export function isAdmin(user: SessionUser): boolean {
+  return user.role === "admin";
+}
+
+export async function requireAdmin(): Promise<SessionUser> {
+  const user = await requireUser();
+  if (!isAdmin(user)) {
+    redirect("/dashboard");
   }
   return user;
 }

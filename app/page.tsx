@@ -1,5 +1,4 @@
 import Link from "next/link";
-import { SignInButton } from "@/components/auth-buttons";
 
 export default function LandingPage() {
   return (
@@ -28,7 +27,12 @@ export default function LandingPage() {
           <span className="text-ink-faint">$ </span>
           <span className="text-lime">npx agentplan</span> upload ./plan.html
         </pre>
-        <SignInButton />
+        <Link
+          href="/login"
+          className="w-fit rounded-md border border-lime bg-lime px-4 py-2 font-mono text-sm font-medium text-canvas transition-colors hover:bg-lime-dim"
+        >
+          sign in
+        </Link>
       </section>
 
       <footer className="font-mono text-xs text-ink-faint">

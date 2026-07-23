@@ -5,6 +5,9 @@ export default defineConfig({
   test: {
     environment: "node",
     include: ["tests/unit/**/*.test.ts", "tests/security/**/*.test.ts", "tests/integration/**/*.test.ts"],
+    // Integration files share one database and some (admin, signup-hook)
+    // toggle global settings like signups_enabled; parallel files would race.
+    fileParallelism: false,
     env: {
       // Never let unit tests touch a real database by accident.
       DATABASE_URL: process.env.TEST_DATABASE_URL ?? "",

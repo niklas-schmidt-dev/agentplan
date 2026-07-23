@@ -20,13 +20,13 @@ export default defineConfig({
   webServer: process.env.PLAYWRIGHT_BASE_URL
     ? undefined
     : {
-        // E2E needs the test-only auth/seed paths enabled and a database.
+        // E2E signs up via the regular email/password endpoints; it only
+        // needs a database and local fs storage.
         command: "npm run dev",
         url: "http://localhost:3000/healthz",
         reuseExistingServer: !process.env.CI,
         timeout: 120_000,
         env: {
-          E2E_AUTH: "1",
           STORAGE_DRIVER: "fs",
           STORAGE_FS_ROOT: process.env.STORAGE_FS_ROOT ?? ".data/e2e-storage",
           DATABASE_URL: process.env.DATABASE_URL ?? "",

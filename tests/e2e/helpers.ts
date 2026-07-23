@@ -2,15 +2,13 @@ import { randomUUID } from "node:crypto";
 import type { APIRequestContext, Page } from "@playwright/test";
 import { expect } from "@playwright/test";
 
-/** Signs up via the test-only email endpoint (requires E2E_AUTH=1 on the server). */
+/** Signs up via the email/password endpoint (fails if sign-ups are disabled). */
 export async function signUp(request: APIRequestContext): Promise<{ email: string }> {
   const email = `e2e-${randomUUID()}@example.test`;
   const response = await request.post("/api/auth/sign-up/email", {
     data: { email, password: "e2e-password-123", name: "E2E User" },
   });
-  expect(response.ok(), "sign-up should succeed — is the server running with E2E_AUTH=1?").toBe(
-    true,
-  );
+  expect(response.ok(), "sign-up should succeed — are sign-ups enabled?").toBe(true);
   return { email };
 }
 

@@ -22,6 +22,13 @@
       "when": 1784762007383,
       "tag": "0002_good_joystick",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1784786592637,
+      "tag": "0003_famous_forge",
+      "breakpoints": true
     }
   ]
 }
