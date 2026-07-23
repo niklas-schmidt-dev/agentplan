@@ -1,13 +1,6 @@
 import { and, asc, count, eq, gt, isNull, or, sql, sum } from "drizzle-orm";
 import { getDb } from "@/db/client";
-import {
-  apiTokens,
-  draftVersions,
-  drafts,
-  users,
-  type User,
-  type UserRole,
-} from "@/db/schema";
+import { apiTokens, draftVersions, drafts, users, type User, type UserRole } from "@/db/schema";
 import { recordAuditEvent } from "@/lib/audit/events";
 import { getStorage } from "@/lib/storage";
 
@@ -92,11 +85,40 @@ export async function setUserRole(
   if (actor.userId === targetUserId) {
     throw new Error("Admins cannot change their own role");
   }
-  const [updated] = await getDb()
-    .update(users)
-    .set({ role })
-    .where(eq(users.id, targetUserId))
-    .returning({ id: users.id, email: users.email });
+  const updated = await getDb().transaction(async (tx) => {
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtext('agentplan:admin-membership'))`);
+
+    const [currentActor] = await tx
+      .select({ role: users.role })
+      .from(users)
+      .where(eq(users.id, actor.userId));
+    if (currentActor?.role !== "admin") {
+      throw new Error("Only current admins can change user roles");
+    }
+
+    const [target] = await tx
+      .select({ role: users.role })
+      .from(users)
+      .where(eq(users.id, targetUserId));
+    if (!target) return undefined;
+
+    if (target.role === "admin" && role === "user") {
+      const [adminRow] = await tx
+        .select({ value: count() })
+        .from(users)
+        .where(eq(users.role, "admin"));
+      if ((adminRow?.value ?? 0) <= 1) {
+        throw new Error("The last admin cannot be demoted");
+      }
+    }
+
+    const [result] = await tx
+      .update(users)
+      .set({ role })
+      .where(eq(users.id, targetUserId))
+      .returning({ id: users.id, email: users.email });
+    return result;
+  });
   if (!updated) return;
   await recordAuditEvent({
     type: "user.role_changed",
@@ -119,26 +141,54 @@ export async function deleteUserCompletely(
     throw new Error("Admins cannot delete their own account");
   }
   const db = getDb();
-  const [target] = await db
-    .select({ id: users.id, email: users.email })
-    .from(users)
-    .where(eq(users.id, targetUserId));
-  if (!target) return;
+  const deleted = await db.transaction(async (tx) => {
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtext('agentplan:admin-membership'))`);
 
-  const versions = await db
-    .select({ storageKey: draftVersions.storageKey })
-    .from(draftVersions)
-    .innerJoin(drafts, eq(draftVersions.draftId, drafts.id))
-    .where(eq(drafts.ownerId, targetUserId));
-  for (const version of versions) {
-    await getStorage().delete(version.storageKey);
-  }
+    const [currentActor] = await tx
+      .select({ role: users.role })
+      .from(users)
+      .where(eq(users.id, actor.userId));
+    if (currentActor?.role !== "admin") {
+      throw new Error("Only current admins can delete users");
+    }
 
-  // Cascades sessions, accounts, tokens, drafts, and versions.
-  await db.delete(users).where(eq(users.id, targetUserId));
+    const [target] = await tx
+      .select({ id: users.id, email: users.email, role: users.role })
+      .from(users)
+      .where(eq(users.id, targetUserId));
+    if (!target) return undefined;
+
+    if (target.role === "admin") {
+      const [adminRow] = await tx
+        .select({ value: count() })
+        .from(users)
+        .where(eq(users.role, "admin"));
+      if ((adminRow?.value ?? 0) <= 1) {
+        throw new Error("The last admin cannot be deleted");
+      }
+    }
+
+    const versions = await tx
+      .select({ storageKey: draftVersions.storageKey })
+      .from(draftVersions)
+      .innerJoin(drafts, eq(draftVersions.draftId, drafts.id))
+      .where(eq(drafts.ownerId, targetUserId));
+    for (const version of versions) {
+      await getStorage().delete(version.storageKey);
+    }
+
+    // Cascades sessions, accounts, tokens, drafts, and versions.
+    await tx.delete(users).where(eq(users.id, targetUserId));
+    return { target, objectsDeleted: versions.length };
+  });
+  if (!deleted) return;
   await recordAuditEvent({
     type: "user.deleted",
     userId: actor.userId,
-    metadata: { targetUserId, targetEmail: target.email, objectsDeleted: versions.length },
+    metadata: {
+      targetUserId,
+      targetEmail: deleted.target.email,
+      objectsDeleted: deleted.objectsDeleted,
+    },
   });
 }

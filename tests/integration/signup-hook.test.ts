@@ -29,7 +29,10 @@ async function signUp(email: string) {
 }
 
 async function roleOf(email: string): Promise<string | undefined> {
-  const [row] = await getDb().select({ role: users.role }).from(users).where(eq(users.email, email));
+  const [row] = await getDb()
+    .select({ role: users.role })
+    .from(users)
+    .where(eq(users.email, email));
   return row?.role;
 }
 
@@ -42,17 +45,17 @@ describe.skipIf(!hasDb)("better-auth signup hook (integration)", () => {
     await closeDb();
   });
 
-  it("makes the first user admin and later users regular users", async () => {
+  it("atomically makes one concurrent first user admin", async () => {
     const [row] = await getDb().select({ value: count() }).from(users);
     const wasEmpty = (row?.value ?? 0) === 0;
 
     const first = `hook-${randomUUID()}@example.test`;
-    await signUp(first);
-    expect(await roleOf(first)).toBe(wasEmpty ? "admin" : "user");
-
     const second = `hook-${randomUUID()}@example.test`;
-    await signUp(second);
-    expect(await roleOf(second)).toBe("user");
+    await Promise.all([signUp(first), signUp(second)]);
+
+    const roles = [await roleOf(first), await roleOf(second)];
+    expect(roles.filter((role) => role === "admin")).toHaveLength(wasEmpty ? 1 : 0);
+    expect(roles.filter((role) => role === "user")).toHaveLength(wasEmpty ? 1 : 2);
   });
 
   it("exposes the role on the session user (requireAdmin depends on this)", async () => {

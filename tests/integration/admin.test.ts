@@ -38,6 +38,10 @@ async function createUser(): Promise<string> {
   return id;
 }
 
+async function makeAdmin(userId: string): Promise<void> {
+  await getDb().update(users).set({ role: "admin" }).where(eq(users.id, userId));
+}
+
 describe.skipIf(!hasDb)("admin tools (integration)", () => {
   afterAll(async () => {
     await getDb().delete(appSettings).where(eq(appSettings.key, "signups_enabled"));
@@ -72,6 +76,7 @@ describe.skipIf(!hasDb)("admin tools (integration)", () => {
   it("setUserRole promotes and demotes, but never the actor themselves", async () => {
     const actorId = await createUser();
     const targetId = await createUser();
+    await makeAdmin(actorId);
 
     await setUserRole({ userId: actorId }, targetId, "admin");
     let [target] = await getDb().select().from(users).where(eq(users.id, targetId));
@@ -81,14 +86,32 @@ describe.skipIf(!hasDb)("admin tools (integration)", () => {
     [target] = await getDb().select().from(users).where(eq(users.id, targetId));
     expect(target?.role).toBe("user");
 
-    await expect(setUserRole({ userId: actorId }, actorId, "admin")).rejects.toThrow(
-      /own role/,
-    );
+    await expect(setUserRole({ userId: actorId }, actorId, "admin")).rejects.toThrow(/own role/);
+  });
+
+  it("serializes concurrent demotions so an admin always remains", async () => {
+    const firstAdminId = await createUser();
+    const secondAdminId = await createUser();
+    await makeAdmin(firstAdminId);
+    await makeAdmin(secondAdminId);
+
+    const results = await Promise.allSettled([
+      setUserRole({ userId: firstAdminId }, secondAdminId, "user"),
+      setUserRole({ userId: secondAdminId }, firstAdminId, "user"),
+    ]);
+    expect(results.filter((result) => result.status === "rejected")).toHaveLength(1);
+
+    const remaining = await getDb()
+      .select({ role: users.role })
+      .from(users)
+      .where(inArray(users.id, [firstAdminId, secondAdminId]));
+    expect(remaining.filter((row) => row.role === "admin")).toHaveLength(1);
   });
 
   it("deleteUserCompletely removes the user, their rows, and their stored objects", async () => {
     const adminId = await createUser();
     const victimId = await createUser();
+    await makeAdmin(adminId);
     const { version } = await createDraftWithFirstVersion({
       ownerId: victimId,
       title: "Doomed draft",
@@ -99,9 +122,7 @@ describe.skipIf(!hasDb)("admin tools (integration)", () => {
     await createToken({ userId: victimId, name: "doomed", scopes: ["drafts:write"] });
     expect(await getStorage().get(version.storageKey)).not.toBeNull();
 
-    await expect(deleteUserCompletely({ userId: adminId }, adminId)).rejects.toThrow(
-      /own account/,
-    );
+    await expect(deleteUserCompletely({ userId: adminId }, adminId)).rejects.toThrow(/own account/);
 
     await deleteUserCompletely({ userId: adminId }, victimId);
     const [gone] = await getDb().select().from(users).where(eq(users.id, victimId));
@@ -112,6 +133,25 @@ describe.skipIf(!hasDb)("admin tools (integration)", () => {
 
     // Deleting a user that no longer exists is a no-op, not an error.
     await expect(deleteUserCompletely({ userId: adminId }, victimId)).resolves.toBeUndefined();
+  });
+
+  it("rechecks the actor's current role before deleting", async () => {
+    const actorId = await createUser();
+    const targetId = await createUser();
+    await makeAdmin(actorId);
+    await makeAdmin(targetId);
+
+    await setUserRole({ userId: actorId }, targetId, "user");
+    await expect(deleteUserCompletely({ userId: targetId }, actorId)).rejects.toThrow(
+      /current admins/,
+    );
+    await expect(deleteUserCompletely({ userId: actorId }, targetId)).resolves.toBeUndefined();
+
+    const [remainingAdmin] = await getDb()
+      .select({ role: users.role })
+      .from(users)
+      .where(eq(users.id, actorId));
+    expect(remainingAdmin?.role).toBe("admin");
   });
 
   it("stats and per-user usage reflect created data", async () => {
