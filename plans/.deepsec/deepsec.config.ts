@@ -5,7 +5,7 @@ export default defineConfig({
   projects: [
     {
       id: "agentplan",
-      root: "../.audit-work/snapshot",
+      root: "../.audit-work/snapshot-v2",
       priorityPaths: [
         "lib/auth/",
         "lib/admin/",

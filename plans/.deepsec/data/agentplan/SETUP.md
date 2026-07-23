@@ -1,7 +1,7 @@
 # Agent setup for `agentplan`
 
 Project context is complete. The target is the immutable audit snapshot at
-`../../.audit-work/snapshot`.
+`../../.audit-work/snapshot-v2`.
 
 Before changing scan configuration, read:
 

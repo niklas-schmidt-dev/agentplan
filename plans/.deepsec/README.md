@@ -6,7 +6,7 @@ project context (auth shape, threat model, custom matchers); generated
 scan output is gitignored.
 
 Currently configured project: `agentplan`. Audit runs target the immutable,
-ignored snapshot at `../.audit-work/snapshot`, not a changing worktree.
+ignored snapshot at `../.audit-work/snapshot-v2`, not a changing worktree.
 
 ## Setup
 
@@ -29,12 +29,10 @@ pnpm deepsec revalidate  --agent codex --model gpt-5.5 --thinking-level xhigh --
 pnpm deepsec export      --format md-dir --out ./findings
 ```
 
-`--project-id` is auto-resolved while there's only one project in
-`deepsec.config.ts`. Once you've added a second project, pass
-`--project-id plans` (or whichever id you want) explicitly.
+Pass `--project-id agentplan` explicitly in automated audit commands.
 
 `scan` is free (regex only). `process` is the AI stage (≈$0.30/file
-on Opus by default). Run state goes to `data/plans/`.
+on Opus by default). Run state goes to `data/agentplan/`.
 
 ## Adding another project
 
@@ -52,7 +50,6 @@ in your agent to fill in INFO.md.
 
 ```
 deepsec.config.ts        Project list (one entry per scanned repo)
-data/plans/
 data/agentplan/
   INFO.md                Repo context — checked into git, hand-curated
   SETUP.md               Agent setup prompt — checked in, deletable
