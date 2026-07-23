@@ -1,0 +1,14 @@
+{
+  "tags": [
+    "drizzle",
+    "github-actions",
+    "nextjs",
+    "node",
+    "react"
+  ],
+  "sentinels": [
+    "next.config.ts",
+    "package.json"
+  ],
+  "detectedAt": "2026-07-23T13:36:45.977Z"
+}

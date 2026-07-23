@@ -1,0 +1,8 @@
+.audit-work/
+.deepsec/data/*/files/
+.deepsec/data/*/runs/
+.deepsec/data/*/reports/
+.deepsec/data/*/project.json
+.deepsec/.env.local
+.deepsec/findings/
+.deepsec/audit-exports/
