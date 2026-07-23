@@ -33,7 +33,7 @@ export async function purgeDeletedDrafts(batchSize = 100): Promise<PurgeResult> 
           lte(drafts.deletedAt, sql`now() - make_interval(days => ${retentionDays})`),
         ),
       )
-      .orderBy(asc(drafts.deletedAt))
+      .orderBy(asc(drafts.deletedAt), asc(drafts.id))
       .offset(failed)
       .limit(batchSize);
     if (stale.length === 0) break;
@@ -58,13 +58,21 @@ export async function purgeDeletedDrafts(batchSize = 100): Promise<PurgeResult> 
         continue;
       }
 
-      await db.delete(drafts).where(eq(drafts.id, draft.id));
+      try {
+        await db.delete(drafts).where(eq(drafts.id, draft.id));
+      } catch (error) {
+        failed++;
+        console.error("Failed to delete draft row during purge", draft.id, error);
+        continue;
+      }
       await recordAuditEvent({
         type: "draft.purged",
         userId: draft.ownerId,
         draftId: draft.id,
         metadata: { slug: draft.slug, versions: versions.length },
-      });
+      }).catch((error) =>
+        console.error("Failed to record draft purge audit event", draft.id, error),
+      );
       purged++;
     }
   }

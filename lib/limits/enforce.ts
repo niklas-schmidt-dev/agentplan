@@ -1,12 +1,16 @@
+import { createHmac } from "node:crypto";
 import { and, eq, gt, isNull, or, sql } from "drizzle-orm";
 import { getDb, type Database } from "@/db/client";
 import { apiTokens, draftVersions, drafts, users, type UserPlan } from "@/db/schema";
 import { QuotaExceededError, RateLimitedError } from "./errors";
 import { limitsForPlan, passwordAttemptsPerWindow, type EffectiveLimits } from "./plans";
-import { consumeRateLimit } from "./rate-limit";
+import { consumeRateLimit, consumeRateLimits } from "./rate-limit";
 
-export async function getUserPlan(userId: string): Promise<UserPlan> {
-  const [row] = await getDb()
+export async function getUserPlan(
+  userId: string,
+  db: Pick<Database, "select"> = getDb(),
+): Promise<UserPlan> {
+  const [row] = await db
     .select({ plan: users.plan })
     .from(users)
     .where(eq(users.id, userId))
@@ -15,24 +19,39 @@ export async function getUserPlan(userId: string): Promise<UserPlan> {
 }
 
 /**
- * Gate for every upload (new draft, new version, restore). Quotas are checked
- * before the rate limit so a quota-blocked request doesn't burn rate budget.
- * Returns the effective limits so callers can apply version retention.
- *
- * The count/sum checks are deliberately not serialized with the writes:
- * concurrent uploads can overshoot a quota by at most the in-flight request
- * count, which the (atomic) upload rate limiter caps at uploadsPerTenMinutes.
- * The storage sum also ignores bytes that version retention is about to free —
- * at the cap boundary that can reject a would-be-neutral update; deleting any
- * draft frees quota immediately.
+ * Consumes every upload rate-limit window atomically before storage work.
  */
-export async function assertUploadAllowed(params: {
-  userId: string;
-  sizeBytes: number;
-  newDraft: boolean;
-}): Promise<EffectiveLimits> {
-  const db = getDb();
-  const limits = limitsForPlan(await getUserPlan(params.userId));
+export async function consumeUploadRateLimit(userId: string): Promise<void> {
+  const limits = limitsForPlan(await getUserPlan(userId));
+  const windows = [
+    { limit: limits.uploadsPerTenMinutes, key: `uploads:10m:${userId}`, windowSeconds: 600 },
+    { limit: limits.uploadsPerDay, key: `uploads:1d:${userId}`, windowSeconds: 86_400 },
+  ].filter(
+    (window): window is { limit: number; key: string; windowSeconds: number } =>
+      window.limit !== null,
+  );
+  const result = await consumeRateLimits(windows);
+  if (!result.ok) throw new RateLimitedError(result.retryAfterSeconds);
+}
+
+/**
+ * Serializes a user's quota check with the subsequent draft/version writes.
+ * Callers must pass their active transaction so the advisory lock is held
+ * through the write. The storage sum intentionally ignores bytes that version
+ * retention is about to free, preserving the conservative cap-boundary rule.
+ */
+export async function lockAndAssertUploadQuota(
+  params: {
+    userId: string;
+    sizeBytes: number;
+    newDraft: boolean;
+  },
+  db: Pick<Database, "execute" | "select">,
+): Promise<EffectiveLimits> {
+  await db.execute(
+    sql`select pg_advisory_xact_lock(hashtext('upload-quota'), hashtext(${params.userId}))`,
+  );
+  const limits = limitsForPlan(await getUserPlan(params.userId, db));
 
   if (params.newDraft && limits.maxDrafts !== null) {
     const [row] = await db
@@ -57,19 +76,6 @@ export async function assertUploadAllowed(params: {
         `Storage quota reached (${Math.floor(limits.maxStorageBytes / (1024 * 1024))} MiB). Delete drafts to free up space.`,
       );
     }
-  }
-
-  for (const window of [
-    { limit: limits.uploadsPerTenMinutes, key: `uploads:10m:${params.userId}`, seconds: 600 },
-    { limit: limits.uploadsPerDay, key: `uploads:1d:${params.userId}`, seconds: 86_400 },
-  ]) {
-    if (window.limit === null) continue;
-    const result = await consumeRateLimit({
-      key: window.key,
-      limit: window.limit,
-      windowSeconds: window.seconds,
-    });
-    if (!result.ok) throw new RateLimitedError(result.retryAfterSeconds);
   }
 
   return limits;
@@ -99,15 +105,25 @@ export async function assertTokenCreationAllowed(
   }
 }
 
-/** Brute-force gate for draft passwords, keyed per draft+IP so one abusive
- *  client cannot lock legitimate viewers out. */
+/** Brute-force gate for draft passwords, keyed per draft+hashed client
+ * identifier so one abusive client cannot lock legitimate viewers out. */
 export async function checkPasswordAttempt(
   draftId: string,
-  ip: string | null,
+  clientIdentifier: string | null,
 ): Promise<{ ok: true } | { ok: false; retryAfterSeconds: number }> {
+  const secret = process.env.BETTER_AUTH_SECRET;
+  if (!secret && process.env.NODE_ENV === "production") {
+    throw new Error("BETTER_AUTH_SECRET is required for password rate-limit hashing");
+  }
+  const identifier = clientIdentifier ?? "unknown";
+  const bucket = createHmac("sha256", secret ?? "agentplan-development-only")
+    .update(identifier)
+    .digest("hex");
   return consumeRateLimit({
-    key: `pw:${draftId}:${ip ?? "unknown"}`,
-    limit: passwordAttemptsPerWindow(),
+    key: `pw:${draftId}:${bucket}`,
+    // Vercel supplies an IP. The higher defensive fallback avoids letting one
+    // malformed proxy request lock every otherwise-unidentified viewer out.
+    limit: clientIdentifier ? passwordAttemptsPerWindow() : passwordAttemptsPerWindow() * 10,
     windowSeconds: 15 * 60,
   });
 }

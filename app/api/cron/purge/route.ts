@@ -3,6 +3,7 @@ import { purgeDeletedDrafts, purgeExpiredRateLimits } from "@/lib/drafts/purge";
 import { constantTimeEqual } from "@/lib/security/compare";
 
 export const runtime = "nodejs";
+export const maxDuration = 300;
 
 // Vercel Cron invokes this daily with `Authorization: Bearer ${CRON_SECRET}`
 // (see vercel.json). Without the secret configured, the route is disabled.

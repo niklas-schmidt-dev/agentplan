@@ -191,13 +191,16 @@ export const auditEvents = pgTable(
 export const rateLimits = pgTable(
   "rate_limits",
   {
-    // e.g. "uploads:10m:<userId>" or "pw:<draftId>:<ip>"; one row per window.
+    // e.g. "uploads:10m:<userId>" or "pw:<draftId>:<clientHash>"; one row per window.
     key: varchar("key", { length: 120 }).notNull(),
     windowStart: timestamp("window_start", { withTimezone: true }).notNull(),
     count: integer("count").notNull().default(0),
     expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
   },
-  (table) => [primaryKey({ columns: [table.key, table.windowStart] })],
+  (table) => [
+    primaryKey({ columns: [table.key, table.windowStart] }),
+    index("rate_limits_expires_at_idx").on(table.expiresAt),
+  ],
 );
 
 export type User = typeof users.$inferSelect;

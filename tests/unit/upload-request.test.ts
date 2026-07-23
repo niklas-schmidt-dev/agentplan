@@ -33,4 +33,23 @@ describe("readUpload request-size precheck", () => {
       expect(result.bytes.byteLength).toBeGreaterThan(0);
     }
   });
+
+  it("rejects an oversized streamed body without a content-length header", async () => {
+    const form = new FormData();
+    form.set(
+      "file",
+      new File([new Uint8Array(MAX_UPLOAD_BYTES + 128 * 1024)], "large.html", {
+        type: "text/html",
+      }),
+    );
+    const request = uploadRequest({}, form);
+    expect(request.headers.get("content-length")).toBeNull();
+
+    const result = await readUpload(request);
+    expect(result).toBeInstanceOf(Response);
+    const response = result as Response;
+    expect(response.status).toBe(413);
+    const body = (await response.json()) as { error: { code: string } };
+    expect(body.error.code).toBe("FILE_TOO_LARGE");
+  });
 });

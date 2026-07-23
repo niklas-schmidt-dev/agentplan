@@ -11,7 +11,7 @@ import {
 import { recordAuditEvent } from "@/lib/audit/events";
 import { hashPassword } from "@/lib/drafts/password";
 import { generateSlug } from "@/lib/drafts/slug";
-import { assertUploadAllowed } from "@/lib/limits/enforce";
+import { consumeUploadRateLimit, lockAndAssertUploadQuota } from "@/lib/limits/enforce";
 import { getStorage, storageKeyFor } from "@/lib/storage";
 
 export type UploadSource = "browser" | "api_token";
@@ -85,11 +85,7 @@ export async function createDraftWithFirstVersion(params: {
   const passwordHash =
     params.visibility === "password" ? await hashPassword(params.password!) : null;
 
-  await assertUploadAllowed({
-    userId: params.ownerId,
-    sizeBytes: params.bytes.byteLength,
-    newDraft: true,
-  });
+  await consumeUploadRateLimit(params.ownerId);
   await getStorage().put(storageKey, params.bytes, HTML_CONTENT_TYPE);
 
   try {
@@ -98,6 +94,14 @@ export async function createDraftWithFirstVersion(params: {
       const slug = generateSlug(params.title);
       try {
         const result = await db.transaction(async (tx) => {
+          await lockAndAssertUploadQuota(
+            {
+              userId: params.ownerId,
+              sizeBytes: params.bytes.byteLength,
+              newDraft: true,
+            },
+            tx,
+          );
           const [draft] = await tx
             .insert(drafts)
             .values({
@@ -167,15 +171,19 @@ export async function addVersionToDraft(params: {
   const storageKey = storageKeyFor(params.draft.ownerId, params.draft.id, versionId);
   const contentSha256 = sha256Hex(params.bytes);
 
-  const limits = await assertUploadAllowed({
-    userId: params.draft.ownerId,
-    sizeBytes: params.bytes.byteLength,
-    newDraft: false,
-  });
+  await consumeUploadRateLimit(params.draft.ownerId);
   await getStorage().put(storageKey, params.bytes, HTML_CONTENT_TYPE);
 
   try {
     const result = await db.transaction(async (tx) => {
+      const limits = await lockAndAssertUploadQuota(
+        {
+          userId: params.draft.ownerId,
+          sizeBytes: params.bytes.byteLength,
+          newDraft: false,
+        },
+        tx,
+      );
       // Serialize version numbering per draft. A draft that was soft-deleted
       // between the caller's check and this lock is a 404, not a server error.
       const [locked] = await tx

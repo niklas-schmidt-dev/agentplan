@@ -12,10 +12,11 @@ process.env.STORAGE_FS_ROOT = storageRoot;
 
 import { closeDb, getDb } from "@/db/client";
 import { listVersions } from "@/db/queries/drafts";
-import { users, type UserPlan } from "@/db/schema";
+import { eq, sql } from "drizzle-orm";
+import { drafts, rateLimits, users, type UserPlan } from "@/db/schema";
 import { addVersionToDraft, createDraftWithFirstVersion } from "@/lib/drafts/service";
 import { QuotaExceededError, RateLimitedError } from "@/lib/limits/errors";
-import { consumeRateLimit } from "@/lib/limits/rate-limit";
+import { consumeRateLimit, consumeRateLimits } from "@/lib/limits/rate-limit";
 import { createToken, revokeToken } from "@/lib/tokens/service";
 
 const hasDb = Boolean(process.env.DATABASE_URL);
@@ -69,6 +70,25 @@ describe.skipIf(!hasDb)("abuse limits (integration)", () => {
     }
   });
 
+  it("rolls back shorter-window usage when another window is closed", async () => {
+    const suffix = randomUUID();
+    const shortKey = `test:short:${suffix}`;
+    const dailyKey = `test:daily:${suffix}`;
+    await consumeRateLimit({ key: dailyKey, limit: 1, windowSeconds: 86_400 });
+
+    const result = await consumeRateLimits([
+      { key: shortKey, limit: 10, windowSeconds: 600 },
+      { key: dailyKey, limit: 1, windowSeconds: 86_400 },
+    ]);
+    expect(result.ok).toBe(false);
+
+    const [short] = await getDb()
+      .select({ count: rateLimits.count })
+      .from(rateLimits)
+      .where(eq(rateLimits.key, shortKey));
+    expect(short).toBeUndefined();
+  });
+
   it("enforces the per-user draft cap", async () => {
     process.env.AP_MAX_DRAFTS_PER_USER = "2";
     const ownerId = await createUser();
@@ -84,6 +104,33 @@ describe.skipIf(!hasDb)("abuse limits (integration)", () => {
     await create();
     await create();
     await expect(create()).rejects.toBeInstanceOf(QuotaExceededError);
+  });
+
+  it("serializes concurrent draft quota checks with their inserts", async () => {
+    process.env.AP_MAX_DRAFTS_PER_USER = "1";
+    const ownerId = await createUser();
+    const create = (title: string) =>
+      createDraftWithFirstVersion({
+        ownerId,
+        title,
+        visibility: "private",
+        bytes: html,
+        source: "browser",
+      });
+
+    const results = await Promise.allSettled([create("Concurrent A"), create("Concurrent B")]);
+    expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+    expect(
+      results.filter(
+        (result) => result.status === "rejected" && result.reason instanceof QuotaExceededError,
+      ),
+    ).toHaveLength(1);
+
+    const [row] = await getDb()
+      .select({ count: sql<number>`count(*)::int` })
+      .from(drafts)
+      .where(eq(drafts.ownerId, ownerId));
+    expect(row?.count).toBe(1);
   });
 
   it("enforces the per-user storage quota", async () => {

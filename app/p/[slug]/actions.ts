@@ -11,10 +11,21 @@ import { draftPasswordSchema } from "@/lib/validation/api";
 
 const ACCESS_TTL_SECONDS = 12 * 60 * 60;
 
-async function clientIp(): Promise<string | null> {
+async function clientIdentifier(): Promise<string | null> {
+  const requestHeaders = await headers();
   // First hop of x-forwarded-for is the client; Vercel's proxy sets it.
-  const forwarded = (await headers()).get("x-forwarded-for");
-  return forwarded?.split(",")[0]?.trim() || null;
+  const forwarded = requestHeaders.get("x-forwarded-for")?.split(",")[0]?.trim();
+  const ip =
+    forwarded ||
+    requestHeaders.get("x-real-ip")?.trim() ||
+    requestHeaders.get("cf-connecting-ip")?.trim();
+  if (ip) return `ip:${ip}`;
+
+  // Defensive non-Vercel fallback. It is less authoritative and spoofable, but
+  // avoids putting every unidentified viewer into one shared lockout bucket.
+  const userAgent = requestHeaders.get("user-agent")?.trim();
+  const language = requestHeaders.get("accept-language")?.trim();
+  return userAgent ? `fallback:${userAgent}:${language ?? ""}` : null;
 }
 
 export async function submitDraftPassword(formData: FormData): Promise<void> {
@@ -30,7 +41,7 @@ export async function submitDraftPassword(formData: FormData): Promise<void> {
   }
 
   // Brute-force gate before any hash verification work.
-  const attempt = await checkPasswordAttempt(draft.id, await clientIp());
+  const attempt = await checkPasswordAttempt(draft.id, await clientIdentifier());
   if (!attempt.ok) {
     await recordAuditEvent({
       type: "draft.visibility_changed",
