@@ -67,6 +67,13 @@ specific provider.
 Run `npm run db:migrate` before the first non-Vercel production start and
 whenever a deployment contains new migrations.
 
+The Neon Deploy Button path is detected through `DATABASE_URL_UNPOOLED` and
+migrates automatically on production builds. For a manual Vercel setup, keep
+migrations as a separate release step. Set `AUTO_MIGRATE=1` only when
+`DATABASE_URL_DIRECT`, `DATABASE_URL_UNPOOLED`, or `DATABASE_URL` is a
+DDL-capable connection; never opt a restricted pooled application role into
+automatic migrations.
+
 ## Storage choices
 
 All stores must be private. Draft visibility is decided by AgentPlan on every

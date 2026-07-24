@@ -241,7 +241,9 @@ provisions Neon Postgres and Vercel Blob, and prompts for the remaining secrets.
 Choose **Private** when creating the Blob store; AgentPlan intentionally fails
 against a public store.
 
-Committed database migrations run automatically on production Vercel builds.
+Committed database migrations run automatically on production builds created
+through the Neon Deploy Button. Manual installations should migrate separately,
+or explicitly set `AUTO_MIGRATE=1` when their migration URL has DDL permission.
 Vercel's system hostname is used automatically until you configure
 `BETTER_AUTH_URL` or `NEXT_PUBLIC_APP_URL` for a custom domain.
 

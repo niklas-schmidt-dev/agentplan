@@ -12,10 +12,15 @@ function run(script) {
   if (result.status !== 0) process.exit(result.status ?? 1);
 }
 
-// The Deploy Button's first deployment is a production deployment. Applying
-// committed Drizzle migrations here makes that deployment usable immediately.
-// Preview builds intentionally do not mutate a shared production database.
-if (process.env.VERCEL_ENV === "production") {
+// The Deploy Button's Neon integration supplies DATABASE_URL_UNPOOLED, so its
+// first production deployment can safely apply committed migrations. Existing
+// installations may expose only a restricted/pooled runtime URL; never try DDL
+// through that connection unless the operator explicitly opts in.
+const shouldMigrate =
+  process.env.VERCEL_ENV === "production" &&
+  (Boolean(process.env.DATABASE_URL_UNPOOLED?.trim()) || process.env.AUTO_MIGRATE === "1");
+
+if (shouldMigrate) {
   const migrationUrl = [
     process.env.DATABASE_URL_DIRECT,
     process.env.DATABASE_URL_UNPOOLED,
@@ -27,6 +32,10 @@ if (process.env.VERCEL_ENV === "production") {
     );
   }
   run("db:migrate");
+} else if (process.env.VERCEL_ENV === "production") {
+  process.stdout.write(
+    "Skipping automatic migrations: connect Neon or set AUTO_MIGRATE=1 with a DDL-capable URL.\n",
+  );
 }
 
 run("build");
