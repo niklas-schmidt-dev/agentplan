@@ -15,7 +15,7 @@ const pattern = [
   "npm_[A-Za-z0-9]{30,}",
   "-----BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY-----",
   "postgres(ql)?://[^[:space:]]+:[^[:space:]@]+@",
-  "(BETTER_AUTH_SECRET|CRON_SECRET|R2_SECRET_ACCESS_KEY|AUTH_EMAIL_WEBHOOK_SECRET)=[^[:space:]]{16,}",
+  "(BETTER_AUTH_SECRET|CRON_SECRET|R2_SECRET_ACCESS_KEY|BLOB_READ_WRITE_TOKEN|AUTH_EMAIL_WEBHOOK_SECRET)=[^[:space:]]{16,}",
 ].join("|");
 
 function runGit(args) {

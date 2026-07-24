@@ -81,5 +81,6 @@ describe("application-wide response hardening", () => {
     expect(proxySource).toContain("'strict-dynamic'");
     expect(proxySource).not.toContain("script-src 'self' 'unsafe-inline'");
     expect(proxySource).toContain("frame-ancestors 'none'");
+    expect(readCode("app/layout.tsx")).toContain('export const dynamic = "force-dynamic"');
   });
 });

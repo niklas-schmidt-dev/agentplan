@@ -6,6 +6,8 @@ AgentPlan is a small service for AI agents (and their humans) that need to turn 
 generated HTML file — a plan, a report, a dashboard — into a URL. Upload from the
 browser, the API, or the CLI:
 
+[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2Fniklas-schmidt-dev%2Fagentplan&project-name=agentplan&repository-name=agentplan&products=%5B%7B%22type%22%3A%22integration%22%2C%22protocol%22%3A%22storage%22%2C%22productSlug%22%3A%22neon%22%2C%22integrationSlug%22%3A%22neon%22%7D%2C%7B%22type%22%3A%22blob%22%7D%5D&envDescription=AgentPlan+needs+an+initial+admin+email%2C+an+auth+secret%2C+a+secure+email-delivery+webhook%2C+and+a+cron+secret.+Neon+and+Blob+are+provisioned+during+this+flow.&envLink=https%3A%2F%2Fgithub.com%2Fniklas-schmidt-dev%2Fagentplan%2Fblob%2Fmain%2Fdocs%2Fself-hosting.md%23required-values&env=ADMIN_BOOTSTRAP_EMAIL&env=BETTER_AUTH_SECRET&env=AUTH_EMAIL_WEBHOOK_URL&env=AUTH_EMAIL_WEBHOOK_SECRET&env=CRON_SECRET)
+
 ```bash
 npx agentplan-cli upload ./plan.html
 ```
@@ -18,9 +20,13 @@ the link and the password).
 ## How it works
 
 - **Next.js (App Router)** application deployed on Vercel with the Node.js runtime.
-- **PlanetScale Postgres** with Drizzle ORM for drafts, versions, tokens, and audit events.
-- **Private Cloudflare R2 bucket** (S3-compatible API) for all uploaded HTML —
-  visibility is enforced by the application, never by the storage layer.
+- **Postgres** with Drizzle ORM for drafts, versions, tokens, and audit events.
+  The one-click deployment provisions Neon; PlanetScale Postgres and other
+  compatible providers are supported.
+- **Private object storage** for all uploaded HTML. The one-click deployment
+  provisions private Vercel Blob; Cloudflare R2 remains available as an
+  S3-compatible alternative. Visibility is enforced by the application, never
+  by an object URL.
 - **Better Auth** with verified email/password and optional GitHub OAuth (offered
   only when `GITHUB_CLIENT_ID`/`GITHUB_CLIENT_SECRET` are set) for browser sessions;
   scoped API tokens (`ap_live_…`, stored as SHA-256 hashes) for agents and the CLI.
@@ -36,9 +42,9 @@ the link and the password).
 ## Architecture
 
 ```text
-Browser ─┐                              ┌── PlanetScale Postgres (Drizzle)
+Browser ─┐                              ┌── Postgres (Neon by default)
          ├─ Next.js App Router (Vercel) ─┤
-CLI / ───┘   • pages + server actions    └── Cloudflare R2 (private, S3 API)
+CLI / ───┘   • pages + server actions    └── Private object storage
 Agents         • /api/v1 (token auth)
                • /p/{slug} sandboxed viewer
 ```
@@ -46,12 +52,13 @@ Agents         • /api/v1 (token auth)
 Request paths:
 
 - **Browser** → same-origin API routes and small server actions → draft/token services
-  → Postgres + R2. Upload rate reservations happen before multipart parsing.
+  → Postgres + private object storage. Upload rate reservations happen before
+  multipart parsing.
   Authorization uses sessions and owner-scoped queries.
 - **Agent / CLI** → `POST /api/v1/drafts` with `Authorization: Bearer ap_live_…` →
   scope-checked → same services.
 - **Viewer** → `/p/{slug}` renders an iframe whose `src` is `/p/{slug}/content`; the
-  content route re-authorizes server-side and streams the HTML from R2.
+  content route re-authorizes server-side and streams the HTML from storage.
 
 Key directories:
 
@@ -63,7 +70,7 @@ drizzle/        Generated, committed SQL migrations
 lib/
   auth/         Better Auth instance + session helpers (requireUser, getOptionalUser)
   drafts/       Upload/version/restore service + slug generation
-  storage/      ObjectStorage interface: R2 (prod) and fs (dev/CI)
+  storage/      ObjectStorage interface: Vercel Blob, R2, and fs (dev/CI)
   tokens/        Token generation, hashing, bearer authentication
   api/           Request auth, response envelopes, serializers
   validation/    Zod schemas + upload validation
@@ -73,20 +80,20 @@ tests/           unit / security / integration (Vitest) + e2e (Playwright)
 
 ## Local setup
 
-Requirements: Node.js 24+, npm, and a Postgres instance (a PlanetScale branch or
-local Postgres).
+Requirements: Node.js 24+, npm, and a Postgres instance.
 
 1. `npm ci`
-2. Copy `.env.example` to `.env` and fill in values (PlanetScale URLs,
-   `ADMIN_BOOTSTRAP_EMAIL`, Better Auth secret, R2 credentials, and optional GitHub
-   OAuth). Email/password development also needs an email webhook; without one,
-   development suppresses delivery and an unverified account cannot sign in.
-3. `npm run db:migrate` (uses `DATABASE_URL_DIRECT`)
+2. Copy `.env.example` to `.env` and fill in the database URL,
+   `ADMIN_BOOTSTRAP_EMAIL`, Better Auth secret, storage configuration, and
+   optional GitHub OAuth. Email/password development also needs an email webhook;
+   without one, development suppresses delivery and an unverified account cannot
+   sign in.
+3. `npm run db:migrate` (prefers `DATABASE_URL_DIRECT` or
+   `DATABASE_URL_UNPOOLED`)
 4. `npm run dev`
 
-For local development without R2 credentials, set `STORAGE_DRIVER=fs` to store
-uploaded HTML on the local filesystem instead. This driver is disabled in
-production builds.
+For local development, set `STORAGE_DRIVER=fs` to store uploaded HTML on the
+local filesystem. This driver is disabled in production.
 
 ### Quality gates
 
@@ -171,16 +178,16 @@ Errors have a stable shape agents can match on:
 Free-plan limits (all server-enforced; tunable via `AP_*` env vars, defaults in
 `lib/limits/plans.ts`):
 
-| Limit | Default |
-| --- | --- |
-| Upload size | 2 MiB per HTML file |
-| Drafts per user | 100 |
-| Versions kept per draft | 100 (oldest are pruned, uploads never hard-fail) |
-| Total storage per user | 250 MiB |
-| Active API tokens per user | 25 |
-| Uploads per user | 30 / 10 min and 300 / day |
-| Token create/revoke operations | 60 / hour and 200 / day |
-| Draft password attempts | 10 / 15 min per draft + IP |
+| Limit                          | Default                                          |
+| ------------------------------ | ------------------------------------------------ |
+| Upload size                    | 2 MiB per HTML file                              |
+| Drafts per user                | 100                                              |
+| Versions kept per draft        | 100 (oldest are pruned, uploads never hard-fail) |
+| Total storage per user         | 250 MiB                                          |
+| Active API tokens per user     | 25                                               |
+| Uploads per user               | 30 / 10 min and 300 / day                        |
+| Token create/revoke operations | 60 / hour and 200 / day                          |
+| Draft password attempts        | 10 / 15 min per draft + IP                       |
 
 Exceeded quotas return `403 QUOTA_EXCEEDED`; rate limits return `429 RATE_LIMITED`
 with a `Retry-After` header. Rate limiting is a fixed-window counter in Postgres, so
@@ -213,8 +220,9 @@ threat model. In short:
 - Uploaded HTML is served only from an isolated route inside a sandboxed iframe, in an
   opaque origin. Uploaded scripts run, but cannot read AgentPlan cookies, touch the
   parent DOM, navigate the parent, or make credentialed requests to AgentPlan.
-- All HTML lives in a private R2 bucket; visibility is an application-level decision
-  enforced on every request. Private drafts return `404` to non-owners.
+- All HTML lives in private Vercel Blob or a private R2 bucket; visibility is an
+  application-level decision enforced on every request. Private drafts return
+  `404` to non-owners.
 - Password-protected drafts store a salted scrypt hash of the password. Entering
   the correct password issues an HMAC-signed, draft-scoped, HttpOnly access cookie
   (12h); the content route serves the HTML only with a valid cookie (or to the
@@ -228,35 +236,18 @@ threat model. In short:
 
 ## Deployment (Vercel)
 
-Production deployment is a deliberate, credentialed step. Runbook:
+Use the Deploy Button above for the shortest path. It creates a Vercel project,
+provisions Neon Postgres and Vercel Blob, and prompts for the remaining secrets.
+Choose **Private** when creating the Blob store; AgentPlan intentionally fails
+against a public store.
 
-1. Import the public GitHub repo into Vercel; enable Fluid Compute.
-2. Create a **private** Cloudflare R2 bucket and an S3 API token scoped to it.
-3. In PlanetScale, create a **restricted application role** (not the admin role) and
-   use its PgBouncer (pooled) URL for `DATABASE_URL`; keep the direct URL for
-   migrations only.
-4. Configure production env vars in Vercel: `DATABASE_URL`, `DATABASE_URL_DIRECT`,
-   `BETTER_AUTH_SECRET`, `BETTER_AUTH_URL`, `ADMIN_BOOTSTRAP_EMAIL`,
-   `AUTH_EMAIL_WEBHOOK_URL`, `AUTH_EMAIL_WEBHOOK_SECRET`, `AUTH_EMAIL_FROM`,
-   `GITHUB_CLIENT_ID`/`GITHUB_CLIENT_SECRET` (optional),
-   `NEXT_PUBLIC_APP_URL`, `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`,
-   `R2_BUCKET`, `CRON_SECRET` (authorizes the daily purge cron).
-   The email webhook receives bearer-authenticated `POST` JSON with
-   `{ kind, to, name, url, from }`, must deliver the link without logging it, and
-   return a 2xx response.
-5. Run migrations against production using the direct URL: `npm run db:migrate`.
-   Migration `0005_security_hardening.sql` rotates every existing non-public draft
-   slug, intentionally invalidating previously shared private/password URLs.
-6. Deploy, verify auth on the Vercel domain, then attach `agentplan.app` and redirect
-   `www` → apex.
-7. In every deployment, update `BETTER_AUTH_URL` / `NEXT_PUBLIC_APP_URL`. If GitHub
-   OAuth is enabled, also set its callback to
-   `https://agentplan.app/api/auth/callback/github`; redeploy.
-8. Verify public/private behavior, email verification/reset delivery, API
-   private/no-store headers, `/.well-known/security.txt`, and the nonce CSP on the
-   final domain.
+Committed database migrations run automatically on production Vercel builds.
+Vercel's system hostname is used automatically until you configure
+`BETTER_AUTH_URL` or `NEXT_PUBLIC_APP_URL` for a custom domain.
 
-Choose PlanetScale and Vercel regions in the same geography where possible.
+See [Self-hosting AgentPlan](docs/self-hosting.md) for the complete one-click
+walkthrough, required email-webhook contract, non-Vercel instructions,
+PlanetScale Postgres, and Cloudflare R2 configuration.
 
 ## License
 

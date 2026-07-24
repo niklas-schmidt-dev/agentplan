@@ -19,10 +19,12 @@ The core security invariants are:
    `allow-same-origin` or any `allow-top-navigation` variant. Uploaded scripts may
    run inside their own document, but cannot read AgentPlan cookies, touch the
    parent DOM, or navigate the parent page.
-2. **All HTML lives in a private Cloudflare R2 bucket**, regardless of draft visibility.
-   Visibility is an application-level authorization decision made server-side on
-   every request. Private drafts return `404` to non-owners and are served with
-   `Cache-Control: private, no-store`.
+2. **All HTML lives in private object storage** (private Vercel Blob or a private
+   Cloudflare R2 bucket), regardless of draft visibility. Visibility is an
+   application-level authorization decision made server-side on every request.
+   Private drafts return `404` to non-owners and are served with
+   `Cache-Control: private, no-store`. The Blob adapter explicitly requests
+   private access and fails closed when connected to a public store.
 3. **Password-protected drafts** store the password only as a salted scrypt hash.
    A correct entry mints an HMAC-signed, draft-scoped, HttpOnly access cookie; the
    raw HTML is served only to the owner or a request bearing a valid cookie for
