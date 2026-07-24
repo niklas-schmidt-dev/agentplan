@@ -3,6 +3,11 @@ import { GeistMono } from "geist/font/mono";
 import { GeistSans } from "geist/font/sans";
 import "./globals.css";
 
+// The proxy supplies a fresh CSP nonce through the request headers. Rendering
+// every route per request lets Next.js attach that nonce to its framework
+// scripts; statically generated pages cannot receive a request-specific nonce.
+export const dynamic = "force-dynamic";
+
 export const metadata: Metadata = {
   title: {
     default: "AgentPlan",

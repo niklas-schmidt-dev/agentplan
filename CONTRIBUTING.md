@@ -12,9 +12,10 @@ cp .env.example .env   # fill in what you need; the landing page needs no secret
 npm run dev
 ```
 
-Database work needs a Postgres instance (PlanetScale branch or local Postgres).
-Point `DATABASE_URL` (pooled) and `DATABASE_URL_DIRECT` (direct) at it, then run
-`npm run db:migrate`.
+Database work needs a Postgres instance (Neon, PlanetScale, or local Postgres).
+Point `DATABASE_URL` at its pooled runtime connection and
+`DATABASE_URL_DIRECT` or `DATABASE_URL_UNPOOLED` at its direct connection, then
+run `npm run db:migrate`.
 
 ## Quality gates
 

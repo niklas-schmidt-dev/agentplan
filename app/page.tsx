@@ -27,12 +27,20 @@ export default function LandingPage() {
           <span className="text-ink-faint">$ </span>
           <span className="text-lime">npx agentplan-cli</span> upload ./plan.html
         </pre>
-        <Link
-          href="/login"
-          className="w-fit rounded-md border border-lime bg-lime px-4 py-2 font-mono text-sm font-medium text-canvas transition-colors hover:bg-lime-dim"
-        >
-          sign in
-        </Link>
+        <div className="flex flex-wrap items-center gap-4">
+          <Link
+            href="/login"
+            className="w-fit rounded-md border border-lime bg-lime px-4 py-2 font-mono text-sm font-medium text-canvas transition-colors hover:bg-lime-dim"
+          >
+            sign in
+          </Link>
+          <Link
+            href="/self-host"
+            className="font-mono text-sm text-ink-muted transition-colors hover:text-lime"
+          >
+            deploy your own →
+          </Link>
+        </div>
       </section>
 
       <footer className="font-mono text-xs text-ink-faint">
@@ -50,6 +58,13 @@ export default function LandingPage() {
         >
           github
         </a>
+        {" · "}
+        <Link
+          href="/self-host"
+          className="underline decoration-ink-faint underline-offset-2 transition-colors hover:text-lime"
+        >
+          self-host
+        </Link>
       </footer>
     </main>
   );

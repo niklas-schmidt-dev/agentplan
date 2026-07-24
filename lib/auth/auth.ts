@@ -4,6 +4,7 @@ import { APIError } from "better-auth/api";
 import { nextCookies } from "better-auth/next-js";
 import { getDb } from "@/db/client";
 import * as schema from "@/db/schema";
+import { appUrl } from "@/lib/urls";
 import { sendAuthEmail } from "./email";
 import { authRateLimitStorage } from "./rate-limit";
 import {
@@ -23,7 +24,7 @@ function createAuth() {
 
   return betterAuth({
     appName: "AgentPlan",
-    baseURL: process.env.BETTER_AUTH_URL ?? process.env.NEXT_PUBLIC_APP_URL,
+    baseURL: appUrl(),
     database: drizzleAdapter(getDb(), { provider: "pg", usePlural: true, schema }),
     emailAndPassword: {
       enabled: true,
