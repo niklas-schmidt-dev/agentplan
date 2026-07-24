@@ -1,11 +1,20 @@
 {
-  "name": "agentplan",
-  "version": "0.1.0",
+  "name": "agentplan-cli",
+  "version": "0.1.1",
   "description": "CLI for agentplan.app — publish agent-generated HTML behind stable links.",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/niklas-schmidt-dev/agentplan.git",
+    "directory": "packages/cli"
+  },
+  "homepage": "https://agentplan.app",
+  "bugs": {
+    "url": "https://github.com/niklas-schmidt-dev/agentplan/issues"
+  },
   "type": "module",
   "bin": {
-    "agentplan": "./dist/index.js"
+    "agentplan": "dist/index.js"
   },
   "files": [
     "dist"
@@ -15,6 +24,7 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
+    "prepack": "npm run build",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "devDependencies": {

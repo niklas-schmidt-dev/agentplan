@@ -265,7 +265,7 @@ async function main(): Promise<void> {
   const [command, argument] = positionals;
   if (values.help || !command) {
     process.stderr.write(USAGE);
-    process.exit(command ? 0 : 2);
+    process.exit(values.help ? 0 : 2);
   }
 
   switch (command) {

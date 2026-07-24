@@ -24,6 +24,13 @@ export default async function TokensPage() {
             Authorization: Bearer ap_live_…
           </code>
         </p>
+        <p className="text-sm text-ink-muted">
+          Create a token below, then run{" "}
+          <code className="rounded bg-surface px-1.5 py-0.5 font-mono text-xs text-lime">
+            npx agentplan-cli login
+          </code>
+          .
+        </p>
         <TokenCreatePanel />
       </section>
 
