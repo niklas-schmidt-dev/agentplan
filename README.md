@@ -7,7 +7,7 @@ generated HTML file — a plan, a report, a dashboard — into a URL. Upload fro
 browser, the API, or the CLI:
 
 ```bash
-npx agentplan upload ./plan.html
+npx agentplan-cli upload ./plan.html
 ```
 
 Every upload gets a stable link like `https://agentplan.app/p/launch-plan-x7k2`,
@@ -67,7 +67,7 @@ lib/
   tokens/        Token generation, hashing, bearer authentication
   api/           Request auth, response envelopes, serializers
   validation/    Zod schemas + upload validation
-packages/cli/    The `agentplan` CLI (npm workspace)
+packages/cli/    The `agentplan-cli` npm package (`agentplan` executable)
 tests/           unit / security / integration (Vitest) + e2e (Playwright)
 ```
 
@@ -101,8 +101,24 @@ tests that require a database skip automatically when it is absent.
 
 ## CLI
 
-Install-free usage via `npx agentplan`, or `npm link` inside `packages/cli` for
-local development.
+The npm package is [`agentplan-cli`](https://www.npmjs.com/package/agentplan-cli);
+the command it provides is `agentplan`.
+
+Run it without installing:
+
+```bash
+npx agentplan-cli login
+npx agentplan-cli upload ./plan.html
+```
+
+Or install the command globally:
+
+```bash
+npm install --global agentplan-cli
+agentplan login
+```
+
+Once installed, the full command set is:
 
 ```bash
 agentplan login                          # store an API token (created in the dashboard)

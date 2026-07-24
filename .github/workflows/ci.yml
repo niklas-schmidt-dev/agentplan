@@ -75,7 +75,7 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
       - name: Build the CLI
-        run: npm run build -w agentplan
+        run: npm run build -w agentplan-cli
       - name: Unit, security, and integration tests
         run: npm run test
       - name: Production build

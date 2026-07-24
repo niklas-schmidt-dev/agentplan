@@ -25,7 +25,7 @@ export default function LandingPage() {
         </p>
         <pre className="w-fit rounded-md border border-edge bg-surface px-4 py-3 font-mono text-sm text-ink">
           <span className="text-ink-faint">$ </span>
-          <span className="text-lime">npx agentplan</span> upload ./plan.html
+          <span className="text-lime">npx agentplan-cli</span> upload ./plan.html
         </pre>
         <Link
           href="/login"
@@ -37,6 +37,13 @@ export default function LandingPage() {
 
       <footer className="font-mono text-xs text-ink-faint">
         MIT licensed ·{" "}
+        <a
+          href="https://www.npmjs.com/package/agentplan-cli"
+          className="underline decoration-ink-faint underline-offset-2 transition-colors hover:text-lime"
+        >
+          npm
+        </a>{" "}
+        ·{" "}
         <a
           href="https://github.com/niklas-schmidt-dev/agentplan"
           className="underline decoration-ink-faint underline-offset-2 transition-colors hover:text-lime"
