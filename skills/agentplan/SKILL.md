@@ -6,7 +6,7 @@ metadata:
   author: niklas-schmidt-dev
   version: "2.0.0"
   source: https://github.com/niklas-schmidt-dev/agentplan
-  requirements: Node.js 20+, the directory-capable AgentPlan CLI, network access, and AgentPlan authentication
+  requirements: Node.js 20+, agentplan-cli 0.2.0 or newer, network access, and AgentPlan authentication
 ---
 
 # AgentPlan
@@ -53,12 +53,13 @@ types.
    ```
 
    Its help must contain `upload <file|directory>` and `--entry <path>`. If it
-   does not, stop and tell the user the AgentPlan CLI must be updated. Do not
-   flatten a requested media bundle into a different deliverable.
+   does not, stop and tell the user the AgentPlan CLI must be updated to 0.2.0
+   or newer. Do not flatten a requested media bundle into a different
+   deliverable.
 
-3. If no binary is installed, use `npx agentplan-cli` only when its help exposes
-   the same directory options. Do not install a global package unless the user
-   asks.
+3. If no binary is installed, use `npx agentplan-cli@latest` only when its help
+   exposes the same directory options. Do not install a global package unless
+   the user asks.
 4. Authentication resolves in this order:
    `AGENTPLAN_TOKEN` → stored `agentplan login` credentials → interactive prompt.
 5. Never print, read back, persist in project files, or embed an AgentPlan token.
