@@ -86,6 +86,8 @@ describe("application-wide response hardening", () => {
     expect(proxySource).not.toContain("script-src 'self' 'unsafe-inline'");
     expect(proxySource).toContain("frame-ancestors 'none'");
     expect(proxySource).toContain("media-src 'self'");
+    expect(proxySource).toContain("https://blob.vercel-storage.com");
+    expect(proxySource).toContain(".r2.cloudflarestorage.com");
     expect(proxySource).toContain("^\\/p\\/[^/]+\\/v\\/[^/]+\\/.+");
     expect(readCode("app/layout.tsx")).toContain('export const dynamic = "force-dynamic"');
   });

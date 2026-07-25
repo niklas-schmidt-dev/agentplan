@@ -53,6 +53,15 @@ the stable viewer URL.
 
 [![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2Fniklas-schmidt-dev%2Fagentplan&project-name=agentplan&repository-name=agentplan&products=%5B%7B%22type%22%3A%22integration%22%2C%22protocol%22%3A%22storage%22%2C%22productSlug%22%3A%22neon%22%2C%22integrationSlug%22%3A%22neon%22%7D%2C%7B%22type%22%3A%22blob%22%7D%5D&envDescription=AgentPlan+needs+an+initial+admin+email%2C+an+auth+secret%2C+and+a+cron+secret.+Neon+and+Blob+are+provisioned+during+this+flow.+Email%2Fpassword+works+immediately%3B+Resend+and+GitHub+OAuth+are+optional.&envLink=https%3A%2F%2Fgithub.com%2Fniklas-schmidt-dev%2Fagentplan%2Fblob%2Fmain%2Fdocs%2Fself-hosting.md%23must-have-values&env=ADMIN_BOOTSTRAP_EMAIL&env=BETTER_AUTH_SECRET&env=CRON_SECRET)
 
+> [!NOTE]
+> The button creates a standalone repository, not a GitHub fork. This lets you
+> keep the deployment repository private, but it does not provide GitHub's
+> **Sync fork** button. For upstream sync and pull requests,
+> [fork AgentPlan on GitHub](https://github.com/niklas-schmidt-dev/agentplan/fork),
+> then [import your fork into Vercel](https://vercel.com/new). GitHub forks of
+> this public repository are public. The short linked-fork setup is documented
+> in [Self-hosting AgentPlan](docs/self-hosting.md#upstream-linked-vercel-install).
+
 The one-click deployment provisions the app, Postgres, and private object
 storage. See [Self-hosting AgentPlan](docs/self-hosting.md) for the complete
 setup guide.
@@ -312,9 +321,16 @@ against a public store. Email/password is available immediately. After deploymen
 you may add Resend or the generic email webhook for verification and password
 recovery, and/or GitHub OAuth as an additional sign-in method.
 
-Committed database migrations run automatically on production builds created
-through the Neon Deploy Button. Manual installations should migrate separately,
-or explicitly set `AUTO_MIGRATE=1` when their migration URL has DDL permission.
+The repository made by the Deploy Button is an independent copy. If you prefer
+GitHub's upstream relationship, public fork synchronization, and a direct pull
+request workflow, use the
+[upstream-linked Vercel install](docs/self-hosting.md#upstream-linked-vercel-install)
+instead.
+
+Committed database migrations run automatically on production builds when the
+connected Neon integration supplies `DATABASE_URL_UNPOOLED`, including the
+upstream-linked path. Other manual installations should migrate separately, or
+explicitly set `AUTO_MIGRATE=1` when their migration URL has DDL permission.
 Vercel's system hostname is used automatically until you configure
 `BETTER_AUTH_URL` or `NEXT_PUBLIC_APP_URL` for a custom domain.
 

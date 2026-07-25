@@ -12,10 +12,10 @@ function run(script) {
   if (result.status !== 0) process.exit(result.status ?? 1);
 }
 
-// The Deploy Button's Neon integration supplies DATABASE_URL_UNPOOLED, so its
-// first production deployment can safely apply committed migrations. Existing
-// installations may expose only a restricted/pooled runtime URL; never try DDL
-// through that connection unless the operator explicitly opts in.
+// Neon's Vercel integration supplies DATABASE_URL_UNPOOLED, so a production
+// deployment can safely apply committed migrations. Other installations may
+// expose only a restricted/pooled runtime URL; never try DDL through that
+// connection unless the operator explicitly opts in.
 const shouldMigrate =
   process.env.VERCEL_ENV === "production" &&
   (Boolean(process.env.DATABASE_URL_UNPOOLED?.trim()) || process.env.AUTO_MIGRATE === "1");

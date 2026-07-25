@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { VERCEL_DEPLOY_URL } from "@/lib/deploy";
+import { GITHUB_FORK_URL, VERCEL_DEPLOY_URL, VERCEL_IMPORT_URL } from "@/lib/deploy";
 
 export const metadata = {
   title: "Self-host",
@@ -57,15 +57,45 @@ export default function SelfHostPage() {
             Vercel creates the project, connects a Neon database, and provisions Blob storage. You
             keep the repository, the data, and the deployment.
           </p>
-          <a
-            href={VERCEL_DEPLOY_URL}
-            className="group inline-flex items-center gap-3 rounded-md border border-ink bg-ink px-5 py-3 font-mono text-sm font-medium text-canvas transition-colors hover:border-lime hover:bg-lime"
-          >
-            Deploy with Vercel
-            <span aria-hidden="true" className="transition-transform group-hover:translate-x-1">
-              →
+          <div className="flex max-w-xl flex-col items-start gap-3 sm:flex-row sm:items-center">
+            <a
+              href={VERCEL_DEPLOY_URL}
+              className="group inline-flex shrink-0 items-center gap-3 rounded-md border border-ink bg-ink px-5 py-3 font-mono text-sm font-medium text-canvas transition-colors hover:border-lime hover:bg-lime"
+            >
+              Deploy with Vercel
+              <span aria-hidden="true" className="transition-transform group-hover:translate-x-1">
+                →
+              </span>
+            </a>
+            <span className="font-mono text-xs leading-5 text-ink-faint">
+              Creates a standalone repository,
+              <br className="hidden sm:block" /> not a GitHub fork.
             </span>
-          </a>
+          </div>
+          <aside
+            aria-label="Upstream-linked deployment"
+            className="max-w-xl border-l-2 border-lime bg-surface px-4 py-3"
+          >
+            <p className="font-mono text-xs uppercase tracking-[0.16em] text-lime">
+              Want GitHub&apos;s Sync fork?
+            </p>
+            <p className="mt-2 text-sm leading-6 text-ink-muted">
+              Fork AgentPlan on GitHub, then import that fork into Vercel. Add Neon, a private Blob
+              store, and the same three required values before the final production redeploy.
+            </p>
+            <div className="mt-3 flex flex-wrap gap-x-5 gap-y-2 font-mono text-xs">
+              <a href={GITHUB_FORK_URL} className="text-ink transition-colors hover:text-lime">
+                1. Fork on GitHub →
+              </a>
+              <a href={VERCEL_IMPORT_URL} className="text-ink transition-colors hover:text-lime">
+                2. Import into Vercel →
+              </a>
+            </div>
+            <p className="mt-3 font-mono text-[11px] leading-5 text-ink-faint">
+              GitHub forks of this public repository are public. Use the one-click path above when
+              the deployment repository must be private.
+            </p>
+          </aside>
           <p className="max-w-lg font-mono text-xs leading-5 text-ink-faint">
             In the Blob step, choose <strong className="font-medium text-ink-muted">Private</strong>
             . The deploy flow asks for three must-have values. Resend adds verification and password
