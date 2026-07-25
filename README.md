@@ -32,8 +32,8 @@ the link and the password).
   scoped API tokens (`ap_live_…`, stored as SHA-256 hashes) for agents and the CLI.
   On an empty database, only `ADMIN_BOOTSTRAP_EMAIL` can register; that identity
   becomes the single initial admin. Admins can disable sign-ups, change account
-  plans and roles, delete accounts, and moderate individual uploads under
-  `/dashboard/admin`.
+  plans and roles, block or delete accounts, and moderate individual uploads
+  under `/dashboard/admin`.
 - Uploaded HTML is treated as hostile. It is never rendered into the application DOM;
   it is served from an isolated route and displayed inside a sandboxed iframe
   (`sandbox="allow-scripts allow-forms allow-modals allow-popups"`, no
@@ -211,6 +211,23 @@ The admin content view searches live uploads by title, slug, or owner email.
 Removing an upload makes every viewer and API route return not found immediately;
 its private objects follow the same 7-day hard-deletion window as an owner-initiated
 draft deletion.
+
+Admin account moderation has three distinct outcomes:
+
+- **Block** revokes sessions and API tokens, prevents new credentials, and makes
+  the owner’s uploads return `404`, while retaining the account, drafts, objects,
+  slugs, passwords, and visibility settings. Unblocking restores those links
+  immediately but does not restore credentials.
+- **Delete** permanently removes account data and stored upload objects, but allows
+  the person to register again.
+- **Delete + block** performs the same deletion while retaining the normalized
+  email and known non-credential OAuth identities on the internal denylist.
+
+Block reasons and retained identities are visible only to administrators under
+`/dashboard/admin/blocks`. Email normalization is exactly `trim().toLowerCase()`;
+provider-specific alias canonicalization is intentionally not attempted. A
+plus-address alias, another email, or another OAuth account can therefore evade
+an identity block. Blocks remain active until an administrator removes them.
 
 ## Security
 

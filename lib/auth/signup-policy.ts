@@ -2,6 +2,11 @@ import { count } from "drizzle-orm";
 import { getDb } from "@/db/client";
 import { users, type UserRole } from "@/db/schema";
 import { getSignupsEnabled } from "@/lib/settings/service";
+import {
+  IdentityBlockedError,
+  isEmailIdentityBlocked,
+  normalizeBlockedEmail,
+} from "./blocked-identities";
 
 export class SignupsDisabledError extends Error {
   constructor() {
@@ -18,8 +23,9 @@ export class BootstrapAuthorizationError extends Error {
 }
 
 function bootstrapAdminEmail(): string | null {
-  const value = process.env.ADMIN_BOOTSTRAP_EMAIL?.trim().toLowerCase();
-  return value || null;
+  const value = process.env.ADMIN_BOOTSTRAP_EMAIL;
+  if (!value) return null;
+  return normalizeBlockedEmail(value) || null;
 }
 
 /**
@@ -30,10 +36,11 @@ function bootstrapAdminEmail(): string | null {
  * that insert as admin, closing direct/default-role and concurrency bypasses.
  */
 export async function evaluateSignup(email: string): Promise<{ role: UserRole }> {
+  if (await isEmailIdentityBlocked(email)) throw new IdentityBlockedError();
   const [row] = await getDb().select({ value: count() }).from(users);
   if ((row?.value ?? 0) === 0) {
     const allowedEmail = bootstrapAdminEmail();
-    if (!allowedEmail || email.trim().toLowerCase() !== allowedEmail) {
+    if (!allowedEmail || normalizeBlockedEmail(email) !== allowedEmail) {
       throw new BootstrapAuthorizationError();
     }
     return { role: "admin" };

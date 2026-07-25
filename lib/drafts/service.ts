@@ -105,10 +105,11 @@ export async function createDraftWithFirstVersion(params: {
             sql`select pg_advisory_xact_lock(hashtext('agentplan:user-storage'), hashtext(${params.ownerId}))`,
           );
           const [owner] = await tx
-            .select({ id: users.id })
+            .select({ id: users.id, blockedAt: users.blockedAt })
             .from(users)
-            .where(eq(users.id, params.ownerId));
-          if (!owner) throw new DraftNotFoundError();
+            .where(eq(users.id, params.ownerId))
+            .for("update");
+          if (!owner || owner.blockedAt) throw new DraftNotFoundError();
           await lockAndAssertUploadQuota(
             {
               userId: params.ownerId,
@@ -157,7 +158,11 @@ export async function createDraftWithFirstVersion(params: {
           userId: params.ownerId,
           draftId,
           tokenId: params.tokenId,
-          metadata: { slug: result.draft.slug, visibility: params.visibility, sizeBytes: params.bytes.byteLength },
+          metadata: {
+            slug: result.draft.slug,
+            visibility: params.visibility,
+            sizeBytes: params.bytes.byteLength,
+          },
         });
         return result;
       } catch (error) {
@@ -203,10 +208,11 @@ export async function addVersionToDraft(params: {
         sql`select pg_advisory_xact_lock(hashtext('agentplan:user-storage'), hashtext(${params.draft.ownerId}))`,
       );
       const [owner] = await tx
-        .select({ id: users.id })
+        .select({ id: users.id, blockedAt: users.blockedAt })
         .from(users)
-        .where(eq(users.id, params.draft.ownerId));
-      if (!owner) throw new DraftNotFoundError();
+        .where(eq(users.id, params.draft.ownerId))
+        .for("update");
+      if (!owner || owner.blockedAt) throw new DraftNotFoundError();
       const limits = await lockAndAssertUploadQuota(
         {
           userId: params.draft.ownerId,
@@ -364,19 +370,31 @@ export async function setDraftVisibility(
     passwordHash = null;
   }
 
-  const [updated] = await db
-    .update(drafts)
-    .set({
-      visibility,
-      ...(draft.visibility === "public" && visibility !== "public"
-        ? { slug: generateSlug("", false) }
-        : {}),
-      ...(passwordHash !== undefined ? { passwordHash } : {}),
-      updatedAt: sql`now()`,
-    })
-    .where(and(eq(drafts.id, draft.id), isNull(drafts.deletedAt)))
-    .returning();
-  if (!updated) throw new DraftNotFoundError();
+  const updated = await db.transaction(async (tx) => {
+    await tx.execute(
+      sql`select pg_advisory_xact_lock(hashtext('agentplan:user-storage'), hashtext(${draft.ownerId}))`,
+    );
+    const [owner] = await tx
+      .select({ blockedAt: users.blockedAt })
+      .from(users)
+      .where(eq(users.id, draft.ownerId))
+      .for("update");
+    if (!owner || owner.blockedAt) throw new DraftNotFoundError();
+    const [result] = await tx
+      .update(drafts)
+      .set({
+        visibility,
+        ...(draft.visibility === "public" && visibility !== "public"
+          ? { slug: generateSlug("", false) }
+          : {}),
+        ...(passwordHash !== undefined ? { passwordHash } : {}),
+        updatedAt: sql`now()`,
+      })
+      .where(and(eq(drafts.id, draft.id), isNull(drafts.deletedAt)))
+      .returning();
+    if (!result) throw new DraftNotFoundError();
+    return result;
+  });
   await recordAuditEvent({
     type: "draft.visibility_changed",
     userId: actor.userId,
@@ -395,17 +413,29 @@ export async function setDraftPassword(
 ): Promise<Draft> {
   const db = getDb();
   const passwordHash = await hashPassword(password);
-  const [updated] = await db
-    .update(drafts)
-    .set({
-      visibility: "password",
-      passwordHash,
-      ...(draft.visibility === "public" ? { slug: generateSlug("", false) } : {}),
-      updatedAt: sql`now()`,
-    })
-    .where(and(eq(drafts.id, draft.id), isNull(drafts.deletedAt)))
-    .returning();
-  if (!updated) throw new DraftNotFoundError();
+  const updated = await db.transaction(async (tx) => {
+    await tx.execute(
+      sql`select pg_advisory_xact_lock(hashtext('agentplan:user-storage'), hashtext(${draft.ownerId}))`,
+    );
+    const [owner] = await tx
+      .select({ blockedAt: users.blockedAt })
+      .from(users)
+      .where(eq(users.id, draft.ownerId))
+      .for("update");
+    if (!owner || owner.blockedAt) throw new DraftNotFoundError();
+    const [result] = await tx
+      .update(drafts)
+      .set({
+        visibility: "password",
+        passwordHash,
+        ...(draft.visibility === "public" ? { slug: generateSlug("", false) } : {}),
+        updatedAt: sql`now()`,
+      })
+      .where(and(eq(drafts.id, draft.id), isNull(drafts.deletedAt)))
+      .returning();
+    if (!result) throw new DraftNotFoundError();
+    return result;
+  });
   await recordAuditEvent({
     type: "draft.visibility_changed",
     userId: actor.userId,
@@ -422,12 +452,24 @@ export async function setDraftTitle(
   actor: { userId: string; tokenId?: string },
 ): Promise<Draft> {
   const db = getDb();
-  const [updated] = await db
-    .update(drafts)
-    .set({ title, updatedAt: sql`now()` })
-    .where(and(eq(drafts.id, draft.id), isNull(drafts.deletedAt)))
-    .returning();
-  if (!updated) throw new Error("Draft not found");
+  const updated = await db.transaction(async (tx) => {
+    await tx.execute(
+      sql`select pg_advisory_xact_lock(hashtext('agentplan:user-storage'), hashtext(${draft.ownerId}))`,
+    );
+    const [owner] = await tx
+      .select({ blockedAt: users.blockedAt })
+      .from(users)
+      .where(eq(users.id, draft.ownerId))
+      .for("update");
+    if (!owner || owner.blockedAt) throw new DraftNotFoundError();
+    const [result] = await tx
+      .update(drafts)
+      .set({ title, updatedAt: sql`now()` })
+      .where(and(eq(drafts.id, draft.id), isNull(drafts.deletedAt)))
+      .returning();
+    if (!result) throw new DraftNotFoundError();
+    return result;
+  });
   await recordAuditEvent({
     type: "draft.title_changed",
     userId: actor.userId,
@@ -443,10 +485,23 @@ export async function softDeleteDraft(
   actor: { userId: string; tokenId?: string },
 ): Promise<void> {
   const db = getDb();
-  await db
-    .update(drafts)
-    .set({ deletedAt: sql`now()`, updatedAt: sql`now()` })
-    .where(eq(drafts.id, draft.id));
+  await db.transaction(async (tx) => {
+    await tx.execute(
+      sql`select pg_advisory_xact_lock(hashtext('agentplan:user-storage'), hashtext(${draft.ownerId}))`,
+    );
+    const [owner] = await tx
+      .select({ blockedAt: users.blockedAt })
+      .from(users)
+      .where(eq(users.id, draft.ownerId))
+      .for("update");
+    if (!owner || owner.blockedAt) throw new DraftNotFoundError();
+    const [updated] = await tx
+      .update(drafts)
+      .set({ deletedAt: sql`now()`, updatedAt: sql`now()` })
+      .where(and(eq(drafts.id, draft.id), isNull(drafts.deletedAt)))
+      .returning({ id: drafts.id });
+    if (!updated) throw new DraftNotFoundError();
+  });
   await recordAuditEvent({
     type: "draft.deleted",
     userId: actor.userId,

@@ -1,24 +1,40 @@
 import { and, desc, eq, gte, ilike, isNull, sql } from "drizzle-orm";
 import { getDb } from "@/db/client";
-import { draftVersions, drafts, type Draft, type DraftVersion, type Visibility } from "@/db/schema";
+import {
+  draftVersions,
+  drafts,
+  users,
+  type Draft,
+  type DraftVersion,
+  type Visibility,
+} from "@/db/schema";
 
 export async function getDraftBySlug(slug: string): Promise<Draft | null> {
   const [draft] = await getDb()
-    .select()
+    .select({ draft: drafts })
     .from(drafts)
-    .where(and(eq(drafts.slug, slug), isNull(drafts.deletedAt)))
+    .innerJoin(users, eq(drafts.ownerId, users.id))
+    .where(and(eq(drafts.slug, slug), isNull(drafts.deletedAt), isNull(users.blockedAt)))
     .limit(1);
-  return draft ?? null;
+  return draft?.draft ?? null;
 }
 
 /** Owner-scoped lookup — the authorization decision lives in the query itself. */
 export async function getDraftForOwner(draftId: string, ownerId: string): Promise<Draft | null> {
   const [draft] = await getDb()
-    .select()
+    .select({ draft: drafts })
     .from(drafts)
-    .where(and(eq(drafts.id, draftId), eq(drafts.ownerId, ownerId), isNull(drafts.deletedAt)))
+    .innerJoin(users, eq(drafts.ownerId, users.id))
+    .where(
+      and(
+        eq(drafts.id, draftId),
+        eq(drafts.ownerId, ownerId),
+        isNull(drafts.deletedAt),
+        isNull(users.blockedAt),
+      ),
+    )
     .limit(1);
-  return draft ?? null;
+  return draft?.draft ?? null;
 }
 
 export type DraftListItem = Draft & {
@@ -29,7 +45,11 @@ export async function listDraftsForOwner(
   ownerId: string,
   filters: { search?: string; visibility?: Visibility; updatedWithinDays?: number } = {},
 ): Promise<DraftListItem[]> {
-  const conditions = [eq(drafts.ownerId, ownerId), isNull(drafts.deletedAt)];
+  const conditions = [
+    eq(drafts.ownerId, ownerId),
+    isNull(drafts.deletedAt),
+    isNull(users.blockedAt),
+  ];
   if (filters.visibility) conditions.push(eq(drafts.visibility, filters.visibility));
   if (filters.search) conditions.push(ilike(drafts.title, `%${filters.search}%`));
   if (filters.updatedWithinDays) {
@@ -46,6 +66,7 @@ export async function listDraftsForOwner(
       contentSha256: draftVersions.contentSha256,
     })
     .from(drafts)
+    .innerJoin(users, eq(drafts.ownerId, users.id))
     .leftJoin(draftVersions, eq(drafts.currentVersionId, draftVersions.id))
     .where(and(...conditions))
     .orderBy(desc(drafts.updatedAt))

@@ -3,10 +3,13 @@
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import {
+  blockUser,
+  deleteAndBlockUser,
   deleteUserCompletely,
   removeDraftAsAdmin,
   setUserPlan,
   setUserRole,
+  unblockIdentityBlock,
 } from "@/lib/admin/service";
 import { requireAdmin } from "@/lib/auth/session";
 import { setSignupsEnabled } from "@/lib/settings/service";
@@ -15,6 +18,8 @@ const userIdSchema = z.string().min(1).max(255);
 const draftIdSchema = z.uuid();
 const planSchema = z.enum(["free", "unlimited"]);
 const roleSchema = z.enum(["user", "admin"]);
+const blockIdSchema = z.uuid();
+const blockReasonSchema = z.string().trim().min(1).max(500);
 export type AdminActionState = { error: string } | null;
 
 export async function setSignupsEnabledAction(
@@ -115,5 +120,71 @@ export async function deleteUserAction(
   }
   revalidatePath("/dashboard/admin");
   revalidatePath("/dashboard/admin/content");
+  return null;
+}
+
+export async function blockUserAction(
+  _previousState: AdminActionState,
+  formData: FormData,
+): Promise<AdminActionState> {
+  const admin = await requireAdmin();
+  const userId = userIdSchema.safeParse(formData.get("userId"));
+  const reason = blockReasonSchema.safeParse(formData.get("reason"));
+  if (!userId.success || !reason.success || userId.data === admin.id) {
+    return { error: "A block reason between 1 and 500 characters is required." };
+  }
+  try {
+    await blockUser({ userId: admin.id }, userId.data, reason.data);
+  } catch (error) {
+    console.error("blockUserAction failed", error);
+    return { error: "Block failed. No account changes were committed." };
+  }
+  revalidatePath("/dashboard/admin");
+  revalidatePath("/dashboard/admin/blocks");
+  revalidatePath("/dashboard/admin/content");
+  revalidatePath("/dashboard");
+  return null;
+}
+
+export async function unblockUserAction(
+  _previousState: AdminActionState,
+  formData: FormData,
+): Promise<AdminActionState> {
+  const admin = await requireAdmin();
+  const blockId = blockIdSchema.safeParse(formData.get("blockId"));
+  if (!blockId.success) return { error: "Invalid unblock request." };
+  try {
+    await unblockIdentityBlock({ userId: admin.id }, blockId.data);
+  } catch (error) {
+    console.error("unblockUserAction failed", error);
+    return { error: "Unblock failed. Refresh and try again." };
+  }
+  revalidatePath("/dashboard/admin");
+  revalidatePath("/dashboard/admin/blocks");
+  revalidatePath("/dashboard/admin/content");
+  revalidatePath("/dashboard");
+  return null;
+}
+
+export async function deleteAndBlockUserAction(
+  _previousState: AdminActionState,
+  formData: FormData,
+): Promise<AdminActionState> {
+  const admin = await requireAdmin();
+  const userId = userIdSchema.safeParse(formData.get("userId"));
+  const reason = blockReasonSchema.safeParse(formData.get("reason"));
+  if (!userId.success || !reason.success || userId.data === admin.id) {
+    return { error: "A block reason between 1 and 500 characters is required." };
+  }
+  try {
+    await deleteAndBlockUser({ userId: admin.id }, userId.data, reason.data);
+  } catch (error) {
+    console.error("deleteAndBlockUserAction failed", error);
+    return { error: "Delete + block failed. No account changes were committed." };
+  }
+  revalidatePath("/dashboard/admin");
+  revalidatePath("/dashboard/admin/blocks");
+  revalidatePath("/dashboard/admin/content");
+  revalidatePath("/dashboard");
   return null;
 }
