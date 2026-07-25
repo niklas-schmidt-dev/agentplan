@@ -9,6 +9,10 @@ process.env.STORAGE_DRIVER = "fs";
 process.env.STORAGE_FS_ROOT = mkdtempSync(path.join(os.tmpdir(), "agentplan-signup-"));
 process.env.BETTER_AUTH_SECRET ??= "integration-test-secret-not-for-production";
 process.env.BETTER_AUTH_URL ??= "http://localhost:3000";
+process.env.RESEND_API_KEY = "";
+process.env.AUTH_EMAIL_FROM = "";
+process.env.AUTH_EMAIL_WEBHOOK_URL = "";
+process.env.AUTH_EMAIL_WEBHOOK_SECRET = "";
 
 import { eq, inArray, like } from "drizzle-orm";
 import { POST as authPost } from "@/app/api/auth/[...all]/route";
@@ -99,6 +103,18 @@ describe.skipIf(!hasDb)("better-auth signup hook (integration)", () => {
     });
     expect(session?.user.email).toBe(email);
     expect(session?.user.role).toBe(await roleOf(email));
+  });
+
+  it("allows an unverified email/password account to sign in without delivery", async () => {
+    const email = `hook-${randomUUID()}@example.test`;
+    await signUp(email);
+
+    const { headers } = await getAuth().api.signInEmail({
+      body: { email, password: "test-password-123" },
+      returnHeaders: true,
+    });
+
+    expect(headers.get("set-cookie") ?? "").toContain("session_token");
   });
 
   it("returns the same public response for new and duplicate email sign-ups", async () => {

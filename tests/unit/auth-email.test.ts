@@ -14,7 +14,7 @@ describe("auth email delivery", () => {
     vi.unstubAllEnvs();
   });
 
-  it("disables production email auth and fails closed when delivery is not configured", async () => {
+  it("reports unavailable delivery and fails closed when no provider is configured", async () => {
     vi.stubEnv("NODE_ENV", "production");
     vi.stubEnv("RESEND_API_KEY", "");
     vi.stubEnv("AUTH_EMAIL_FROM", "");
@@ -25,7 +25,7 @@ describe("auth email delivery", () => {
     await expect(sendAuthEmail(message)).rejects.toThrow(/not configured/);
   });
 
-  it("enables production email auth only for a complete delivery option", () => {
+  it("reports production delivery only for a complete delivery option", () => {
     vi.stubEnv("NODE_ENV", "production");
     vi.stubEnv("RESEND_API_KEY", "test-resend-key");
     vi.stubEnv("AUTH_EMAIL_FROM", "");

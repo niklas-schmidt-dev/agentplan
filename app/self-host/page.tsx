@@ -23,7 +23,7 @@ const services = [
     index: "03",
     name: "AgentPlan",
     detail:
-      "Migrations run on the first production build. Add Resend or GitHub OAuth before signing in.",
+      "Migrations run on the first production build. Email/password is ready without another provider.",
   },
 ];
 
@@ -68,8 +68,8 @@ export default function SelfHostPage() {
           </a>
           <p className="max-w-lg font-mono text-xs leading-5 text-ink-faint">
             In the Blob step, choose <strong className="font-medium text-ink-muted">Private</strong>
-            . The deploy flow asks for three must-have values. Afterward, choose Resend email,
-            GitHub OAuth, or both; email is optional for GitHub-only deployments.
+            . The deploy flow asks for three must-have values. Resend adds verification and password
+            recovery; GitHub adds another sign-in option. Both are optional.
           </p>
         </div>
 

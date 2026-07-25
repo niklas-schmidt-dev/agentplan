@@ -3,10 +3,10 @@
 The shortest production path is Vercel + Neon Postgres + a **private** Vercel
 Blob store. The Deploy Button creates a repository and Vercel project, requests
 the three must-have values, and offers both managed services during setup.
-Authentication providers are connected afterward: use Resend for email/password,
-GitHub OAuth, or both.
+Email/password authentication works immediately. Resend and GitHub OAuth are
+independent, optional additions.
 
-[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2Fniklas-schmidt-dev%2Fagentplan&project-name=agentplan&repository-name=agentplan&products=%5B%7B%22type%22%3A%22integration%22%2C%22protocol%22%3A%22storage%22%2C%22productSlug%22%3A%22neon%22%2C%22integrationSlug%22%3A%22neon%22%7D%2C%7B%22type%22%3A%22blob%22%7D%5D&envDescription=AgentPlan+needs+an+initial+admin+email%2C+an+auth+secret%2C+and+a+cron+secret.+Neon+and+Blob+are+provisioned+during+this+flow.+Configure+Resend+or+GitHub+OAuth+after+deployment+to+enable+sign-in.&envLink=https%3A%2F%2Fgithub.com%2Fniklas-schmidt-dev%2Fagentplan%2Fblob%2Fmain%2Fdocs%2Fself-hosting.md%23must-have-values&env=ADMIN_BOOTSTRAP_EMAIL&env=BETTER_AUTH_SECRET&env=CRON_SECRET)
+[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2Fniklas-schmidt-dev%2Fagentplan&project-name=agentplan&repository-name=agentplan&products=%5B%7B%22type%22%3A%22integration%22%2C%22protocol%22%3A%22storage%22%2C%22productSlug%22%3A%22neon%22%2C%22integrationSlug%22%3A%22neon%22%7D%2C%7B%22type%22%3A%22blob%22%7D%5D&envDescription=AgentPlan+needs+an+initial+admin+email%2C+an+auth+secret%2C+and+a+cron+secret.+Neon+and+Blob+are+provisioned+during+this+flow.+Email%2Fpassword+works+immediately%3B+Resend+and+GitHub+OAuth+are+optional.&envLink=https%3A%2F%2Fgithub.com%2Fniklas-schmidt-dev%2Fagentplan%2Fblob%2Fmain%2Fdocs%2Fself-hosting.md%23must-have-values&env=ADMIN_BOOTSTRAP_EMAIL&env=BETTER_AUTH_SECRET&env=CRON_SECRET)
 
 ## Vercel Deploy Button
 
@@ -20,10 +20,10 @@ GitHub OAuth, or both.
 4. Enter the three must-have values described below and deploy.
 5. The first production build applies all committed Drizzle migrations. Preview
    builds deliberately do not migrate a shared production database.
-6. Configure at least one sign-in method: Resend, the generic email webhook, or
-   GitHub OAuth.
-7. Open the deployment and register with `ADMIN_BOOTSTRAP_EMAIL`. That identity
+6. Open the deployment and register with `ADMIN_BOOTSTRAP_EMAIL`. That identity
    becomes the initial administrator.
+7. Optionally add Resend or the generic email webhook for verification and
+   password recovery, and/or GitHub OAuth as another sign-in method.
 
 Vercel provides the deployment hostname automatically. `BETTER_AUTH_URL` and
 `NEXT_PUBLIC_APP_URL` are optional unless you want to override that hostname,
@@ -41,15 +41,15 @@ The Vercel integrations provide the database and storage variables automatically
 `DATABASE_URL`, `DATABASE_URL_UNPOOLED`, and either `BLOB_READ_WRITE_TOKEN` or
 `BLOB_STORE_ID`.
 
-## Choose at least one sign-in method
+## Optional authentication additions
 
-The application runs without email delivery. In production, it only shows
-email/password registration and password reset when a complete email option is
-configured. A GitHub-only deployment therefore needs no email variables. If
-neither email nor GitHub is configured, the public application still runs but
-there is no way to sign in to its dashboard.
+Email/password registration and sign-in require no email provider. Without one,
+accounts are not email-verified and forgotten-password recovery is unavailable;
+the login page hides that link. Configure delivery when those capabilities are
+important. GitHub OAuth can be enabled separately and appears alongside
+email/password.
 
-### Resend email (recommended)
+### Resend email delivery
 
 Install **Resend email** from the Vercel Marketplace and connect it to the
 AgentPlan project. Choose a domain and region; the integration creates
@@ -68,8 +68,9 @@ Resend recommends using a sending subdomain to isolate its reputation. A custom
 domain is **not** required for the AgentPlan web application, but Resend requires
 a domain you control before it can send to arbitrary recipients.
 
-Resend is used only for account verification and password-reset links. It is not
-used for uploads, plan delivery, product notifications, or marketing.
+Resend is used only for optional account verification and password-reset links.
+It is not used for sign-in itself, uploads, plan delivery, product notifications,
+or marketing.
 
 ### Generic email webhook (alternative)
 
@@ -97,7 +98,7 @@ It must deliver the link without logging the token and return a 2xx response.
 
 If both Resend and a webhook are configured, Resend takes precedence.
 
-### GitHub OAuth
+### Additional GitHub sign-in
 
 GitHub sign-in requires both optional variables:
 
@@ -211,8 +212,7 @@ The filesystem driver refuses to start in production.
 
 ## Running outside Vercel
 
-Requirements are Node.js 24+, Postgres, a private supported object store, and at
-least one configured sign-in method.
+Requirements are Node.js 24+, Postgres, and a private supported object store.
 
 ```bash
 npm ci
@@ -225,5 +225,6 @@ Set `BETTER_AUTH_URL` or `NEXT_PUBLIC_APP_URL` to the public HTTPS origin. Arran
 for a daily authenticated request to `/api/cron/purge` using
 `Authorization: Bearer $CRON_SECRET`.
 
-For email/password, configure Resend or the HTTPS webhook described above. For
-GitHub sign-in, use the OAuth variables and callback described above.
+Email/password needs no additional provider. To add verification and password
+recovery, configure Resend or the HTTPS webhook described above. To add GitHub
+sign-in, use the OAuth variables and callback described above.

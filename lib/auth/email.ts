@@ -31,15 +31,15 @@ function webhookEndpoint(): string | undefined {
 }
 
 /**
- * Email/password auth is always available in development and tests, where
- * delivery may intentionally be suppressed. Production only advertises it
- * when either the complete Resend configuration or the legacy webhook
- * configuration is present.
+ * Reports whether verification and password-recovery messages can be
+ * delivered. Email/password authentication itself does not depend on this.
  */
 export function isEmailDeliveryConfigured(): boolean {
-  if (process.env.NODE_ENV !== "production") return true;
   if (resendApiKey() && resendSender()) return true;
-  return Boolean(webhookEndpoint() && process.env.AUTH_EMAIL_WEBHOOK_SECRET?.trim());
+  return Boolean(
+    webhookEndpoint() &&
+      (process.env.AUTH_EMAIL_WEBHOOK_SECRET?.trim() || process.env.NODE_ENV !== "production"),
+  );
 }
 
 function escapeHtml(value: string): string {
@@ -98,8 +98,7 @@ async function sendWithResend(message: AuthEmail, apiKey: string): Promise<void>
 /**
  * Sends auth mail through Resend when configured, otherwise through a
  * deployment-owned HTTPS webhook. Verification/reset tokens are never logged.
- * Development and tests may omit delivery; production email/password auth is
- * disabled unless one complete delivery option is configured.
+ * Callers only enable verification and recovery when delivery is complete.
  */
 export async function sendAuthEmail(message: AuthEmail): Promise<void> {
   const apiKey = resendApiKey();
