@@ -15,7 +15,7 @@ const pattern = [
   "npm_[A-Za-z0-9]{30,}",
   "-----BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY-----",
   "postgres(ql)?://[^[:space:]]+:[^[:space:]@]+@",
-  "(BETTER_AUTH_SECRET|CRON_SECRET|R2_SECRET_ACCESS_KEY|BLOB_READ_WRITE_TOKEN|AUTH_EMAIL_WEBHOOK_SECRET)=[^[:space:]]{16,}",
+  "(BETTER_AUTH_SECRET|CRON_SECRET|R2_SECRET_ACCESS_KEY|BLOB_READ_WRITE_TOKEN|AUTH_EMAIL_WEBHOOK_SECRET|RESEND_API_KEY)=[^[:space:]]{16,}",
 ].join("|");
 
 function runGit(args) {
@@ -29,9 +29,7 @@ function runGit(args) {
   return result.stdout;
 }
 
-const revisions = runGit(["rev-list", "--all"])
-  .split(/\r?\n/)
-  .filter(Boolean);
+const revisions = runGit(["rev-list", "--all"]).split(/\r?\n/).filter(Boolean);
 const findings = new Set();
 
 function collect(result, label) {
@@ -58,7 +56,7 @@ function collect(result, label) {
         ? `${match[1].slice(0, 12)}:${match[2]}:${match[3]}`
         : label === "WORKTREE" && worktreeMatch
           ? `WORKTREE:${worktreeMatch[1]}:${worktreeMatch[2]}`
-        : `${label}:unknown-location`,
+          : `${label}:unknown-location`,
     );
   }
 }
@@ -67,16 +65,7 @@ for (const revision of revisions) {
   collect(
     spawnSync(
       "git",
-      [
-        "grep",
-        "-nI",
-        "-E",
-        pattern,
-        revision,
-        "--",
-        ".",
-        ":(exclude)scripts/scan-secrets.mjs",
-      ],
+      ["grep", "-nI", "-E", pattern, revision, "--", ".", ":(exclude)scripts/scan-secrets.mjs"],
       { encoding: "utf8", maxBuffer: 20 * 1024 * 1024 },
     ),
     revision.slice(0, 12),
@@ -86,16 +75,7 @@ for (const revision of revisions) {
 collect(
   spawnSync(
     "git",
-    [
-      "grep",
-      "--untracked",
-      "-nI",
-      "-E",
-      pattern,
-      "--",
-      ".",
-      ":(exclude)scripts/scan-secrets.mjs",
-    ],
+    ["grep", "--untracked", "-nI", "-E", pattern, "--", ".", ":(exclude)scripts/scan-secrets.mjs"],
     { encoding: "utf8", maxBuffer: 20 * 1024 * 1024 },
   ),
   "WORKTREE",
