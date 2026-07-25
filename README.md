@@ -117,6 +117,21 @@ tests that require a database skip automatically when it is absent.
 The npm package is [`agentplan-cli`](https://www.npmjs.com/package/agentplan-cli);
 the command it provides is `agentplan`.
 
+### Agent skill
+
+Install AgentPlan's skill for Codex, Claude Code, Cursor, and other compatible
+agents through [skills.sh](https://skills.sh):
+
+```bash
+npx skills add niklas-schmidt-dev/agentplan --skill agentplan
+```
+
+The skill teaches agents when to upload a single file or an HTML plan folder,
+how to preserve relative image/MP4 paths, how to choose an entry document, and
+how to publish a new version without changing the viewer URL. A normal request
+such as “publish this plan with its images and video using AgentPlan” is enough;
+no special prompt template is required.
+
 Run it without installing:
 
 ```bash
