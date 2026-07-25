@@ -40,7 +40,12 @@ npm run test:e2e   # Playwright
 
 ## Workflow
 
-1. Branch from `main`.
+The repository created by **Deploy with Vercel** is a standalone deployment
+copy. For GitHub's upstream sync and pull-request workflow, first
+[fork the AgentPlan repository](https://github.com/niklas-schmidt-dev/agentplan/fork)
+directly on GitHub.
+
+1. Sync your GitHub fork and branch from `main`.
 2. Make your change with tests.
 3. Run the quality gates.
 4. Open a PR describing what changed and why.

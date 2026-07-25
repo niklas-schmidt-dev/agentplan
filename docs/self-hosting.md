@@ -8,10 +8,16 @@ independent, optional additions.
 
 [![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2Fniklas-schmidt-dev%2Fagentplan&project-name=agentplan&repository-name=agentplan&products=%5B%7B%22type%22%3A%22integration%22%2C%22protocol%22%3A%22storage%22%2C%22productSlug%22%3A%22neon%22%2C%22integrationSlug%22%3A%22neon%22%7D%2C%7B%22type%22%3A%22blob%22%7D%5D&envDescription=AgentPlan+needs+an+initial+admin+email%2C+an+auth+secret%2C+and+a+cron+secret.+Neon+and+Blob+are+provisioned+during+this+flow.+Email%2Fpassword+works+immediately%3B+Resend+and+GitHub+OAuth+are+optional.&envLink=https%3A%2F%2Fgithub.com%2Fniklas-schmidt-dev%2Fagentplan%2Fblob%2Fmain%2Fdocs%2Fself-hosting.md%23must-have-values&env=ADMIN_BOOTSTRAP_EMAIL&env=BETTER_AUTH_SECRET&env=CRON_SECRET)
 
+> [!NOTE]
+> The Deploy Button creates a standalone repository, not a GitHub fork. Choose
+> it for the shortest setup or for a private deployment repository. Use the
+> [upstream-linked install](#upstream-linked-vercel-install) when you want
+> GitHub's **Sync fork** button and the direct fork-to-pull-request workflow.
+
 ## Vercel Deploy Button
 
 1. Open the Deploy Button and choose the Git provider/account that should own
-   your AgentPlan fork.
+   your standalone AgentPlan repository.
 2. Accept the Neon integration. It provisions Postgres and supplies the pooled
    `DATABASE_URL` plus the direct `DATABASE_URL_UNPOOLED` migration URL.
 3. Create the Blob store with access set to **Private**. Blob store access cannot
@@ -28,6 +34,26 @@ independent, optional additions.
 Vercel provides the deployment hostname automatically. `BETTER_AUTH_URL` and
 `NEXT_PUBLIC_APP_URL` are optional unless you want to override that hostname,
 for example after attaching a custom domain.
+
+## Upstream-linked Vercel install
+
+Use this path when automatic GitHub fork synchronization matters more than
+keeping the deployment repository private:
+
+1. [Fork AgentPlan on GitHub](https://github.com/niklas-schmidt-dev/agentplan/fork).
+   A fork of this public repository is also public.
+2. [Create a Vercel project](https://vercel.com/new) and import your fork. During
+   project configuration, add `ADMIN_BOOTSTRAP_EMAIL`, `BETTER_AUTH_SECRET`, and
+   `CRON_SECRET`.
+3. In the new project's **Storage** section, create Neon Postgres and a Vercel
+   Blob store with access set to **Private**.
+4. Redeploy the production deployment. Neon's `DATABASE_URL_UNPOOLED` makes that
+   build apply the committed migrations automatically.
+
+GitHub's **Sync fork** action can now bring upstream `main` into your fork.
+Updating `main` triggers a new Vercel production deployment. Develop
+contributions on separate branches and open pull requests against the upstream
+AgentPlan repository.
 
 ## Must-have values
 
@@ -128,9 +154,9 @@ specific provider.
 Run `npm run db:migrate` before the first non-Vercel production start and
 whenever a deployment contains new migrations.
 
-The Neon Deploy Button path is detected through `DATABASE_URL_UNPOOLED` and
-migrates automatically on production builds. For a manual Vercel setup, keep
-migrations as a separate release step. Set `AUTO_MIGRATE=1` only when
+The Neon integration is detected through `DATABASE_URL_UNPOOLED` and migrates
+automatically on production builds. For a manual Vercel setup without that
+direct URL, keep migrations as a separate release step. Set `AUTO_MIGRATE=1` only when
 `DATABASE_URL_DIRECT`, `DATABASE_URL_UNPOOLED`, or `DATABASE_URL` is a
 DDL-capable connection; never opt a restricted pooled application role into
 automatic migrations.

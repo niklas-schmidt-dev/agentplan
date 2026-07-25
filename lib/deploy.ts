@@ -14,6 +14,10 @@ export const VERCEL_REQUIRED_ENV = [
   "CRON_SECRET",
 ] as const;
 
+export const GITHUB_FORK_URL = "https://github.com/niklas-schmidt-dev/agentplan/fork";
+
+export const VERCEL_IMPORT_URL = "https://vercel.com/new";
+
 function createVercelDeployUrl(): string {
   const params = new URLSearchParams({
     "repository-url": "https://github.com/niklas-schmidt-dev/agentplan",

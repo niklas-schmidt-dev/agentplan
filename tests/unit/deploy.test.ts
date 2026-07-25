@@ -1,6 +1,12 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { VERCEL_DEPLOY_PRODUCTS, VERCEL_DEPLOY_URL, VERCEL_REQUIRED_ENV } from "@/lib/deploy";
+import {
+  GITHUB_FORK_URL,
+  VERCEL_DEPLOY_PRODUCTS,
+  VERCEL_DEPLOY_URL,
+  VERCEL_IMPORT_URL,
+  VERCEL_REQUIRED_ENV,
+} from "@/lib/deploy";
 
 describe("Vercel Deploy Button", () => {
   it("provisions Neon and Blob and requests every required value", () => {
@@ -17,7 +23,11 @@ describe("Vercel Deploy Button", () => {
 
   it("keeps both documentation buttons aligned with the application URL", () => {
     for (const file of ["README.md", "docs/self-hosting.md"]) {
-      expect(readFileSync(file, "utf8")).toContain(`](${VERCEL_DEPLOY_URL})`);
+      const contents = readFileSync(file, "utf8");
+
+      expect(contents).toContain(`](${VERCEL_DEPLOY_URL})`);
+      expect(contents).toContain(`](${GITHUB_FORK_URL})`);
+      expect(contents).toContain(`](${VERCEL_IMPORT_URL})`);
     }
   });
 });
