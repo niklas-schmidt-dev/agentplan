@@ -19,9 +19,12 @@ import {
   apiTokens,
   auditEvents,
   blockedOauthAccounts,
+  draftVersionAssets,
   draftVersions,
   drafts,
   sessions,
+  uploadIntentFiles,
+  uploadIntentReclaims,
   uploadIntents,
   userBlocks,
   users,
@@ -37,6 +40,7 @@ import { recordAuditEvent } from "@/lib/audit/events";
 import { normalizeBlockedEmail } from "@/lib/auth/blocked-identities";
 import { getStorage } from "@/lib/storage";
 import { queueStorageDeletion, tryDeleteStorageKey } from "@/lib/storage/cleanup";
+import { cleanupKeysForIntent } from "@/lib/uploads/service";
 
 const activeTokenFilter = and(
   isNull(apiTokens.revokedAt),
@@ -61,7 +65,10 @@ export async function getAdminStats(): Promise<AdminStats> {
     db.select({ value: count() }).from(userBlocks),
     db.select({ value: count() }).from(drafts).where(liveDraftFilter),
     db
-      .select({ value: count(), bytes: sum(draftVersions.sizeBytes) })
+      .select({
+        value: count(),
+        bytes: sql<string>`sum(coalesce(${draftVersions.totalSizeBytes}, ${draftVersions.sizeBytes}))`,
+      })
       .from(draftVersions)
       .innerJoin(drafts, eq(draftVersions.draftId, drafts.id))
       .where(liveDraftFilter),
@@ -106,14 +113,17 @@ export async function listUsersWithUsage({
   if (allUsers.length === 0) return [];
   const pageUserIds = allUsers.map((user) => user.id);
 
-  const [draftAgg, storageAgg, reservedAgg, tokenAgg, blockRows] = await Promise.all([
+  const [draftAgg, storageAgg, reservedAgg, reclaimAgg, tokenAgg, blockRows] = await Promise.all([
     db
       .select({ ownerId: drafts.ownerId, drafts: count() })
       .from(drafts)
       .where(and(liveDraftFilter, inArray(drafts.ownerId, pageUserIds)))
       .groupBy(drafts.ownerId),
     db
-      .select({ ownerId: drafts.ownerId, bytes: sum(draftVersions.sizeBytes) })
+      .select({
+        ownerId: drafts.ownerId,
+        bytes: sql<string>`sum(coalesce(${draftVersions.totalSizeBytes}, ${draftVersions.sizeBytes}))`,
+      })
       .from(draftVersions)
       .innerJoin(drafts, eq(draftVersions.draftId, drafts.id))
       .where(and(liveDraftFilter, inArray(drafts.ownerId, pageUserIds)))
@@ -121,6 +131,21 @@ export async function listUsersWithUsage({
     db
       .select({ ownerId: uploadIntents.ownerId, bytes: sum(uploadIntents.expectedBytes) })
       .from(uploadIntents)
+      .where(
+        and(
+          inArray(uploadIntents.ownerId, pageUserIds),
+          eq(uploadIntents.status, "pending"),
+          gt(uploadIntents.expiresAt, sql`now()`),
+        ),
+      )
+      .groupBy(uploadIntents.ownerId),
+    db
+      .select({
+        ownerId: uploadIntents.ownerId,
+        bytes: sum(uploadIntentReclaims.sizeBytes),
+      })
+      .from(uploadIntentReclaims)
+      .innerJoin(uploadIntents, eq(uploadIntentReclaims.intentId, uploadIntents.id))
       .where(
         and(
           inArray(uploadIntents.ownerId, pageUserIds),
@@ -146,7 +171,13 @@ export async function listUsersWithUsage({
 
   const draftsByOwner = new Map(draftAgg.map((row) => [row.ownerId, row.drafts]));
   const bytesByOwner = new Map(storageAgg.map((row) => [row.ownerId, Number(row.bytes ?? 0)]));
-  const reservedByOwner = new Map(reservedAgg.map((row) => [row.ownerId, Number(row.bytes ?? 0)]));
+  const reclaimedByOwner = new Map(reclaimAgg.map((row) => [row.ownerId, Number(row.bytes ?? 0)]));
+  const reservedByOwner = new Map(
+    reservedAgg.map((row) => [
+      row.ownerId,
+      Math.max(0, Number(row.bytes ?? 0) - (reclaimedByOwner.get(row.ownerId) ?? 0)),
+    ]),
+  );
   const tokensByUser = new Map(tokenAgg.map((row) => [row.userId, row.tokens]));
   const blocksByUser = new Map(blockRows.map((row) => [row.userId, row]));
 
@@ -246,7 +277,11 @@ export async function listIdentityBlocks({
 export type AdminDraftRow = Draft & {
   ownerEmail: string;
   ownerBlocked: boolean;
-  currentVersion: Pick<DraftVersion, "versionNumber" | "sizeBytes" | "contentType"> | null;
+  currentVersion:
+    | (Pick<DraftVersion, "versionNumber" | "sizeBytes" | "contentType" | "isBundle"> & {
+        assetCount: number;
+      })
+    | null;
 };
 
 export type AdminDraftPage = {
@@ -295,8 +330,14 @@ export async function listDraftsForAdmin({
         ownerEmail: users.email,
         ownerBlockedAt: users.blockedAt,
         versionNumber: draftVersions.versionNumber,
-        sizeBytes: draftVersions.sizeBytes,
+        sizeBytes: sql<number>`coalesce(${draftVersions.totalSizeBytes}, ${draftVersions.sizeBytes})::int`,
         contentType: draftVersions.contentType,
+        isBundle: draftVersions.isBundle,
+        assetCount: sql<number>`(
+          select count(*)::int
+          from ${draftVersionAssets}
+          where ${draftVersionAssets.versionId} = ${draftVersions.id}
+        )`,
       })
       .from(drafts)
       .innerJoin(users, eq(drafts.ownerId, users.id))
@@ -320,6 +361,8 @@ export async function listDraftsForAdmin({
               versionNumber: row.versionNumber,
               sizeBytes: row.sizeBytes ?? 0,
               contentType: row.contentType ?? "application/octet-stream",
+              isBundle: row.isBundle ?? false,
+              assetCount: row.assetCount ?? 0,
             },
     })),
   };
@@ -442,21 +485,37 @@ export async function removeDraftAsAdmin(
       .set({ status: "cancelled", failureCode: "MODERATED", updatedAt: sql`now()` })
       .where(and(eq(uploadIntents.targetDraftId, draftId), eq(uploadIntents.status, "pending")))
       .returning({
-        stagingKey: uploadIntents.stagingKey,
-        finalKey: uploadIntents.finalKey,
-        expiresAt: uploadIntents.expiresAt,
+        intent: uploadIntents,
       });
-    for (const intent of pending) {
-      await queueStorageDeletion(
-        {
-          storageKey: intent.stagingKey,
-          reason: "draft_moderated",
-          notBefore: intent.expiresAt,
-        },
-        tx,
-      );
-      await queueStorageDeletion({ storageKey: intent.finalKey, reason: "draft_moderated" }, tx);
+    const pendingCleanup: Array<{ storageKey: string; notBefore?: Date }> = [];
+    for (const { intent } of pending) {
+      const cleanup = await cleanupKeysForIntent(intent, tx);
+      pendingCleanup.push(...cleanup);
+      for (const key of cleanup) {
+        await queueStorageDeletion(
+          {
+            storageKey: key.storageKey,
+            reason: "draft_moderated",
+            notBefore: key.notBefore,
+          },
+          tx,
+        );
+      }
+      await tx.delete(uploadIntentReclaims).where(eq(uploadIntentReclaims.intentId, intent.id));
     }
+    const [currentVersion] = await tx
+      .select({
+        totalSizeBytes: sql<number>`coalesce(${draftVersions.totalSizeBytes}, ${draftVersions.sizeBytes})::int`,
+        isBundle: draftVersions.isBundle,
+        assetCount: sql<number>`(
+          select count(*)::int from ${draftVersionAssets}
+          where ${draftVersionAssets.versionId} = ${draftVersions.id}
+        )`,
+      })
+      .from(draftVersions)
+      .where(eq(draftVersions.draftId, removed.id))
+      .orderBy(desc(draftVersions.versionNumber))
+      .limit(1);
     await tx.insert(auditEvents).values({
       eventType: "draft.moderated",
       userId: actor.userId,
@@ -465,18 +524,16 @@ export async function removeDraftAsAdmin(
         ownerId: removed.ownerId,
         slug: removed.slug,
         kind: removed.kind,
+        bundle: currentVersion?.isBundle ?? false,
+        totalSizeBytes: currentVersion?.totalSizeBytes ?? 0,
+        assetCount: currentVersion?.assetCount ?? 0,
         cancelledUploadIntents: pending.length,
       },
     });
-    return { ownerId: removed.ownerId, slug: removed.slug, pending };
+    return { ownerId: removed.ownerId, slug: removed.slug, pendingCleanup };
   });
   if (!result) return null;
-  for (const intent of result.pending) {
-    await Promise.all([
-      tryDeleteStorageKey(intent.stagingKey),
-      tryDeleteStorageKey(intent.finalKey),
-    ]);
-  }
+  await Promise.all(result.pendingCleanup.map((key) => tryDeleteStorageKey(key.storageKey)));
   return { ownerId: result.ownerId, slug: result.slug };
 }
 
@@ -798,24 +855,49 @@ async function deleteUser(
     }
 
     const versions = await tx
-      .select({ storageKey: draftVersions.storageKey })
+      .select({ id: draftVersions.id, storageKey: draftVersions.storageKey })
       .from(draftVersions)
       .innerJoin(drafts, eq(draftVersions.draftId, drafts.id))
       .where(eq(drafts.ownerId, targetUserId));
     const intents = await tx
       .select({
+        id: uploadIntents.id,
         stagingKey: uploadIntents.stagingKey,
         finalKey: uploadIntents.finalKey,
         expiresAt: uploadIntents.expiresAt,
       })
       .from(uploadIntents)
       .where(and(eq(uploadIntents.ownerId, targetUserId), ne(uploadIntents.status, "completed")));
+    const versionAssets = versions.length
+      ? await tx
+          .select({ storageKey: draftVersionAssets.storageKey })
+          .from(draftVersionAssets)
+          .where(
+            inArray(
+              draftVersionAssets.versionId,
+              versions.map((version) => version.id),
+            ),
+          )
+      : [];
+    const intentFiles = intents.length
+      ? await tx
+          .select({ finalKey: uploadIntentFiles.finalKey })
+          .from(uploadIntentFiles)
+          .where(
+            inArray(
+              uploadIntentFiles.intentId,
+              intents.map((intent) => intent.id),
+            ),
+          )
+      : [];
     const storageKeys = Array.from(
       new Set([
         ...versions.map((version) => version.storageKey),
+        ...versionAssets.map((asset) => asset.storageKey),
         ...intents.flatMap((intent) => [intent.stagingKey, intent.finalKey]),
+        ...intentFiles.map((file) => file.finalKey),
       ]),
-    );
+    ).filter((key): key is string => key !== null);
     const latestExpiry = intents.reduce<Date | null>(
       (latest, intent) =>
         latest === null || intent.expiresAt > latest ? intent.expiresAt : latest,

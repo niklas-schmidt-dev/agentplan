@@ -59,6 +59,8 @@ export default async function DashboardPage({
           filename: intent.originalFilename,
           reservedBytes: intent.expectedBytes,
           expiresAt: intent.expiresAt.toISOString(),
+          fileCount: intent.fileCount,
+          mode: intent.mode,
         }))}
       />
 
@@ -126,7 +128,7 @@ export default async function DashboardPage({
                   {draft.kind}
                   {" · "}
                   {draft.currentVersion
-                    ? `v${draft.currentVersion.versionNumber} · ${formatBytes(draft.currentVersion.sizeBytes)}`
+                    ? `v${draft.currentVersion.versionNumber} · ${formatBytes(draft.currentVersion.sizeBytes)}${draft.currentVersion.isBundle ? " · HTML + media" : ""}`
                     : "no version"}
                   {" · updated "}
                   {formatRelativeTime(draft.updatedAt)}

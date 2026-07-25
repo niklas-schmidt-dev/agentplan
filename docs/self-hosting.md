@@ -118,16 +118,19 @@ with every AgentPlan origin that may create uploads:
 ]
 ```
 
-HTML, raster image, and MP4 uploads are always enabled. Before production use,
-verify Range, copy, signed PUT, and throttled playback recovery behavior for the
-deployment's storage provider.
+HTML, raster image, MP4, and HTML plan-folder uploads are always enabled. A plan
+folder contains one HTML entry and up to 50 image/MP4 assets (125 MiB total).
+Before production use, verify Range, immutable signed PUT, provider copy, and
+throttled playback recovery behavior for the deployment's storage provider.
 
 Media upload bytes go directly to the private store, but completion reads the
 object once to validate and hash it. Viewer requests remain proxied through the
 application for immediate authorization and moderation changes. This means each
 media view consumes a private storage read, Function duration, and proxied data
 transfer. A future short-lived signed-GET mode may trade immediate revocation for
-lower delivery cost; this release intentionally does not.
+lower delivery cost; this release intentionally does not because browser testing
+showed that an expired redirected video target is not reliably refreshed after a
+seek.
 
 ### Local filesystem
 

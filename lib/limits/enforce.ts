@@ -1,7 +1,15 @@
 import { createHmac } from "node:crypto";
 import { and, eq, gt, isNull, ne, or, sql } from "drizzle-orm";
 import { getDb, type Database } from "@/db/client";
-import { apiTokens, draftVersions, drafts, uploadIntents, users, type UserPlan } from "@/db/schema";
+import {
+  apiTokens,
+  draftVersions,
+  drafts,
+  uploadIntentReclaims,
+  uploadIntents,
+  users,
+  type UserPlan,
+} from "@/db/schema";
 import { QuotaExceededError, RateLimitedError } from "./errors";
 import { limitsForPlan, passwordAttemptsPerWindow, type EffectiveLimits } from "./plans";
 import { consumeRateLimit, consumeRateLimits } from "./rate-limit";
@@ -46,6 +54,7 @@ export async function lockAndAssertUploadQuota(
     sizeBytes: number;
     newDraft: boolean;
     excludeIntentId?: string;
+    reclaimBytes?: number;
   },
   db: Pick<Database, "execute" | "select">,
 ): Promise<EffectiveLimits> {
@@ -67,33 +76,51 @@ export async function lockAndAssertUploadQuota(
   }
 
   if (limits.maxStorageBytes !== null) {
-    const [[row], [reservationRow]] = await Promise.all([
-      db
-        .select({ total: sql<string>`coalesce(sum(${draftVersions.sizeBytes}), 0)` })
-        .from(draftVersions)
-        .innerJoin(drafts, eq(draftVersions.draftId, drafts.id))
-        .where(and(eq(drafts.ownerId, params.userId), isNull(drafts.deletedAt))),
-      db
-        .select({ total: sql<string>`coalesce(sum(${uploadIntents.expectedBytes}), 0)` })
-        .from(uploadIntents)
-        .where(
-          and(
-            eq(uploadIntents.ownerId, params.userId),
-            eq(uploadIntents.status, "pending"),
-            gt(uploadIntents.expiresAt, sql`now()`),
-            params.excludeIntentId ? ne(uploadIntents.id, params.excludeIntentId) : undefined,
-          ),
+    // This helper normally receives a transaction-bound Drizzle client. Keep
+    // its statements sequential: node-postgres does not support overlapping
+    // queries on one checked-out transaction connection.
+    const [row] = await db
+      .select({
+        total: sql<string>`coalesce(sum(coalesce(${draftVersions.totalSizeBytes}, ${draftVersions.sizeBytes})), 0)`,
+      })
+      .from(draftVersions)
+      .innerJoin(drafts, eq(draftVersions.draftId, drafts.id))
+      .where(and(eq(drafts.ownerId, params.userId), isNull(drafts.deletedAt)));
+    const [reservationRow] = await db
+      .select({ total: sql<string>`coalesce(sum(${uploadIntents.expectedBytes}), 0)` })
+      .from(uploadIntents)
+      .where(
+        and(
+          eq(uploadIntents.ownerId, params.userId),
+          eq(uploadIntents.status, "pending"),
+          gt(uploadIntents.expiresAt, sql`now()`),
+          params.excludeIntentId ? ne(uploadIntents.id, params.excludeIntentId) : undefined,
         ),
-    ]);
+      );
+    const [reclaimRow] = await db
+      .select({ total: sql<string>`coalesce(sum(${uploadIntentReclaims.sizeBytes}), 0)` })
+      .from(uploadIntentReclaims)
+      .innerJoin(uploadIntents, eq(uploadIntentReclaims.intentId, uploadIntents.id))
+      .where(
+        and(
+          eq(uploadIntents.ownerId, params.userId),
+          eq(uploadIntents.status, "pending"),
+          gt(uploadIntents.expiresAt, sql`now()`),
+          params.excludeIntentId ? ne(uploadIntents.id, params.excludeIntentId) : undefined,
+        ),
+      );
     const committed = Number(row?.total ?? 0);
-    const reserved = Number(reservationRow?.total ?? 0);
-    if (committed + reserved + params.sizeBytes > limits.maxStorageBytes) {
+    const grossReserved = Number(reservationRow?.total ?? 0);
+    const claimed = Number(reclaimRow?.total ?? 0);
+    const reserved = Math.max(0, grossReserved - claimed);
+    const requested = Math.max(0, params.sizeBytes - (params.reclaimBytes ?? 0));
+    if (committed + reserved + requested > limits.maxStorageBytes) {
       throw new QuotaExceededError(
         `Storage quota reached: ${Math.ceil(committed / (1024 * 1024))} MiB stored, ${Math.ceil(
           reserved / (1024 * 1024),
-        )} MiB reserved, and ${Math.ceil(params.sizeBytes / (1024 * 1024))} MiB requested (${Math.floor(
+        )} MiB net reserved, and ${Math.ceil(requested / (1024 * 1024))} MiB net requested (${Math.floor(
           limits.maxStorageBytes / (1024 * 1024),
-        )} MiB limit). Old versions are pruned only after an upload completes; cancel or wait for pending uploads, or delete content.`,
+        )} MiB limit). Planned pruning is credited only after its versions are reserved for this upload; cancel or wait for pending uploads, or delete unrelated content.`,
       );
     }
   }
@@ -104,11 +131,15 @@ export async function lockAndAssertUploadQuota(
 export async function getUserStorageUsage(userId: string): Promise<{
   committedBytes: number;
   reservedBytes: number;
+  grossReservedBytes: number;
+  plannedReclaimBytes: number;
 }> {
   const db = getDb();
-  const [[committed], [reserved]] = await Promise.all([
+  const [[committed], [reserved], [reclaims]] = await Promise.all([
     db
-      .select({ total: sql<string>`coalesce(sum(${draftVersions.sizeBytes}), 0)` })
+      .select({
+        total: sql<string>`coalesce(sum(coalesce(${draftVersions.totalSizeBytes}, ${draftVersions.sizeBytes})), 0)`,
+      })
       .from(draftVersions)
       .innerJoin(drafts, eq(draftVersions.draftId, drafts.id))
       .where(and(eq(drafts.ownerId, userId), isNull(drafts.deletedAt))),
@@ -122,10 +153,25 @@ export async function getUserStorageUsage(userId: string): Promise<{
           gt(uploadIntents.expiresAt, sql`now()`),
         ),
       ),
+    db
+      .select({ total: sql<string>`coalesce(sum(${uploadIntentReclaims.sizeBytes}), 0)` })
+      .from(uploadIntentReclaims)
+      .innerJoin(uploadIntents, eq(uploadIntentReclaims.intentId, uploadIntents.id))
+      .where(
+        and(
+          eq(uploadIntents.ownerId, userId),
+          eq(uploadIntents.status, "pending"),
+          gt(uploadIntents.expiresAt, sql`now()`),
+        ),
+      ),
   ]);
+  const grossReservedBytes = Number(reserved?.total ?? 0);
+  const plannedReclaimBytes = Number(reclaims?.total ?? 0);
   return {
     committedBytes: Number(committed?.total ?? 0),
-    reservedBytes: Number(reserved?.total ?? 0),
+    reservedBytes: Math.max(0, grossReservedBytes - plannedReclaimBytes),
+    grossReservedBytes,
+    plannedReclaimBytes,
   };
 }
 

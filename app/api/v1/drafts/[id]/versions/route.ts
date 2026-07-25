@@ -10,7 +10,11 @@ import {
 } from "@/lib/api/responses";
 import { serializeDraft, serializeVersion } from "@/lib/api/serialize";
 import { readUpload } from "@/lib/api/upload";
-import { addVersionToDraft, DraftNotFoundError } from "@/lib/drafts/service";
+import {
+  addVersionToDraft,
+  DraftNotFoundError,
+  DraftWriteConflictError,
+} from "@/lib/drafts/service";
 import { consumeUploadRateLimit } from "@/lib/limits/enforce";
 import { uuidSchema } from "@/lib/validation/api";
 
@@ -65,6 +69,9 @@ export async function POST(req: Request, { params }: Params): Promise<Response> 
   } catch (error) {
     // Draft soft-deleted between the ownership check and the write: it's gone.
     if (error instanceof DraftNotFoundError) return notFound();
+    if (error instanceof DraftWriteConflictError) {
+      return apiError(409, "DRAFT_WRITE_CONFLICT", error.message);
+    }
     const limited = limitErrorResponse(error);
     if (limited) return limited;
     console.error("POST /api/v1/drafts/:id/versions failed", error);

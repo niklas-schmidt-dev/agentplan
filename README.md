@@ -1,6 +1,7 @@
 # AgentPlan
 
-Publish HTML documents, raster images, and MP4 video behind stable, shareable links.
+Publish HTML documents, complete HTML plan folders, raster images, and MP4 video
+behind stable, shareable links.
 
 AgentPlan is a small service for AI agents (and their humans) that need to turn a
 generated file — a plan, report, image, or demo video — into a URL. Upload from the
@@ -39,8 +40,9 @@ the link and the password).
   (`sandbox="allow-scripts allow-forms allow-modals allow-popups"`, no
   `allow-same-origin`).
 - Raster images (JPEG, PNG, WebP, GIF, and AVIF) and MP4 files use short-lived
-  direct-upload capabilities, staging-to-final provider copies, signature/magic
-  validation, immutable versions, and native media viewers.
+  direct-upload capabilities, signature/magic validation, immutable versions,
+  and native media viewers. A bundled HTML plan can contain one HTML entry plus
+  up to 50 private raster-image/MP4 assets (125 MiB total).
 
 ## Architecture
 
@@ -60,8 +62,9 @@ Request paths:
   Authorization uses sessions and owner-scoped queries.
 - **Agent / CLI** → `POST /api/v1/drafts` with `Authorization: Bearer ap_live_…` →
   scope-checked → same services.
-- **Viewer** → `/p/{slug}` renders an iframe whose `src` is `/p/{slug}/content`; the
-  content route re-authorizes server-side and streams the HTML from storage.
+- **Viewer** → `/p/{slug}` renders an iframe whose source is either the standalone
+  content route or a version-pinned bundle route. Every HTML and media request is
+  re-authorized server-side and streamed from private storage.
 
 Key directories:
 
@@ -140,6 +143,9 @@ agentplan upload ./plan.html --password-stdin     # safer: read password from pi
 agentplan upload ./plan.html --title "Launch plan"
 agentplan upload ./plan.html --draft <id>   # add a new version to an existing draft
 agentplan upload ./plan.html --json      # machine-readable output on stdout
+agentplan upload ./plan-directory        # HTML + relative image/MP4 assets
+agentplan upload ./plan-directory --entry nested/index.html
+agentplan upload ./plan-directory --draft <id>
 agentplan list [--json]
 agentplan open <id>
 ```
@@ -170,6 +176,12 @@ GET    /api/v1/uploads/intents
 GET    /api/v1/uploads/intents/:id
 POST   /api/v1/uploads/intents/:id/complete
 DELETE /api/v1/uploads/intents/:id
+POST   /api/v1/uploads/bundles                    (create immutable manifest)
+GET    /api/v1/uploads/bundles
+GET    /api/v1/uploads/bundles/:id
+POST   /api/v1/uploads/bundles/:id/targets        (up to 10 files)
+POST   /api/v1/uploads/bundles/:id/complete
+DELETE /api/v1/uploads/bundles/:id
 GET    /api/v1/tokens                               (session only)
 POST   /api/v1/tokens                               (session only)
 DELETE /api/v1/tokens/:id                           (session only)
@@ -189,8 +201,10 @@ Free-plan limits (all server-enforced; tunable via `AP_*` env vars, defaults in
 | Limit                          | Default                               |
 | ------------------------------ | ------------------------------------- |
 | Upload size                    | HTML 2 MiB; image 10 MiB; MP4 100 MiB |
+| HTML bundle                    | 125 MiB total; up to 50 assets        |
 | Drafts per user                | 100                                   |
 | Versions kept per draft        | HTML 100; image 20; video 2           |
+| Bundled HTML versions          | 2                                     |
 | Total storage per user         | 300 MiB                               |
 | Active API tokens per user     | 25                                    |
 | Uploads per user               | 30 / 10 min and 300 / day             |

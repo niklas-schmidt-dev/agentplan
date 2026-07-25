@@ -118,7 +118,10 @@ export default async function DraftDetailPage({ params }: { params: Promise<{ id
                 {version.id === draft.currentVersionId ? " (current)" : ""}
               </span>
               <span className="text-ink-faint">{formatRelativeTime(version.createdAt)}</span>
-              <span className="text-ink-faint">{formatBytes(version.sizeBytes)}</span>
+              <span className="text-ink-faint">
+                {formatBytes(version.totalSizeBytes ?? version.sizeBytes)}
+                {version.isBundle ? " · HTML + media" : ""}
+              </span>
               <span className="text-ink-faint">
                 {version.originalFilename ?? version.contentType}
               </span>

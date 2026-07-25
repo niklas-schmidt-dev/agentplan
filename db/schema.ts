@@ -158,6 +158,11 @@ export const uploadIntentStatus = pgEnum("upload_intent_status", [
   "cancelled",
   "failed",
 ]);
+export const uploadIntentMode = pgEnum("upload_intent_mode", [
+  "single",
+  "bundle",
+  "bundle_restore",
+]);
 
 export const drafts = pgTable(
   "drafts",
@@ -198,6 +203,11 @@ export const draftVersions = pgTable(
     contentType: varchar("content_type", { length: 100 }).notNull(),
     originalFilename: varchar("original_filename", { length: 255 }),
     sizeBytes: integer("size_bytes").notNull(),
+    // Nullable for rolling deploys: older application instances do not write it.
+    // Readers must fall back to sizeBytes until a later cleanup migration.
+    totalSizeBytes: integer("total_size_bytes"),
+    entryPath: varchar("entry_path", { length: 512 }),
+    isBundle: boolean("is_bundle").notNull().default(false),
     source: versionSource("source").notNull(),
     createdByTokenId: uuid("created_by_token_id").references(() => apiTokens.id, {
       onDelete: "set null",
@@ -209,6 +219,28 @@ export const draftVersions = pgTable(
       table.draftId,
       table.versionNumber,
     ),
+  ],
+);
+
+export const draftVersionAssets = pgTable(
+  "draft_version_assets",
+  {
+    id: uuid("id").primaryKey(),
+    versionId: uuid("version_id")
+      .notNull()
+      .references(() => draftVersions.id, { onDelete: "cascade" }),
+    logicalPath: varchar("logical_path", { length: 512 }).notNull(),
+    storageKey: text("storage_key").notNull(),
+    contentSha256: char("content_sha256", { length: 64 }).notNull(),
+    contentType: varchar("content_type", { length: 100 }).notNull(),
+    originalFilename: varchar("original_filename", { length: 255 }).notNull(),
+    sizeBytes: integer("size_bytes").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex("draft_version_assets_version_path_idx").on(table.versionId, table.logicalPath),
+    uniqueIndex("draft_version_assets_storage_key_idx").on(table.storageKey),
+    index("draft_version_assets_version_idx").on(table.versionId),
   ],
 );
 
@@ -224,12 +256,15 @@ export const uploadIntents = pgTable(
     }),
     draftId: uuid("draft_id").notNull(),
     versionId: uuid("version_id").notNull(),
-    stagingKey: text("staging_key").notNull(),
+    mode: uploadIntentMode("mode").notNull().default("single"),
+    stagingKey: text("staging_key"),
     finalKey: text("final_key").notNull(),
     kind: draftKind("kind").notNull(),
     originalFilename: varchar("original_filename", { length: 255 }).notNull(),
     contentType: varchar("content_type", { length: 100 }).notNull(),
     expectedBytes: integer("expected_bytes").notNull(),
+    entryPath: varchar("entry_path", { length: 512 }),
+    fileCount: integer("file_count").notNull().default(1),
     title: varchar("title", { length: 200 }),
     visibility: draftVisibility("visibility"),
     passwordHash: text("password_hash"),
@@ -256,6 +291,45 @@ export const uploadIntents = pgTable(
       table.expiresAt,
     ),
     index("upload_intents_target_draft_idx").on(table.targetDraftId),
+  ],
+);
+
+export const uploadIntentFiles = pgTable(
+  "upload_intent_files",
+  {
+    id: uuid("id").primaryKey(),
+    intentId: uuid("intent_id")
+      .notNull()
+      .references(() => uploadIntents.id, { onDelete: "cascade" }),
+    logicalPath: varchar("logical_path", { length: 512 }).notNull(),
+    finalKey: text("final_key").notNull(),
+    contentType: varchar("content_type", { length: 100 }).notNull(),
+    originalFilename: varchar("original_filename", { length: 255 }).notNull(),
+    expectedBytes: integer("expected_bytes").notNull(),
+    sourceKey: text("source_key"),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex("upload_intent_files_intent_path_idx").on(table.intentId, table.logicalPath),
+    uniqueIndex("upload_intent_files_final_key_idx").on(table.finalKey),
+    index("upload_intent_files_intent_idx").on(table.intentId),
+  ],
+);
+
+export const uploadIntentReclaims = pgTable(
+  "upload_intent_reclaims",
+  {
+    intentId: uuid("intent_id")
+      .notNull()
+      .references(() => uploadIntents.id, { onDelete: "cascade" }),
+    versionId: uuid("version_id")
+      .notNull()
+      .references(() => draftVersions.id, { onDelete: "restrict" }),
+    sizeBytes: integer("size_bytes").notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.intentId, table.versionId] }),
+    uniqueIndex("upload_intent_reclaims_version_idx").on(table.versionId),
   ],
 );
 
@@ -347,8 +421,10 @@ export const rateLimits = pgTable(
 export type User = typeof users.$inferSelect;
 export type Draft = typeof drafts.$inferSelect;
 export type DraftVersion = typeof draftVersions.$inferSelect;
+export type DraftVersionAsset = typeof draftVersionAssets.$inferSelect;
 export type ApiToken = typeof apiTokens.$inferSelect;
 export type UploadIntent = typeof uploadIntents.$inferSelect;
+export type UploadIntentFile = typeof uploadIntentFiles.$inferSelect;
 export type DraftKind = (typeof draftKind.enumValues)[number];
 export type UserBlock = typeof userBlocks.$inferSelect;
 export type Visibility = (typeof draftVisibility.enumValues)[number];

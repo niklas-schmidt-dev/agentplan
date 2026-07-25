@@ -26,6 +26,15 @@ export class VercelBlobStorage implements ObjectStorage {
     });
   }
 
+  async putIfAbsent(key: string, body: Uint8Array, contentType: string): Promise<void> {
+    await putBlob(key, Buffer.from(body), {
+      access: "private",
+      addRandomSuffix: false,
+      allowOverwrite: false,
+      contentType,
+    });
+  }
+
   async get(key: string): Promise<Uint8Array | null> {
     const result = await getBlob(key, { access: "private" });
     if (!result || result.statusCode !== 200) return null;

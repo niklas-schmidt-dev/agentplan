@@ -26,7 +26,10 @@ function contentSecurityPolicy(nonce: string): string {
  * intentionally excluded because its response owns a CSP `sandbox` policy.
  */
 export function proxy(request: NextRequest) {
-  if (/^\/p\/[^/]+\/content\/?$/.test(request.nextUrl.pathname)) {
+  if (
+    /^\/p\/[^/]+\/content\/?$/.test(request.nextUrl.pathname) ||
+    /^\/p\/[^/]+\/v\/[^/]+\/.+/.test(request.nextUrl.pathname)
+  ) {
     return NextResponse.next();
   }
 

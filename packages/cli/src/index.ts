@@ -2,10 +2,16 @@
 
 import { spawn } from "node:child_process";
 import { createReadStream } from "node:fs";
-import { readFile, stat } from "node:fs/promises";
+import { lstat, readFile, readdir, stat } from "node:fs/promises";
 import path from "node:path";
 import { parseArgs } from "node:util";
-import { uploadSpecFor, type UploadSpec } from "@agentplan/upload-contract";
+import {
+  normalizeBundlePath,
+  selectBundleEntry,
+  uploadSpecFor,
+  validateBundleManifest,
+  type UploadSpec,
+} from "@agentplan/upload-contract";
 import { AgentPlanApi, ApiError, DEFAULT_API_URL, type ApiDraft } from "./api.js";
 import { clearConfig, loadConfig, saveConfig } from "./config.js";
 import { hasNewDraftOnlyOptions, type UploadFlags } from "./upload-options.js";
@@ -16,12 +22,13 @@ const USAGE = `agentplan — publish HTML, images, and MP4 behind stable links
 Usage:
   agentplan login                       store an API token (created in the dashboard)
   agentplan logout                      remove the stored token
-  agentplan upload <file>               upload a new draft (private by default)
+  agentplan upload <file|directory>     upload a draft or bundled HTML plan
     --public | --private                set visibility
     --password <password>               protect the draft with a password
     --password-stdin                    read the draft password from stdin (safer)
     --title <title>                     set the draft title
     --draft <id>                        add a version to an existing draft
+    --entry <path>                      choose the bundle entry HTML
     --json                              machine-readable output on stdout
   agentplan list [--json]               list your drafts
   agentplan open <id>                   open a draft in the browser
@@ -170,6 +177,167 @@ async function uploadProviderFile(
   }
 }
 
+type LocalBundleFile = {
+  absolutePath: string;
+  path: string;
+  contentType: string;
+  sizeBytes: number;
+};
+
+const IGNORED_DIRECTORIES = new Set([".git", ".svn", ".hg", "node_modules"]);
+const IGNORED_FILES = new Set([".DS_Store", "Thumbs.db"]);
+
+async function inspectBundleDirectory(
+  root: string,
+  explicitEntry?: string,
+): Promise<{ entryPath: string; files: LocalBundleFile[] }> {
+  const files: LocalBundleFile[] = [];
+  const unsupported: string[] = [];
+
+  async function walk(directory: string, relativeDirectory: string): Promise<void> {
+    let entries;
+    try {
+      entries = await readdir(directory, { withFileTypes: true });
+    } catch {
+      fail(`Cannot read directory ${directory}.`, 2);
+    }
+    entries.sort((left, right) => left.name.localeCompare(right.name));
+    for (const entry of entries) {
+      if (
+        (entry.isDirectory() && IGNORED_DIRECTORIES.has(entry.name)) ||
+        (entry.isFile() && IGNORED_FILES.has(entry.name))
+      ) {
+        continue;
+      }
+      const relativePath = relativeDirectory ? `${relativeDirectory}/${entry.name}` : entry.name;
+      const absolutePath = path.join(directory, entry.name);
+      if (entry.isSymbolicLink()) {
+        fail(`Symlinks are not supported in bundles: ${relativePath}`, 2);
+      }
+      if (entry.isDirectory()) {
+        await walk(absolutePath, relativePath);
+        continue;
+      }
+      if (!entry.isFile()) {
+        unsupported.push(relativePath);
+        continue;
+      }
+      const spec = uploadSpecFor(relativePath, null);
+      if (!spec) {
+        unsupported.push(relativePath);
+        continue;
+      }
+      const metadata = await stat(absolutePath);
+      files.push({
+        absolutePath,
+        path: normalizeBundlePath(relativePath),
+        contentType: spec.contentType,
+        sizeBytes: metadata.size,
+      });
+    }
+  }
+
+  await walk(root, "");
+  if (unsupported.length) {
+    fail(`Unsupported bundle files: ${unsupported.join(", ")}`, 2);
+  }
+  let entryPath: string;
+  try {
+    entryPath = selectBundleEntry(
+      files.map((file) => file.path),
+      explicitEntry,
+    );
+    const manifest = validateBundleManifest({
+      entryPath,
+      files: files.map((file) => ({
+        path: file.path,
+        contentType: file.contentType,
+        sizeBytes: file.sizeBytes,
+      })),
+    });
+    entryPath = manifest.entryPath;
+  } catch (error) {
+    fail(error instanceof Error ? error.message : "Invalid HTML bundle.", 2);
+  }
+  return { entryPath, files };
+}
+
+async function mapWithConcurrency<T>(
+  values: readonly T[],
+  concurrency: number,
+  task: (value: T) => Promise<void>,
+): Promise<void> {
+  let cursor = 0;
+  await Promise.all(
+    Array.from({ length: Math.min(concurrency, values.length) }, async () => {
+      while (true) {
+        const index = cursor++;
+        if (index >= values.length) return;
+        await task(values[index]!);
+      }
+    }),
+  );
+}
+
+async function uploadBundle(
+  api: AgentPlanApi,
+  directory: string,
+  flags: UploadFlags,
+  visibility: "public" | "private" | "password",
+  password?: string,
+): Promise<{ draft: ApiDraft; version?: unknown }> {
+  const local = await inspectBundleDirectory(directory, flags.entry);
+  const created = await api.createBundle({
+    entryPath: local.entryPath,
+    files: local.files.map((file) => ({
+      path: file.path,
+      contentType: file.contentType,
+      sizeBytes: file.sizeBytes,
+    })),
+    target: flags.draft
+      ? { type: "draft", draftId: flags.draft }
+      : {
+          type: "new",
+          title: flags.title,
+          visibility,
+          password,
+        },
+  });
+  const localByPath = new Map(local.files.map((file) => [file.path, file]));
+  try {
+    for (let offset = 0; offset < created.files.length; offset += 10) {
+      const batch = created.files.slice(offset, offset + 10);
+      const issued = await api.issueBundleTargets(
+        created.intent.id,
+        batch.map((file) => file.id),
+      );
+      await mapWithConcurrency(issued.targets, 4, async (target) => {
+        if (target.uploaded) return;
+        if (!target.upload) {
+          throw new ApiError(409, "UPLOAD_TARGET_MISSING", "No upload target was returned.");
+        }
+        const remote = batch.find((file) => file.id === target.fileId);
+        const file = remote ? localByPath.get(remote.path) : undefined;
+        if (!remote || !file) {
+          throw new ApiError(400, "BUNDLE_FILE_MISSING", "The local bundle changed during upload.");
+        }
+        try {
+          await uploadProviderFile(file.absolutePath, file.sizeBytes, target.upload);
+        } catch (error) {
+          const status = await api.getBundle(created.intent.id).catch(() => null);
+          if (!status?.files.find((candidate) => candidate.id === target.fileId)?.uploaded) {
+            throw error;
+          }
+        }
+      });
+    }
+    return await api.completeBundle(created.intent.id);
+  } catch (error) {
+    await api.cancelUploadIntent(created.intent.id).catch(() => undefined);
+    throw error;
+  }
+}
+
 async function readPasswordFromStdin(): Promise<string> {
   if (process.stdin.isTTY) {
     fail("--password-stdin requires a pipe or redirected stdin.", 2);
@@ -210,9 +378,27 @@ async function commandUpload(file: string | undefined, flags: UploadFlags): Prom
   }
   const password = flags["password-stdin"] ? await readPasswordFromStdin() : flags.password;
 
-  const { filename, sizeBytes, spec } = await inspectUploadFile(file);
   const api = await resolveApi();
+  const fileMetadata = await lstat(file).catch(() => null);
+  if (!fileMetadata) fail(`Cannot read ${file}.`, 2);
+  if (fileMetadata.isSymbolicLink()) fail("Upload targets cannot be symlinks.", 2);
 
+  const visibility: "public" | "private" | "password" = flags.public
+    ? "public"
+    : password !== undefined
+      ? "password"
+      : "private";
+
+  if (fileMetadata.isDirectory()) {
+    const result = await uploadBundle(api, file, flags, visibility, password);
+    if (flags.json) process.stdout.write(`${JSON.stringify(result)}\n`);
+    else printDraft(result.draft, flags.draft ? "Uploaded new version of" : "Uploaded");
+    return;
+  }
+  if (!fileMetadata.isFile()) fail("Upload target must be a regular file or directory.", 2);
+  if (flags.entry) fail("--entry can only be used with a directory upload.", 2);
+
+  const { filename, sizeBytes, spec } = await inspectUploadFile(file);
   if (spec.kind === "html" && flags.draft) {
     const bytes = new Uint8Array(await readFile(file));
     const result = await api.addVersion(flags.draft, bytes, filename);
@@ -224,13 +410,6 @@ async function commandUpload(file: string | undefined, flags: UploadFlags): Prom
     return;
   }
 
-  const visibility: "public" | "private" | "password" = flags.public
-    ? "public"
-    : password !== undefined
-      ? "password"
-      : flags.private
-        ? "private"
-        : "private";
   let result: { draft: ApiDraft; version?: unknown };
   if (spec.kind === "html") {
     const bytes = new Uint8Array(await readFile(file));
@@ -317,6 +496,7 @@ async function main(): Promise<void> {
       "password-stdin": { type: "boolean" },
       title: { type: "string" },
       draft: { type: "string" },
+      entry: { type: "string" },
       json: { type: "boolean" },
       help: { type: "boolean", short: "h" },
     },

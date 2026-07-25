@@ -4,6 +4,20 @@ HTML, raster image, and MP4 uploads are always enabled. HTML uses the existing
 bounded multipart endpoints; images and video use direct-to-storage uploads.
 Run the checks below before relying on media uploads in production.
 
+With one provider's credentials and `STORAGE_DRIVER` loaded, run its live
+immutable-write/range/copy/delete contract with:
+
+```bash
+LIVE_STORAGE_CONTRACT=1 npx vitest run tests/integration/live-storage-contract.test.ts
+```
+
+HTML plan folders use immutable direct-to-final upload capabilities for one HTML
+entry plus up to 50 raster-image/MP4 assets (125 MiB total). The CLI accepts a
+directory, and the dashboard provides an “HTML plan folder” picker. Relative
+element and CSS image URLs resolve through a version-pinned route, so a republish
+cannot mix files from two versions. Arbitrary `fetch()` from the opaque-origin
+sandbox is intentionally unsupported.
+
 ## Provider acceptance checks
 
 For Vercel Blob, verify private signed PUTs under both configured credential
@@ -29,7 +43,15 @@ Range request and matching `If-Range`, playback resumes, and no mixed-version
 bytes appear. Also confirm seeking, 206, 416, mismatched `If-Range` returning a
 full 200, visibility changes, and moderation removal.
 
-Every view is deliberately proxied to preserve immediate revocation. Account
+Every standalone and bundled-media view is deliberately proxied to preserve
+immediate revocation. The direct signed-read experiment failed because Chromium
+reused an expired redirected target after a seek instead of returning to the
+AgentPlan resolver. Account
 for one private storage read, Function execution for response duration, and
 proxied data transfer per view. Single-PUT uploads are v1 behavior; multipart
 and resumable uploads are deferred.
+
+Bundle upload keys are never served until completion commits their manifest.
+Failed and cancelled uploads are deleted immediately and again after the
+60-minute upload capability expires, preventing a late PUT from resurrecting an
+untracked object.

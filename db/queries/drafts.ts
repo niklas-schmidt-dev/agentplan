@@ -1,11 +1,13 @@
 import { and, desc, eq, gte, ilike, isNull, sql } from "drizzle-orm";
 import { getDb } from "@/db/client";
 import {
+  draftVersionAssets,
   draftVersions,
   drafts,
   users,
   type Draft,
   type DraftVersion,
+  type DraftVersionAsset,
   type Visibility,
 } from "@/db/schema";
 
@@ -38,7 +40,10 @@ export async function getDraftForOwner(draftId: string, ownerId: string): Promis
 }
 
 export type DraftListItem = Draft & {
-  currentVersion: Pick<DraftVersion, "versionNumber" | "sizeBytes" | "contentSha256"> | null;
+  currentVersion: Pick<
+    DraftVersion,
+    "versionNumber" | "sizeBytes" | "contentSha256" | "isBundle"
+  > | null;
 };
 
 export async function listDraftsForOwner(
@@ -62,8 +67,9 @@ export async function listDraftsForOwner(
     .select({
       draft: drafts,
       versionNumber: draftVersions.versionNumber,
-      sizeBytes: draftVersions.sizeBytes,
+      sizeBytes: sql<number>`coalesce(${draftVersions.totalSizeBytes}, ${draftVersions.sizeBytes})::int`,
       contentSha256: draftVersions.contentSha256,
+      isBundle: draftVersions.isBundle,
     })
     .from(drafts)
     .innerJoin(users, eq(drafts.ownerId, users.id))
@@ -81,6 +87,7 @@ export async function listDraftsForOwner(
             versionNumber: row.versionNumber,
             sizeBytes: row.sizeBytes ?? 0,
             contentSha256: row.contentSha256 ?? "",
+            isBundle: row.isBundle ?? false,
           },
   }));
 }
@@ -103,4 +110,21 @@ export async function listVersions(draftId: string): Promise<DraftVersion[]> {
     .from(draftVersions)
     .where(eq(draftVersions.draftId, draftId))
     .orderBy(desc(draftVersions.versionNumber));
+}
+
+export async function getVersionAsset(
+  versionId: string,
+  logicalPath: string,
+): Promise<DraftVersionAsset | null> {
+  const [asset] = await getDb()
+    .select()
+    .from(draftVersionAssets)
+    .where(
+      and(
+        eq(draftVersionAssets.versionId, versionId),
+        eq(draftVersionAssets.logicalPath, logicalPath),
+      ),
+    )
+    .limit(1);
+  return asset ?? null;
 }

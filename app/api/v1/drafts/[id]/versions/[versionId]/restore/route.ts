@@ -1,6 +1,7 @@
 import { getDraftForOwner, getVersionById } from "@/db/queries/drafts";
 import { authenticateApiRequest, isFailure } from "@/lib/api/auth";
 import {
+  apiError,
   insufficientScope,
   internalError,
   limitErrorResponse,
@@ -8,8 +9,9 @@ import {
   unauthorized,
 } from "@/lib/api/responses";
 import { serializeDraft, serializeVersion } from "@/lib/api/serialize";
-import { DraftNotFoundError, restoreVersion } from "@/lib/drafts/service";
+import { DraftNotFoundError, DraftWriteConflictError, restoreVersion } from "@/lib/drafts/service";
 import { consumeUploadRateLimit } from "@/lib/limits/enforce";
+import { restoreBundleVersion } from "@/lib/uploads/bundles";
 import { uuidSchema } from "@/lib/validation/api";
 
 export const runtime = "nodejs";
@@ -34,13 +36,22 @@ export async function POST(req: Request, { params }: Params): Promise<Response> 
 
   try {
     await consumeUploadRateLimit(actor.userId);
-    const { version: restored, draft: updatedDraft } = await restoreVersion({
-      draft,
-      version,
-      source: actor.kind === "token" ? "api_token" : "browser",
-      tokenId: actor.kind === "token" ? actor.tokenId : undefined,
-      rateLimitConsumed: true,
-    });
+    const source = actor.kind === "token" ? "api_token" : "browser";
+    const { version: restored, draft: updatedDraft } = version.isBundle
+      ? await restoreBundleVersion({
+          ownerId: actor.userId,
+          draftId: draft.id,
+          sourceVersionId: version.id,
+          source,
+          tokenId: actor.kind === "token" ? actor.tokenId : undefined,
+        })
+      : await restoreVersion({
+          draft,
+          version,
+          source,
+          tokenId: actor.kind === "token" ? actor.tokenId : undefined,
+          rateLimitConsumed: true,
+        });
     return Response.json(
       {
         draft: serializeDraft(updatedDraft, restored.versionNumber),
@@ -50,6 +61,9 @@ export async function POST(req: Request, { params }: Params): Promise<Response> 
     );
   } catch (error) {
     if (error instanceof DraftNotFoundError) return notFound();
+    if (error instanceof DraftWriteConflictError) {
+      return apiError(409, "DRAFT_WRITE_CONFLICT", error.message);
+    }
     const limited = limitErrorResponse(error);
     if (limited) return limited;
     console.error("POST restore failed", error);

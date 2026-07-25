@@ -23,6 +23,13 @@ export class FsStorage implements ObjectStorage {
     await writeFile(filePath, body);
   }
 
+  async putIfAbsent(key: string, body: Uint8Array, contentType: string): Promise<void> {
+    void contentType;
+    const filePath = this.pathFor(key);
+    await mkdir(path.dirname(filePath), { recursive: true });
+    await writeFile(filePath, body, { flag: "wx" });
+  }
+
   async get(key: string): Promise<Uint8Array | null> {
     try {
       return new Uint8Array(await readFile(this.pathFor(key)));

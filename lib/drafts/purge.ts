@@ -2,6 +2,7 @@ import { and, asc, eq, isNotNull, lte, sql } from "drizzle-orm";
 import { getDb } from "@/db/client";
 import { draftVersions, drafts, rateLimits } from "@/db/schema";
 import { recordAuditEvent } from "@/lib/audit/events";
+import { listVersionStorageKeys } from "@/lib/drafts/version-storage";
 import { deletedDraftRetentionDays } from "@/lib/limits/plans";
 import { getStorage } from "@/lib/storage";
 
@@ -40,17 +41,21 @@ export async function purgeDeletedDrafts(batchSize = 100): Promise<PurgeResult> 
 
     for (const draft of stale) {
       const versions = await db
-        .select({ storageKey: draftVersions.storageKey })
+        .select({ id: draftVersions.id })
         .from(draftVersions)
         .where(eq(draftVersions.draftId, draft.id));
+      const storageKeys = await listVersionStorageKeys(
+        versions.map((version) => version.id),
+        db,
+      );
 
       let objectsFailed = false;
-      for (const version of versions) {
+      for (const storageKey of storageKeys) {
         try {
-          await getStorage().delete(version.storageKey);
+          await getStorage().delete(storageKey);
         } catch (error) {
           objectsFailed = true;
-          console.error("Failed to delete object during purge", version.storageKey, error);
+          console.error("Failed to delete object during purge", storageKey, error);
         }
       }
       if (objectsFailed) {
@@ -69,7 +74,7 @@ export async function purgeDeletedDrafts(batchSize = 100): Promise<PurgeResult> 
         type: "draft.purged",
         userId: draft.ownerId,
         draftId: draft.id,
-        metadata: { slug: draft.slug, versions: versions.length },
+        metadata: { slug: draft.slug, versions: versions.length, objects: storageKeys.length },
       }).catch((error) =>
         console.error("Failed to record draft purge audit event", draft.id, error),
       );
@@ -81,5 +86,7 @@ export async function purgeDeletedDrafts(batchSize = 100): Promise<PurgeResult> 
 
 /** Sweeps rate-limit windows the per-key opportunistic cleanup missed. */
 export async function purgeExpiredRateLimits(): Promise<void> {
-  await getDb().delete(rateLimits).where(lte(rateLimits.expiresAt, sql`now()`));
+  await getDb()
+    .delete(rateLimits)
+    .where(lte(rateLimits.expiresAt, sql`now()`));
 }

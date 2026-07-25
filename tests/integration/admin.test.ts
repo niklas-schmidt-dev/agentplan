@@ -210,6 +210,9 @@ describe.skipIf(!hasDb)("admin tools (integration)", () => {
         ownerId,
         slug: draft.slug,
         kind: "html",
+        bundle: false,
+        totalSizeBytes: html.byteLength,
+        assetCount: 0,
         cancelledUploadIntents: 0,
       },
     });

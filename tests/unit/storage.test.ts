@@ -67,6 +67,21 @@ describe("VercelBlobStorage", () => {
     );
   });
 
+  it("creates bundle objects without overwrite permission", async () => {
+    blobMocks.put.mockResolvedValue({ pathname: "drafts/user/draft/version/assets/id.png" });
+    const storage = new VercelBlobStorage();
+    await storage.putIfAbsent(
+      "drafts/user/draft/version/assets/id.png",
+      new Uint8Array([1]),
+      "image/png",
+    );
+    expect(blobMocks.put).toHaveBeenCalledWith(
+      "drafts/user/draft/version/assets/id.png",
+      expect.any(Buffer),
+      expect.objectContaining({ access: "private", allowOverwrite: false }),
+    );
+  });
+
   it("reads and deletes private blobs by storage key", async () => {
     const bytes = new TextEncoder().encode("<p>stored</p>");
     blobMocks.get.mockResolvedValue({
@@ -149,6 +164,15 @@ describe("FsStorage media contract", () => {
       const storage = new FsStorage(root);
       const bytes = new TextEncoder().encode("0123456789");
       await storage.put("staging/file.mp4", bytes, "video/mp4");
+      await storage.putIfAbsent("drafts/immutable.mp4", bytes, "video/mp4");
+      await expect(
+        storage.putIfAbsent(
+          "drafts/immutable.mp4",
+          new TextEncoder().encode("different"),
+          "video/mp4",
+        ),
+      ).rejects.toMatchObject({ code: "EEXIST" });
+      await expect(storage.get("drafts/immutable.mp4")).resolves.toEqual(bytes);
       await expect(storage.head("staging/file.mp4")).resolves.toMatchObject({ size: 10 });
       await storage.copy("staging/file.mp4", "drafts/final.mp4", "video/mp4");
       await expect(

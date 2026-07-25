@@ -17,8 +17,11 @@ export type ApiVersion = {
   version: number;
   contentSha256: string;
   sizeBytes: number;
+  totalSizeBytes: number;
   contentType: string;
   originalFilename: string | null;
+  entryPath: string | null;
+  isBundle: boolean;
   source: string;
   createdAt: string;
 };
@@ -155,6 +158,60 @@ export class AgentPlanApi {
   cancelUploadIntent(intentId: string): Promise<void> {
     return this.request(`/api/v1/uploads/intents/${encodeURIComponent(intentId)}`, {
       method: "DELETE",
+    });
+  }
+
+  createBundle(input: {
+    entryPath: string;
+    files: Array<{ path: string; contentType: string; sizeBytes: number }>;
+    target:
+      | {
+          type: "new";
+          title?: string;
+          visibility: "public" | "private" | "password";
+          password?: string;
+        }
+      | { type: "draft"; draftId: string };
+  }): Promise<{
+    intent: { id: string; status: string; expiresAt: string };
+    files: Array<{ id: string; path: string; contentType: string; sizeBytes: number }>;
+  }> {
+    return this.request("/api/v1/uploads/bundles", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(input),
+    });
+  }
+
+  issueBundleTargets(
+    intentId: string,
+    fileIds: string[],
+  ): Promise<{
+    targets: Array<{
+      fileId: string;
+      uploaded: boolean;
+      upload?: { method: string; url: string; headers: Record<string, string> };
+    }>;
+  }> {
+    return this.request(`/api/v1/uploads/bundles/${encodeURIComponent(intentId)}/targets`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ fileIds }),
+    });
+  }
+
+  getBundle(intentId: string): Promise<{
+    intent: { id: string; status: string; failureCode?: string | null };
+    files: Array<{ id: string; path: string; uploaded?: boolean }>;
+    draft?: ApiDraft;
+    version?: ApiVersion;
+  }> {
+    return this.request(`/api/v1/uploads/bundles/${encodeURIComponent(intentId)}`);
+  }
+
+  completeBundle(intentId: string): Promise<{ draft: ApiDraft; version: ApiVersion }> {
+    return this.request(`/api/v1/uploads/bundles/${encodeURIComponent(intentId)}/complete`, {
+      method: "POST",
     });
   }
 }
