@@ -33,20 +33,8 @@ if grep -Eiq 'ap_live_[A-Za-z0-9_-]+' "$input_file"; then
   exit 1
 fi
 
-if grep -Eiq '(file://|/Users/|/home/|[A-Za-z]:\\)' "$input_file"; then
-  echo "FAIL: the HTML contains an absolute local filesystem reference." >&2
-  exit 1
-fi
-
-if grep -Eiq '(src|poster)[[:space:]]*=[[:space:]]*["'\''](\.{0,2}/|[^"'\'':#]+/)' "$input_file"; then
-  echo "FAIL: relative media found; upload the containing directory as an HTML plan bundle." >&2
-  exit 1
-fi
-
-if grep -Eiq 'url\([[:space:]]*["'\'']?(\.{0,2}/|[^)"'\'':#]+/)' "$input_file"; then
-  echo "FAIL: relative CSS media found; upload the containing directory as an HTML plan bundle." >&2
-  exit 1
-fi
+script_directory="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+node "$script_directory/check-html-references.mjs" "$input_file"
 
 if grep -Eq '__[A-Z][A-Z0-9_]+__' "$input_file"; then
   echo "FAIL: the HTML contains an unresolved template placeholder." >&2
@@ -58,7 +46,7 @@ if ! grep -Eiq '<!doctype[[:space:]]+html' "$input_file"; then
   exit 1
 fi
 
-if ! grep -Eiq '<meta[^>]+charset=' "$input_file"; then
+if ! grep -Eiq '<meta[^>]*[[:space:]]charset[[:space:]]*=' "$input_file"; then
   echo "FAIL: the HTML is missing a charset declaration." >&2
   exit 1
 fi

@@ -57,7 +57,7 @@ types.
    or newer. Do not flatten a requested media bundle into a different
    deliverable.
 
-3. If no binary is installed, use `npx agentplan-cli@latest` only when its help
+3. If no binary is installed, use `npx agentplan-cli@0.2.0` only when its help
    exposes the same directory options. Do not install a global package unless
    the user asks.
 4. Authentication resolves in this order:

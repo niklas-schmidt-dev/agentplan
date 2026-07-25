@@ -123,7 +123,7 @@ Install AgentPlan's skill for Codex, Claude Code, Cursor, and other compatible
 agents through [skills.sh](https://skills.sh):
 
 ```bash
-npx skills add niklas-schmidt-dev/agentplan --skill agentplan
+npx skills@1.5.20 add niklas-schmidt-dev/agentplan --skill agentplan
 ```
 
 The skill teaches agents when to upload a single file or an HTML plan folder,
@@ -135,14 +135,14 @@ no special prompt template is required.
 Run it without installing:
 
 ```bash
-npx agentplan-cli login
-npx agentplan-cli upload ./plan.html
+npx agentplan-cli@0.2.0 login
+npx agentplan-cli@0.2.0 upload ./plan.html
 ```
 
 Or install the command globally:
 
 ```bash
-npm install --global agentplan-cli
+npm install --global agentplan-cli@0.2.0
 agentplan login
 ```
 
@@ -153,8 +153,7 @@ agentplan login                          # store an API token (created in the da
 agentplan logout
 agentplan upload ./plan.html             # new draft, private by default
 agentplan upload ./plan.html --public
-agentplan upload ./plan.html --password hunter2   # password-protected (visible in process args)
-agentplan upload ./plan.html --password-stdin     # safer: read password from piped/redirected stdin
+agentplan upload ./plan.html --password-stdin     # password-protected; reads without exposing process args
 agentplan upload ./plan.html --title "Launch plan"
 agentplan upload ./plan.html --draft <id>   # add a new version to an existing draft
 agentplan upload ./plan.html --json      # machine-readable output on stdout
