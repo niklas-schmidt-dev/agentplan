@@ -1,10 +1,12 @@
 import { randomUUID } from "node:crypto";
 import { and, desc, eq, gt, inArray, isNull, max, sql } from "drizzle-orm";
 import { uploadSpecFor, type UploadKind, type UploadSpec } from "@agentplan/upload-contract";
-import { getDb } from "@/db/client";
+import { getDb, type Database } from "@/db/client";
 import {
   draftVersions,
   drafts,
+  uploadIntentFiles,
+  uploadIntentReclaims,
   uploadIntents,
   users,
   type UploadIntent,
@@ -13,6 +15,7 @@ import {
 import { recordAuditEvent } from "@/lib/audit/events";
 import { hashPassword } from "@/lib/drafts/password";
 import { generateSlug } from "@/lib/drafts/slug";
+import { listVersionStorageKeys } from "@/lib/drafts/version-storage";
 import {
   DraftNotFoundError,
   PasswordRequiredError,
@@ -50,6 +53,9 @@ export type UploadIntentResult = {
 };
 
 function specForIntent(intent: UploadIntent): UploadSpec {
+  if (intent.mode !== "single") {
+    throw new MediaValidationError("INVALID_FILE_TYPE", "Expected a single-file upload intent.");
+  }
   const spec = uploadSpecFor(intent.originalFilename, intent.contentType);
   if (!spec || spec.kind !== intent.kind || spec.kind === "html") {
     throw new MediaValidationError("INVALID_FILE_TYPE", "Upload metadata is invalid.");
@@ -121,6 +127,20 @@ export async function createUploadIntent(input: {
       if (draft.kind !== spec.kind) {
         throw new UploadIntentConflictError("A draft cannot change file kind.");
       }
+      const [pending] = await tx
+        .select({ id: uploadIntents.id })
+        .from(uploadIntents)
+        .where(
+          and(
+            eq(uploadIntents.targetDraftId, draft.id),
+            eq(uploadIntents.status, "pending"),
+            gt(uploadIntents.expiresAt, sql`now()`),
+          ),
+        )
+        .limit(1);
+      if (pending) {
+        throw new UploadIntentConflictError("Another upload is already pending for this draft.");
+      }
     }
 
     await lockAndAssertUploadQuota(
@@ -182,7 +202,7 @@ export async function createUploadIntent(input: {
     });
     return { intent, upload };
   } catch (error) {
-    await failIntent(intent, "UPLOAD_TARGET_FAILED");
+    await failUploadIntent(intent, "UPLOAD_TARGET_FAILED");
     throw error;
   }
 }
@@ -223,6 +243,7 @@ async function completedResult(intent: UploadIntent): Promise<UploadIntentResult
 }
 
 async function ensureFinalCopy(intent: UploadIntent): Promise<void> {
+  if (!intent.stagingKey) throw new UploadIntentConflictError("Upload staging key is missing.");
   if (await getStorage().head(intent.finalKey)) return;
   try {
     await getStorage().copy(intent.stagingKey, intent.finalKey, intent.contentType);
@@ -231,23 +252,55 @@ async function ensureFinalCopy(intent: UploadIntent): Promise<void> {
   }
 }
 
-async function failIntent(intent: UploadIntent, failureCode: string): Promise<void> {
-  await getDb().transaction(async (tx) => {
-    await tx
+export async function cleanupKeysForIntent(
+  intent: UploadIntent,
+  db: Pick<Database, "select"> = getDb(),
+): Promise<Array<{ storageKey: string; notBefore?: Date }>> {
+  if (intent.mode === "single") {
+    return [
+      ...(intent.stagingKey
+        ? [{ storageKey: intent.stagingKey, notBefore: intent.expiresAt }]
+        : []),
+      { storageKey: intent.finalKey },
+    ];
+  }
+  const files = await db
+    .select({ finalKey: uploadIntentFiles.finalKey })
+    .from(uploadIntentFiles)
+    .where(eq(uploadIntentFiles.intentId, intent.id));
+  return [intent.finalKey, ...files.map((file) => file.finalKey)].map((storageKey) => ({
+    storageKey,
+    // Uploaded bundle keys were exposed by a capability. Restore destinations
+    // are server-created and can be removed immediately.
+    ...(intent.mode === "bundle" ? { notBefore: intent.expiresAt } : {}),
+  }));
+}
+
+export async function failUploadIntent(intent: UploadIntent, failureCode: string): Promise<void> {
+  const cleanup = await cleanupKeysForIntent(intent);
+  const transitioned = await getDb().transaction(async (tx) => {
+    const [failed] = await tx
       .update(uploadIntents)
       .set({ status: "failed", failureCode: failureCode.slice(0, 50), updatedAt: sql`now()` })
-      .where(and(eq(uploadIntents.id, intent.id), eq(uploadIntents.status, "pending")));
-    await queueStorageDeletion(
-      {
-        storageKey: intent.stagingKey,
-        reason: "upload_intent_failed",
-        notBefore: intent.expiresAt,
-      },
-      tx,
-    );
-    await queueStorageDeletion({ storageKey: intent.finalKey, reason: "upload_intent_failed" }, tx);
+      .where(and(eq(uploadIntents.id, intent.id), eq(uploadIntents.status, "pending")))
+      .returning({ id: uploadIntents.id });
+    if (!failed) return false;
+    await tx.delete(uploadIntentReclaims).where(eq(uploadIntentReclaims.intentId, intent.id));
+    for (const key of cleanup) {
+      await queueStorageDeletion(
+        {
+          storageKey: key.storageKey,
+          reason: "upload_intent_failed",
+          notBefore: key.notBefore,
+        },
+        tx,
+      );
+    }
+    return true;
   });
-  await Promise.all([tryDeleteStorageKey(intent.stagingKey), tryDeleteStorageKey(intent.finalKey)]);
+  if (transitioned) {
+    await Promise.all(cleanup.map((key) => tryDeleteStorageKey(key.storageKey)));
+  }
 }
 
 export async function completeUploadIntent(
@@ -264,16 +317,21 @@ export async function completeUploadIntent(
     )
     .limit(1);
   if (!intent) throw new UploadIntentNotFoundError();
+  if (intent.mode !== "single") {
+    throw new UploadIntentConflictError("Use the bundle completion endpoint for this upload.");
+  }
   if (intent.status === "completed") return completedResult(intent);
   if (intent.failureCode === "EXPIRED") throw new UploadIntentExpiredError();
   if (intent.status !== "pending") throw new UploadIntentConflictError();
   if (intent.expiresAt.getTime() <= Date.now()) {
-    await failIntent(intent, "EXPIRED");
+    await failUploadIntent(intent, "EXPIRED");
     throw new UploadIntentExpiredError();
   }
 
   try {
-    const staging = await getStorage().head(intent.stagingKey);
+    if (!intent.stagingKey) throw new UploadIntentConflictError("Upload staging key is missing.");
+    const stagingKey = intent.stagingKey;
+    const staging = await getStorage().head(stagingKey);
     if (!staging) throw new MediaValidationError("SIZE_MISMATCH", "Uploaded object is missing.");
     if (staging.size !== intent.expectedBytes) {
       throw new MediaValidationError("SIZE_MISMATCH", "Stored file size does not match.");
@@ -369,6 +427,7 @@ export async function completeUploadIntent(
           contentType: intent.contentType,
           originalFilename: intent.originalFilename,
           sizeBytes: validation.sizeBytes,
+          totalSizeBytes: validation.sizeBytes,
           source: intent.source,
           createdByTokenId: intent.createdByTokenId,
         })
@@ -387,16 +446,17 @@ export async function completeUploadIntent(
         keepVersions === null
           ? []
           : await tx
-              .select({ id: draftVersions.id, storageKey: draftVersions.storageKey })
+              .select({ id: draftVersions.id })
               .from(draftVersions)
               .where(eq(draftVersions.draftId, draft.id))
               .orderBy(desc(draftVersions.versionNumber))
               .offset(keepVersions);
-      for (const stale of pruned) {
-        await queueStorageDeletion(
-          { storageKey: stale.storageKey, reason: "version_retention" },
-          tx,
-        );
+      const prunedKeys = await listVersionStorageKeys(
+        pruned.map((stale) => stale.id),
+        tx,
+      );
+      for (const storageKey of prunedKeys) {
+        await queueStorageDeletion({ storageKey, reason: "version_retention" }, tx);
       }
       if (pruned.length) {
         await tx.delete(draftVersions).where(
@@ -408,7 +468,7 @@ export async function completeUploadIntent(
       }
       await queueStorageDeletion(
         {
-          storageKey: intent.stagingKey,
+          storageKey: stagingKey,
           reason: "upload_staging",
           notBefore: intent.expiresAt,
         },
@@ -426,12 +486,13 @@ export async function completeUploadIntent(
         draft: updatedDraft,
         version,
         pruned,
+        prunedKeys,
       };
     });
 
     if (result.state === "already_completed") return completedResult(result.completed);
-    await tryDeleteStorageKey(intent.stagingKey);
-    for (const stale of result.pruned) await tryDeleteStorageKey(stale.storageKey);
+    await tryDeleteStorageKey(stagingKey);
+    for (const storageKey of result.prunedKeys) await tryDeleteStorageKey(storageKey);
     await recordAuditEvent({
       type: intent.targetDraftId ? "draft.version_created" : "draft.created",
       userId: intent.ownerId,
@@ -450,7 +511,10 @@ export async function completeUploadIntent(
       error instanceof DraftNotFoundError ||
       error instanceof UploadIntentExpiredError
     ) {
-      await failIntent(intent, error instanceof MediaValidationError ? error.code : error.name);
+      await failUploadIntent(
+        intent,
+        error instanceof MediaValidationError ? error.code : error.name,
+      );
     }
     throw error;
   }
@@ -461,18 +525,30 @@ export async function cancelUploadIntent(ownerId: string, intentId: string): Pro
   if (!intent) throw new UploadIntentNotFoundError();
   if (intent.status === "completed") throw new UploadIntentConflictError();
   if (intent.status !== "pending") return;
-  await getDb().transaction(async (tx) => {
-    await tx
+  const cleanup = await cleanupKeysForIntent(intent);
+  const transitioned = await getDb().transaction(async (tx) => {
+    const [cancelled] = await tx
       .update(uploadIntents)
       .set({ status: "cancelled", updatedAt: sql`now()` })
-      .where(and(eq(uploadIntents.id, intent.id), eq(uploadIntents.status, "pending")));
-    await queueStorageDeletion(
-      { storageKey: intent.stagingKey, reason: "upload_cancelled", notBefore: intent.expiresAt },
-      tx,
-    );
-    await queueStorageDeletion({ storageKey: intent.finalKey, reason: "upload_cancelled" }, tx);
+      .where(and(eq(uploadIntents.id, intent.id), eq(uploadIntents.status, "pending")))
+      .returning({ id: uploadIntents.id });
+    if (!cancelled) return false;
+    await tx.delete(uploadIntentReclaims).where(eq(uploadIntentReclaims.intentId, intent.id));
+    for (const key of cleanup) {
+      await queueStorageDeletion(
+        {
+          storageKey: key.storageKey,
+          reason: "upload_cancelled",
+          notBefore: key.notBefore,
+        },
+        tx,
+      );
+    }
+    return true;
   });
-  await Promise.all([tryDeleteStorageKey(intent.stagingKey), tryDeleteStorageKey(intent.finalKey)]);
+  if (transitioned) {
+    await Promise.all(cleanup.map((key) => tryDeleteStorageKey(key.storageKey)));
+  }
 }
 
 export async function purgeExpiredUploadIntents(): Promise<number> {
@@ -481,7 +557,7 @@ export async function purgeExpiredUploadIntents(): Promise<number> {
     .from(uploadIntents)
     .where(and(eq(uploadIntents.status, "pending"), sql`${uploadIntents.expiresAt} <= now()`))
     .limit(100);
-  for (const intent of expired) await failIntent(intent, "EXPIRED");
+  for (const intent of expired) await failUploadIntent(intent, "EXPIRED");
   await getDb()
     .delete(uploadIntents)
     .where(

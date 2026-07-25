@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import { headers } from "next/headers";
 import { notFound } from "next/navigation";
 import { DraftPasswordForm } from "@/components/draft-password-form";
-import { getDraftBySlug } from "@/db/queries/drafts";
+import { getDraftBySlug, getVersionById } from "@/db/queries/drafts";
 import { readAccessCookie } from "@/lib/drafts/access";
 import { getOptionalUser } from "@/lib/auth/session";
 import { resolveDraftView, type ViewResolution } from "@/lib/drafts/view-access";
@@ -84,11 +84,22 @@ export default async function DraftViewerPage({
       </main>
     );
   }
+  let htmlUrl = contentUrl;
+  if (resolution.draft.currentVersionId) {
+    const version = await getVersionById(resolution.draft.id, resolution.draft.currentVersionId);
+    if (version?.isBundle) {
+      const entryPath = (version.entryPath ?? "index.html")
+        .split("/")
+        .map(encodeURIComponent)
+        .join("/");
+      htmlUrl = `/p/${encodeURIComponent(slug)}/v/${version.id}/${entryPath}`;
+    }
+  }
   return (
     // Hostile-HTML boundary: never add allow-same-origin or any
     // allow-top-navigation variant to this sandbox.
     <iframe
-      src={contentUrl}
+      src={htmlUrl}
       sandbox="allow-scripts allow-forms allow-modals allow-popups"
       title={resolution.draft.title}
       className="fixed inset-0 h-dvh w-screen border-0 bg-white"

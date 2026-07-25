@@ -159,7 +159,7 @@ export default async function AdminContentPage({
                     {draft.currentVersion
                       ? `v${draft.currentVersion.versionNumber} · ${formatBytes(
                           draft.currentVersion.sizeBytes,
-                        )} · ${draft.currentVersion.contentType}`
+                        )} · ${draft.currentVersion.isBundle ? `HTML + media · ${draft.currentVersion.assetCount} assets` : draft.currentVersion.contentType}`
                       : "no version"}
                     {" · "}
                     {draft.ownerEmail}

@@ -38,7 +38,7 @@ export function validateDirectUploadMetadata(input: {
   return spec;
 }
 
-async function consumeStream(
+export async function consumeStoredObject(
   object: StorageOpenResult,
   expectedBytes: number,
   keepBytes: boolean,
@@ -94,7 +94,7 @@ export async function validateStoredMedia(input: {
   expectedBytes: number;
   spec: UploadSpec;
 }): Promise<{ contentSha256: string; sizeBytes: number }> {
-  const consumed = await consumeStream(
+  const consumed = await consumeStoredObject(
     input.object,
     input.expectedBytes,
     input.spec.kind === "image",

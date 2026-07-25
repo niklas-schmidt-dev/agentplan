@@ -77,20 +77,43 @@ function responseHeaders(
   return headers;
 }
 
+function bundleEntryLocation(
+  slug: string,
+  version: NonNullable<Awaited<ReturnType<typeof getVersionById>>>,
+): string {
+  const entryPath = version.entryPath ?? "index.html";
+  const encodedPath = entryPath.split("/").map(encodeURIComponent).join("/");
+  return `/p/${encodeURIComponent(slug)}/v/${version.id}/${encodedPath}`;
+}
+
 type Params = { params: Promise<{ slug: string }> };
 
 export async function HEAD(req: Request, { params }: Params): Promise<Response> {
-  const resolved = await resolveContent(req, (await params).slug);
+  const { slug } = await params;
+  const resolved = await resolveContent(req, slug);
   if (resolved instanceof Response) return resolved;
+  if (resolved.version.isBundle) {
+    const headers = commonHeaders(HTML_SANDBOX);
+    headers.set("Location", bundleEntryLocation(slug, resolved.version));
+    headers.set("Cache-Control", "private, no-store");
+    return new Response(null, { status: 307, headers });
+  }
   const headers = responseHeaders(resolved.draft, resolved.version);
   headers.set("Content-Length", String(resolved.version.sizeBytes));
   return new Response(null, { status: 200, headers });
 }
 
 export async function GET(req: Request, { params }: Params): Promise<Response> {
-  const resolved = await resolveContent(req, (await params).slug);
+  const { slug } = await params;
+  const resolved = await resolveContent(req, slug);
   if (resolved instanceof Response) return resolved;
   const { draft, version } = resolved;
+  if (version.isBundle) {
+    const headers = commonHeaders(HTML_SANDBOX);
+    headers.set("Location", bundleEntryLocation(slug, version));
+    headers.set("Cache-Control", "private, no-store");
+    return new Response(null, { status: 307, headers });
+  }
   const headers = responseHeaders(draft, version);
   const etag = headers.get("ETag")!;
   if (etagMatches(req.headers.get("if-none-match"), etag)) {

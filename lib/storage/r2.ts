@@ -41,6 +41,18 @@ export class R2Storage implements ObjectStorage {
     );
   }
 
+  async putIfAbsent(key: string, body: Uint8Array, contentType: string): Promise<void> {
+    await this.getClient().send(
+      new PutObjectCommand({
+        Bucket: this.bucket,
+        Key: key,
+        Body: body,
+        ContentType: contentType,
+        IfNoneMatch: "*",
+      }),
+    );
+  }
+
   async get(key: string): Promise<Uint8Array | null> {
     try {
       const result = await this.getClient().send(

@@ -5,6 +5,7 @@ export type UploadFlags = {
   "password-stdin"?: boolean;
   title?: string;
   draft?: string;
+  entry?: string;
   json?: boolean;
 };
 
@@ -12,9 +13,9 @@ export type UploadFlags = {
 export function hasNewDraftOnlyOptions(flags: UploadFlags): boolean {
   return Boolean(
     flags.public ||
-      flags.private ||
-      flags.password !== undefined ||
-      flags["password-stdin"] ||
-      flags.title !== undefined,
+    flags.private ||
+    flags.password !== undefined ||
+    flags["password-stdin"] ||
+    flags.title !== undefined,
   );
 }

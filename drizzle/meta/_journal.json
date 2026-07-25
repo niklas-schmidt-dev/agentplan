@@ -64,6 +64,13 @@
       "when": 1784941311835,
       "tag": "0008_thin_microbe",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1784986516416,
+      "tag": "0009_thankful_longshot",
+      "breakpoints": true
     }
   ]
 }

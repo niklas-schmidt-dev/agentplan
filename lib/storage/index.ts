@@ -21,6 +21,8 @@ export type StorageOpenResult = StorageObjectMetadata & {
 
 export interface ObjectStorage {
   put(key: string, body: Uint8Array, contentType: string): Promise<void>;
+  /** Creates an immutable object and fails when the key already exists. */
+  putIfAbsent(key: string, body: Uint8Array, contentType: string): Promise<void>;
   /** Returns null when the object does not exist. */
   get(key: string): Promise<Uint8Array | null>;
   createUploadTarget(input: {
@@ -88,4 +90,14 @@ export function storageKeyFor(
 
 export function stagingKeyFor(ownerId: string, intentId: string, extension: string): string {
   return `staging/${ownerId}/${intentId}${extension}`;
+}
+
+export function bundleAssetKeyFor(
+  ownerId: string,
+  draftId: string,
+  versionId: string,
+  assetId: string,
+  extension: string,
+): string {
+  return `drafts/${ownerId}/${draftId}/${versionId}/assets/${assetId}${extension}`;
 }

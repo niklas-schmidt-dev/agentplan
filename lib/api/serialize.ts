@@ -21,8 +21,11 @@ export function serializeVersion(version: DraftVersion) {
     version: version.versionNumber,
     contentSha256: version.contentSha256,
     sizeBytes: version.sizeBytes,
+    totalSizeBytes: version.totalSizeBytes ?? version.sizeBytes,
     contentType: version.contentType,
     originalFilename: version.originalFilename,
+    entryPath: version.entryPath,
+    isBundle: version.isBundle,
     source: version.source,
     createdAt: version.createdAt.toISOString(),
   };

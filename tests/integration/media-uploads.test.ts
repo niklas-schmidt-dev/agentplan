@@ -36,6 +36,9 @@ describe.skipIf(!hasDb)("media upload lifecycle (integration)", () => {
         name: "Media Owner",
         email: `${ownerId}@example.test`,
         emailVerified: true,
+        // Keep this seed valid even when test ordering leaves the database
+        // empty; the signup-policy trigger rewrites later inserts to user.
+        role: "admin",
       });
     png = new Uint8Array(
       await sharp({
@@ -73,7 +76,7 @@ describe.skipIf(!hasDb)("media upload lifecycle (integration)", () => {
       visibility: "private",
     });
     expect((await getUserStorageUsage(ownerId)).reservedBytes).toBe(png.byteLength);
-    await getStorage().put(created.intent.stagingKey, png, "image/png");
+    await getStorage().put(created.intent.stagingKey!, png, "image/png");
 
     const first = await completeUploadIntent(created.intent.id, ownerId);
     const second = await completeUploadIntent(created.intent.id, ownerId);
@@ -135,7 +138,7 @@ describe.skipIf(!hasDb)("media upload lifecycle (integration)", () => {
       target: { type: "new", title: "Clip", visibility: "public" },
       baseUrl: "http://localhost:3000",
     });
-    await getStorage().put(created.intent.stagingKey, mp4, "video/mp4");
+    await getStorage().put(created.intent.stagingKey!, mp4, "video/mp4");
     const completed = await completeUploadIntent(created.intent.id, ownerId);
     const params = { params: Promise.resolve({ slug: completed.draft.slug }) };
     const url = `http://localhost:3000/p/${completed.draft.slug}/content`;

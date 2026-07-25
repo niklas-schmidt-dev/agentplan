@@ -4,6 +4,9 @@ import { getDb } from "@/db/client";
 import {
   draftVersions,
   drafts,
+  uploadIntentFiles,
+  uploadIntentReclaims,
+  uploadIntents,
   users,
   type Draft,
   type DraftVersion,
@@ -16,6 +19,7 @@ import { consumeUploadRateLimit, lockAndAssertUploadQuota } from "@/lib/limits/e
 import { retentionForKind } from "@/lib/limits/plans";
 import { getStorage, storageKeyFor } from "@/lib/storage";
 import { queueStorageDeletion, tryDeleteStorageKey } from "@/lib/storage/cleanup";
+import { listVersionStorageKeys } from "@/lib/drafts/version-storage";
 
 export type UploadSource = "browser" | "api_token";
 
@@ -40,6 +44,13 @@ export class PasswordVisibilityConflictError extends Error {
   constructor() {
     super("A password cannot be combined with public or private visibility");
     this.name = "PasswordVisibilityConflictError";
+  }
+}
+
+export class DraftWriteConflictError extends Error {
+  constructor() {
+    super("Another upload is already pending for this draft");
+    this.name = "DraftWriteConflictError";
   }
 }
 
@@ -145,6 +156,7 @@ export async function createDraftWithFirstVersion(params: {
               contentType: "text/html",
               originalFilename: params.originalFilename ?? "upload.html",
               sizeBytes: params.bytes.byteLength,
+              totalSizeBytes: params.bytes.byteLength,
               source: params.source,
               createdByTokenId: params.tokenId ?? null,
             })
@@ -218,6 +230,18 @@ export async function addVersionToDraft(params: {
         .where(eq(users.id, params.draft.ownerId))
         .for("update");
       if (!owner || owner.blockedAt) throw new DraftNotFoundError();
+      const [pending] = await tx
+        .select({ id: uploadIntents.id })
+        .from(uploadIntents)
+        .where(
+          and(
+            eq(uploadIntents.targetDraftId, params.draft.id),
+            eq(uploadIntents.status, "pending"),
+            sql`${uploadIntents.expiresAt} > now()`,
+          ),
+        )
+        .limit(1);
+      if (pending) throw new DraftWriteConflictError();
       const limits = await lockAndAssertUploadQuota(
         {
           userId: params.draft.ownerId,
@@ -254,6 +278,7 @@ export async function addVersionToDraft(params: {
           contentType: "text/html",
           originalFilename: params.originalFilename ?? "upload.html",
           sizeBytes: params.bytes.byteLength,
+          totalSizeBytes: params.bytes.byteLength,
           source: params.source,
           createdByTokenId: params.tokenId ?? null,
         })
@@ -272,21 +297,28 @@ export async function addVersionToDraft(params: {
       // Version retention: a stable link must keep accepting uploads, so old
       // versions are pruned instead of hard-failing at a cap. The newest
       // (current) version is always inside the keep window.
-      let pruned: { id: string; storageKey: string }[] = [];
+      let pruned: { id: string }[] = [];
+      let prunedKeys: string[] = [];
       const keepVersions = retentionForKind(limits, params.draft.kind);
       if (keepVersions !== null) {
         pruned = await tx
-          .select({ id: draftVersions.id, storageKey: draftVersions.storageKey })
+          .select({ id: draftVersions.id })
           .from(draftVersions)
-          .where(eq(draftVersions.draftId, params.draft.id))
+          .where(
+            and(
+              eq(draftVersions.draftId, params.draft.id),
+              params.draft.kind === "html" ? eq(draftVersions.isBundle, false) : undefined,
+            ),
+          )
           .orderBy(desc(draftVersions.versionNumber))
           .offset(keepVersions);
         if (pruned.length) {
-          for (const stale of pruned) {
-            await queueStorageDeletion(
-              { storageKey: stale.storageKey, reason: "version_retention" },
-              tx,
-            );
+          prunedKeys = await listVersionStorageKeys(
+            pruned.map((stale) => stale.id),
+            tx,
+          );
+          for (const storageKey of prunedKeys) {
+            await queueStorageDeletion({ storageKey, reason: "version_retention" }, tx);
           }
           await tx.delete(draftVersions).where(
             inArray(
@@ -296,11 +328,11 @@ export async function addVersionToDraft(params: {
           );
         }
       }
-      return { version, draft: updatedDraft, pruned };
+      return { version, draft: updatedDraft, pruned, prunedKeys };
     });
 
-    for (const stale of result.pruned) {
-      await tryDeleteStorageKey(stale.storageKey);
+    for (const storageKey of result.prunedKeys) {
+      await tryDeleteStorageKey(storageKey);
     }
 
     await recordAuditEvent({
@@ -352,6 +384,18 @@ export async function restoreVersion(params: {
         .where(eq(users.id, params.draft.ownerId))
         .for("update");
       if (!owner || owner.blockedAt) throw new DraftNotFoundError();
+      const [pending] = await tx
+        .select({ id: uploadIntents.id })
+        .from(uploadIntents)
+        .where(
+          and(
+            eq(uploadIntents.targetDraftId, params.draft.id),
+            eq(uploadIntents.status, "pending"),
+            sql`${uploadIntents.expiresAt} > now()`,
+          ),
+        )
+        .limit(1);
+      if (pending) throw new DraftWriteConflictError();
       const limits = await lockAndAssertUploadQuota(
         {
           userId: params.draft.ownerId,
@@ -384,6 +428,7 @@ export async function restoreVersion(params: {
           contentType: params.version.contentType,
           originalFilename: params.version.originalFilename ?? "restored.html",
           sizeBytes: params.version.sizeBytes,
+          totalSizeBytes: params.version.totalSizeBytes ?? params.version.sizeBytes,
           source: params.source,
           createdByTokenId: params.tokenId ?? null,
         })
@@ -401,16 +446,22 @@ export async function restoreVersion(params: {
         keepVersions === null
           ? []
           : await tx
-              .select({ id: draftVersions.id, storageKey: draftVersions.storageKey })
+              .select({ id: draftVersions.id })
               .from(draftVersions)
-              .where(eq(draftVersions.draftId, params.draft.id))
+              .where(
+                and(
+                  eq(draftVersions.draftId, params.draft.id),
+                  locked.kind === "html" ? eq(draftVersions.isBundle, false) : undefined,
+                ),
+              )
               .orderBy(desc(draftVersions.versionNumber))
               .offset(keepVersions);
-      for (const stale of pruned) {
-        await queueStorageDeletion(
-          { storageKey: stale.storageKey, reason: "version_retention" },
-          tx,
-        );
+      const prunedKeys = await listVersionStorageKeys(
+        pruned.map((stale) => stale.id),
+        tx,
+      );
+      for (const storageKey of prunedKeys) {
+        await queueStorageDeletion({ storageKey, reason: "version_retention" }, tx);
       }
       if (pruned.length) {
         await tx.delete(draftVersions).where(
@@ -420,9 +471,9 @@ export async function restoreVersion(params: {
           ),
         );
       }
-      return { version, draft, pruned };
+      return { version, draft, pruned, prunedKeys };
     });
-    for (const stale of result.pruned) await tryDeleteStorageKey(stale.storageKey);
+    for (const storageKey of result.prunedKeys) await tryDeleteStorageKey(storageKey);
     await recordAuditEvent({
       type: "draft.version_restored",
       userId: params.draft.ownerId,
@@ -589,7 +640,7 @@ export async function softDeleteDraft(
   actor: { userId: string; tokenId?: string },
 ): Promise<void> {
   const db = getDb();
-  await db.transaction(async (tx) => {
+  const cleanup = await db.transaction(async (tx) => {
     await tx.execute(
       sql`select pg_advisory_xact_lock(hashtext('agentplan:user-storage'), hashtext(${draft.ownerId}))`,
     );
@@ -605,7 +656,45 @@ export async function softDeleteDraft(
       .where(and(eq(drafts.id, draft.id), isNull(drafts.deletedAt)))
       .returning({ id: drafts.id });
     if (!updated) throw new DraftNotFoundError();
+    const pending = await tx
+      .update(uploadIntents)
+      .set({ status: "cancelled", failureCode: "DRAFT_DELETED", updatedAt: sql`now()` })
+      .where(and(eq(uploadIntents.targetDraftId, draft.id), eq(uploadIntents.status, "pending")))
+      .returning();
+    const keys: Array<{ storageKey: string; notBefore?: Date }> = [];
+    for (const intent of pending) {
+      if (intent.mode === "single") {
+        if (intent.stagingKey) {
+          keys.push({ storageKey: intent.stagingKey, notBefore: intent.expiresAt });
+        }
+        keys.push({ storageKey: intent.finalKey });
+      } else {
+        const files = await tx
+          .select({ finalKey: uploadIntentFiles.finalKey })
+          .from(uploadIntentFiles)
+          .where(eq(uploadIntentFiles.intentId, intent.id));
+        keys.push(
+          ...[intent.finalKey, ...files.map((file) => file.finalKey)].map((storageKey) => ({
+            storageKey,
+            ...(intent.mode === "bundle" ? { notBefore: intent.expiresAt } : {}),
+          })),
+        );
+      }
+      await tx.delete(uploadIntentReclaims).where(eq(uploadIntentReclaims.intentId, intent.id));
+    }
+    for (const key of keys) {
+      await queueStorageDeletion(
+        {
+          storageKey: key.storageKey,
+          reason: "draft_deleted",
+          notBefore: key.notBefore,
+        },
+        tx,
+      );
+    }
+    return keys;
   });
+  await Promise.all(cleanup.map((key) => tryDeleteStorageKey(key.storageKey)));
   await recordAuditEvent({
     type: "draft.deleted",
     userId: actor.userId,

@@ -37,18 +37,27 @@ describe("iframe sandbox is never weakened", () => {
 });
 
 describe("content route ships hardened headers", () => {
-  const source = readCode("app/p/[slug]/content/route.ts");
+  const sources = [
+    readCode("app/p/[slug]/content/route.ts"),
+    readCode("app/p/[slug]/v/[versionId]/[...logicalPath]/route.ts"),
+  ];
 
   it("sets a CSP sandbox even on direct navigation", () => {
-    expect(source).toContain("sandbox allow-scripts allow-forms allow-modals allow-popups");
-    expect(source).not.toContain("allow-same-origin");
+    for (const source of sources) {
+      expect(source).toContain("sandbox allow-scripts allow-forms allow-modals allow-popups");
+      expect(source).not.toContain("allow-same-origin");
+    }
   });
 
   it("sends nosniff, no-referrer, and visibility-aware caching", () => {
-    expect(source).toContain('"X-Content-Type-Options": "nosniff"');
-    expect(source).toContain('"Referrer-Policy": "no-referrer"');
-    expect(source).toContain('"Strict-Transport-Security": "max-age=63072000; includeSubDomains"');
-    expect(source).toContain("private, no-store");
+    for (const source of sources) {
+      expect(source).toContain('"X-Content-Type-Options": "nosniff"');
+      expect(source).toContain('"Referrer-Policy": "no-referrer"');
+      expect(source).toContain(
+        '"Strict-Transport-Security": "max-age=63072000; includeSubDomains"',
+      );
+      expect(source).toContain("private, no-store");
+    }
   });
 });
 
@@ -77,6 +86,7 @@ describe("application-wide response hardening", () => {
     expect(proxySource).not.toContain("script-src 'self' 'unsafe-inline'");
     expect(proxySource).toContain("frame-ancestors 'none'");
     expect(proxySource).toContain("media-src 'self'");
+    expect(proxySource).toContain("^\\/p\\/[^/]+\\/v\\/[^/]+\\/.+");
     expect(readCode("app/layout.tsx")).toContain('export const dynamic = "force-dynamic"');
   });
 });
