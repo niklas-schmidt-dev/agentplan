@@ -1,18 +1,18 @@
+import { extensionForFilename, uploadSpecFor } from "@agentplan/upload-contract";
+
 export const MAX_UPLOAD_BYTES = 2 * 1024 * 1024; // 2 MiB
 
 export type UploadErrorCode = "INVALID_FILE_TYPE" | "FILE_TOO_LARGE" | "EMPTY_FILE";
 
 export type UploadValidationError = { code: UploadErrorCode; message: string };
 
-const HTML_EXTENSIONS = [".html", ".htm"];
-
 export function validateUpload(input: {
   filename: string;
   contentType: string | null;
   sizeBytes: number;
 }): UploadValidationError | null {
-  const lower = input.filename.toLowerCase();
-  if (!HTML_EXTENSIONS.some((ext) => lower.endsWith(ext))) {
+  const spec = uploadSpecFor(input.filename, input.contentType);
+  if (spec?.kind !== "html") {
     return { code: "INVALID_FILE_TYPE", message: "Only HTML files are supported." };
   }
   // Browsers infer text/html from the extension; an explicitly different type is rejected.
@@ -37,7 +37,8 @@ export function validateUpload(input: {
 /** Display title derived from a filename — never used as a storage key. */
 export function titleFromFilename(filename: string): string {
   const base = filename.replace(/\\/g, "/").split("/").pop() ?? "";
-  const withoutExt = base.replace(/\.(html?|HTML?)$/, "");
+  const extension = extensionForFilename(base);
+  const withoutExt = extension ? base.slice(0, -extension.length) : base;
   const cleaned = withoutExt.replace(/[-_]+/g, " ").replace(/\s+/g, " ").trim();
   if (!cleaned) return "Untitled plan";
   return (cleaned.charAt(0).toUpperCase() + cleaned.slice(1)).slice(0, 200);

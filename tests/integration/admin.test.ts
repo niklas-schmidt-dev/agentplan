@@ -206,7 +206,12 @@ describe.skipIf(!hasDb)("admin tools (integration)", () => {
     expect(event).toEqual({
       userId: actorId,
       draftId: draft.id,
-      metadata: { ownerId, slug: draft.slug },
+      metadata: {
+        ownerId,
+        slug: draft.slug,
+        kind: "html",
+        cancelledUploadIntents: 0,
+      },
     });
     expect((await listDraftsForAdmin({ ownerId })).drafts).not.toContainEqual(
       expect.objectContaining({ id: draft.id }),
@@ -269,13 +274,11 @@ describe.skipIf(!hasDb)("admin tools (integration)", () => {
     const putStarted = new Promise<void>((resolve) => {
       markPutStarted = resolve;
     });
-    const putSpy = vi
-      .spyOn(storage, "put")
-      .mockImplementation(async (key, body, contentType) => {
-        markPutStarted();
-        await putGate;
-        await realPut(key, body, contentType);
-      });
+    const putSpy = vi.spyOn(storage, "put").mockImplementation(async (key, body, contentType) => {
+      markPutStarted();
+      await putGate;
+      await realPut(key, body, contentType);
+    });
 
     try {
       const upload = createDraftWithFirstVersion({

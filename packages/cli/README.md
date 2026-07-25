@@ -1,7 +1,7 @@
 # agentplan-cli
 
 The official command-line client for [AgentPlan](https://agentplan.app). Publish
-agent-generated HTML files behind stable, private-by-default links.
+HTML, raster images, and MP4 files behind stable, private-by-default links.
 
 ## Quick start
 
@@ -27,7 +27,7 @@ agentplan login
 ```text
 agentplan login
 agentplan logout
-agentplan upload <file.html>
+agentplan upload <file>
   --public | --private
   --password <password>
   --password-stdin
@@ -49,3 +49,8 @@ must use HTTPS, except for localhost development.
 
 The CLI requires Node.js 20 or newer. Source code and issue tracking are
 available in the [AgentPlan repository](https://github.com/niklas-schmidt-dev/agentplan).
+
+HTML uses the bounded AgentPlan multipart API. Images and video are streamed
+directly to the configured private object store and then finalized by AgentPlan;
+the provider request never carries the AgentPlan bearer token and never follows
+redirects.

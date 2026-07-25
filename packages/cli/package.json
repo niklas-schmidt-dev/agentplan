@@ -1,7 +1,7 @@
 {
   "name": "agentplan-cli",
   "version": "0.1.1",
-  "description": "CLI for agentplan.app — publish agent-generated HTML behind stable links.",
+  "description": "CLI for agentplan.app — publish HTML, images, and video behind stable links.",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -26,6 +26,9 @@
     "build": "tsc -p tsconfig.json",
     "prepack": "npm run build",
     "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@agentplan/upload-contract": "*"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",

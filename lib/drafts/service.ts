@@ -13,7 +13,9 @@ import { recordAuditEvent } from "@/lib/audit/events";
 import { hashPassword } from "@/lib/drafts/password";
 import { generateSlug } from "@/lib/drafts/slug";
 import { consumeUploadRateLimit, lockAndAssertUploadQuota } from "@/lib/limits/enforce";
+import { retentionForKind } from "@/lib/limits/plans";
 import { getStorage, storageKeyFor } from "@/lib/storage";
+import { queueStorageDeletion, tryDeleteStorageKey } from "@/lib/storage/cleanup";
 
 export type UploadSource = "browser" | "api_token";
 
@@ -67,6 +69,7 @@ export async function createDraftWithFirstVersion(params: {
   title: string;
   visibility: Visibility;
   bytes: Uint8Array;
+  originalFilename?: string;
   source: UploadSource;
   tokenId?: string;
   /** Set only when the authenticated route reserved the rate budget before reading the body. */
@@ -140,6 +143,7 @@ export async function createDraftWithFirstVersion(params: {
               storageKey,
               contentSha256,
               contentType: "text/html",
+              originalFilename: params.originalFilename ?? "upload.html",
               sizeBytes: params.bytes.byteLength,
               source: params.source,
               createdByTokenId: params.tokenId ?? null,
@@ -187,6 +191,7 @@ export async function createDraftWithFirstVersion(params: {
 export async function addVersionToDraft(params: {
   draft: Draft;
   bytes: Uint8Array;
+  originalFilename?: string;
   source: UploadSource;
   tokenId?: string;
   auditType?: "draft.version_created" | "draft.version_restored";
@@ -247,6 +252,7 @@ export async function addVersionToDraft(params: {
           storageKey,
           contentSha256,
           contentType: "text/html",
+          originalFilename: params.originalFilename ?? "upload.html",
           sizeBytes: params.bytes.byteLength,
           source: params.source,
           createdByTokenId: params.tokenId ?? null,
@@ -267,14 +273,21 @@ export async function addVersionToDraft(params: {
       // versions are pruned instead of hard-failing at a cap. The newest
       // (current) version is always inside the keep window.
       let pruned: { id: string; storageKey: string }[] = [];
-      if (limits.keepVersionsPerDraft !== null) {
+      const keepVersions = retentionForKind(limits, params.draft.kind);
+      if (keepVersions !== null) {
         pruned = await tx
           .select({ id: draftVersions.id, storageKey: draftVersions.storageKey })
           .from(draftVersions)
           .where(eq(draftVersions.draftId, params.draft.id))
           .orderBy(desc(draftVersions.versionNumber))
-          .offset(limits.keepVersionsPerDraft);
+          .offset(keepVersions);
         if (pruned.length) {
+          for (const stale of pruned) {
+            await queueStorageDeletion(
+              { storageKey: stale.storageKey, reason: "version_retention" },
+              tx,
+            );
+          }
           await tx.delete(draftVersions).where(
             inArray(
               draftVersions.id,
@@ -286,14 +299,8 @@ export async function addVersionToDraft(params: {
       return { version, draft: updatedDraft, pruned };
     });
 
-    // Best-effort: the rows are already gone, so a failed delete strands one
-    // small object with no reference. Logged and accepted — not worth a retry queue.
     for (const stale of result.pruned) {
-      await getStorage()
-        .delete(stale.storageKey)
-        .catch((error) =>
-          console.error("Failed to delete pruned version object", stale.storageKey, error),
-        );
+      await tryDeleteStorageKey(stale.storageKey);
     }
 
     await recordAuditEvent({
@@ -321,7 +328,7 @@ export async function addVersionToDraft(params: {
   }
 }
 
-/** Restore = new immutable version containing the restored bytes. */
+/** Restore = a provider-side copy into a new immutable version key. */
 export async function restoreVersion(params: {
   draft: Draft;
   version: DraftVersion;
@@ -330,17 +337,114 @@ export async function restoreVersion(params: {
   rateLimitConsumed?: boolean;
 }): Promise<{ version: DraftVersion; draft: Draft }> {
   if (!params.rateLimitConsumed) await consumeUploadRateLimit(params.draft.ownerId);
-  const bytes = await getStorage().get(params.version.storageKey);
-  if (!bytes) throw new Error("Stored content for this version is missing");
-  return addVersionToDraft({
-    draft: params.draft,
-    bytes,
-    source: params.source,
-    tokenId: params.tokenId,
-    rateLimitConsumed: true,
-    auditType: "draft.version_restored",
-    auditMetadata: { restoredFromVersion: params.version.versionNumber },
-  });
+  const versionId = randomUUID();
+  const extension = params.version.storageKey.split(".").pop() || "html";
+  const storageKey = storageKeyFor(params.draft.ownerId, params.draft.id, versionId, extension);
+  let copied = false;
+  try {
+    const result = await getDb().transaction(async (tx) => {
+      await tx.execute(
+        sql`select pg_advisory_xact_lock(hashtext('agentplan:user-storage'), hashtext(${params.draft.ownerId}))`,
+      );
+      const [owner] = await tx
+        .select({ id: users.id, blockedAt: users.blockedAt })
+        .from(users)
+        .where(eq(users.id, params.draft.ownerId))
+        .for("update");
+      if (!owner || owner.blockedAt) throw new DraftNotFoundError();
+      const limits = await lockAndAssertUploadQuota(
+        {
+          userId: params.draft.ownerId,
+          sizeBytes: params.version.sizeBytes,
+          newDraft: false,
+        },
+        tx,
+      );
+      const [locked] = await tx
+        .select({ id: drafts.id, kind: drafts.kind, deletedAt: drafts.deletedAt })
+        .from(drafts)
+        .where(eq(drafts.id, params.draft.id))
+        .for("update");
+      if (!locked || locked.deletedAt) throw new DraftNotFoundError();
+
+      await getStorage().copy(params.version.storageKey, storageKey, params.version.contentType);
+      copied = true;
+      const [numberRow] = await tx
+        .select({ value: max(draftVersions.versionNumber) })
+        .from(draftVersions)
+        .where(eq(draftVersions.draftId, params.draft.id));
+      const [version] = await tx
+        .insert(draftVersions)
+        .values({
+          id: versionId,
+          draftId: params.draft.id,
+          versionNumber: (numberRow?.value ?? 0) + 1,
+          storageKey,
+          contentSha256: params.version.contentSha256,
+          contentType: params.version.contentType,
+          originalFilename: params.version.originalFilename ?? "restored.html",
+          sizeBytes: params.version.sizeBytes,
+          source: params.source,
+          createdByTokenId: params.tokenId ?? null,
+        })
+        .returning();
+      if (!version) throw new Error("Version insert returned no row");
+      const [draft] = await tx
+        .update(drafts)
+        .set({ currentVersionId: version.id, updatedAt: sql`now()` })
+        .where(eq(drafts.id, params.draft.id))
+        .returning();
+      if (!draft) throw new DraftNotFoundError();
+
+      const keepVersions = retentionForKind(limits, locked.kind);
+      const pruned =
+        keepVersions === null
+          ? []
+          : await tx
+              .select({ id: draftVersions.id, storageKey: draftVersions.storageKey })
+              .from(draftVersions)
+              .where(eq(draftVersions.draftId, params.draft.id))
+              .orderBy(desc(draftVersions.versionNumber))
+              .offset(keepVersions);
+      for (const stale of pruned) {
+        await queueStorageDeletion(
+          { storageKey: stale.storageKey, reason: "version_retention" },
+          tx,
+        );
+      }
+      if (pruned.length) {
+        await tx.delete(draftVersions).where(
+          inArray(
+            draftVersions.id,
+            pruned.map((row) => row.id),
+          ),
+        );
+      }
+      return { version, draft, pruned };
+    });
+    for (const stale of result.pruned) await tryDeleteStorageKey(stale.storageKey);
+    await recordAuditEvent({
+      type: "draft.version_restored",
+      userId: params.draft.ownerId,
+      draftId: params.draft.id,
+      tokenId: params.tokenId,
+      metadata: {
+        restoredFromVersion: params.version.versionNumber,
+        versionNumber: result.version.versionNumber,
+        sizeBytes: result.version.sizeBytes,
+      },
+    });
+    return { version: result.version, draft: result.draft };
+  } catch (error) {
+    if (copied) {
+      await getStorage()
+        .delete(storageKey)
+        .catch((cleanupError) =>
+          console.error("Failed to clean up restored object", storageKey, cleanupError),
+        );
+    }
+    throw error;
+  }
 }
 
 export async function setDraftVisibility(

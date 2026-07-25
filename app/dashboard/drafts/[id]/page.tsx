@@ -1,5 +1,9 @@
 import { notFound } from "next/navigation";
-import { deleteDraftAction, renameDraftAction, restoreVersionAction } from "@/app/dashboard/actions";
+import {
+  deleteDraftAction,
+  renameDraftAction,
+  restoreVersionAction,
+} from "@/app/dashboard/actions";
 import { CopyButton } from "@/components/dashboard/copy-button";
 import { DangerButton } from "@/components/dashboard/danger-button";
 import { DashboardHeader } from "@/components/dashboard/header";
@@ -10,14 +14,11 @@ import { isAdmin, requireUser } from "@/lib/auth/session";
 import { formatBytes, formatRelativeTime, shortHash } from "@/lib/format";
 import { draftUrl } from "@/lib/urls";
 import { uuidSchema } from "@/lib/validation/api";
+import { enabledUploadKinds } from "@/lib/validation/media";
 
 export const metadata = { title: "Draft" };
 
-export default async function DraftDetailPage({
-  params,
-}: {
-  params: Promise<{ id: string }>;
-}) {
+export default async function DraftDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const user = await requireUser();
   const rawId = uuidSchema.safeParse((await params).id);
   if (!rawId.success) notFound();
@@ -25,6 +26,7 @@ export default async function DraftDetailPage({
   if (!draft) notFound();
   const versions = await listVersions(draft.id);
   const url = draftUrl(draft.slug);
+  const versionUploadsEnabled = draft.kind === "html" || enabledUploadKinds().has(draft.kind);
 
   return (
     <main className="mx-auto flex min-h-dvh w-full max-w-5xl flex-col gap-6 px-6 py-8">
@@ -74,17 +76,43 @@ export default async function DraftDetailPage({
         </div>
       </section>
 
-      <section aria-label="Current version preview" className="rounded-md border border-edge">
-        <iframe
-          src={`/p/${encodeURIComponent(draft.slug)}/content`}
-          sandbox="allow-scripts allow-forms allow-modals allow-popups"
-          title={`Preview of ${draft.title}`}
-          className="h-96 w-full rounded-md border-0 bg-white"
-        />
+      <section
+        aria-label="Current version preview"
+        className="flex min-h-96 items-center justify-center rounded-md border border-edge bg-surface"
+      >
+        {draft.kind === "html" ? (
+          <iframe
+            src={`/p/${encodeURIComponent(draft.slug)}/content`}
+            sandbox="allow-scripts allow-forms allow-modals allow-popups"
+            title={`Preview of ${draft.title}`}
+            className="h-96 w-full rounded-md border-0 bg-white"
+          />
+        ) : draft.kind === "image" ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={`/p/${encodeURIComponent(draft.slug)}/content`}
+            alt={draft.title}
+            className="max-h-[32rem] max-w-full object-contain"
+          />
+        ) : (
+          <video
+            src={`/p/${encodeURIComponent(draft.slug)}/content`}
+            controls
+            playsInline
+            preload="metadata"
+            className="max-h-[32rem] max-w-full"
+          />
+        )}
       </section>
 
       <section className="flex flex-col gap-3">
-        <NewVersionForm draftId={draft.id} />
+        {versionUploadsEnabled ? (
+          <NewVersionForm draftId={draft.id} kind={draft.kind} />
+        ) : (
+          <p className="font-mono text-xs text-ink-faint">
+            New {draft.kind} versions are currently disabled. Existing versions remain viewable.
+          </p>
+        )}
 
         <h2 className="font-mono text-sm text-ink-muted">version history</h2>
         <ul className="flex flex-col divide-y divide-edge rounded-md border border-edge bg-surface">
@@ -99,6 +127,9 @@ export default async function DraftDetailPage({
               </span>
               <span className="text-ink-faint">{formatRelativeTime(version.createdAt)}</span>
               <span className="text-ink-faint">{formatBytes(version.sizeBytes)}</span>
+              <span className="text-ink-faint">
+                {version.originalFilename ?? version.contentType}
+              </span>
               <code title={version.contentSha256} className="text-ink-muted">
                 sha256:{shortHash(version.contentSha256)}
               </code>

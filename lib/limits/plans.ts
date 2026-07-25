@@ -1,10 +1,10 @@
-import type { UserPlan } from "@/db/schema";
+import type { DraftKind, UserPlan } from "@/db/schema";
 
 /** null = no limit. All values apply to the "free" plan; "unlimited" gets null everywhere. */
 export type EffectiveLimits = {
   maxDrafts: number | null;
   /** Retention, not a hard cap: uploading past it prunes the oldest versions. */
-  keepVersionsPerDraft: number | null;
+  keepVersionsByKind: Record<DraftKind, number | null>;
   maxStorageBytes: number | null;
   maxActiveTokens: number | null;
   uploadsPerTenMinutes: number | null;
@@ -23,7 +23,7 @@ export function limitsForPlan(plan: UserPlan): EffectiveLimits {
   if (plan === "unlimited") {
     return {
       maxDrafts: null,
-      keepVersionsPerDraft: null,
+      keepVersionsByKind: { html: null, image: null, video: null },
       maxStorageBytes: null,
       maxActiveTokens: null,
       uploadsPerTenMinutes: null,
@@ -32,12 +32,20 @@ export function limitsForPlan(plan: UserPlan): EffectiveLimits {
   }
   return {
     maxDrafts: envInt("AP_MAX_DRAFTS_PER_USER", 100),
-    keepVersionsPerDraft: envInt("AP_MAX_VERSIONS_PER_DRAFT", 100),
-    maxStorageBytes: envInt("AP_MAX_STORAGE_BYTES_PER_USER", 250 * 1024 * 1024),
+    keepVersionsByKind: {
+      html: envInt("AP_MAX_VERSIONS_PER_DRAFT", 100),
+      image: envInt("AP_MAX_IMAGE_VERSIONS_PER_DRAFT", 20),
+      video: envInt("AP_MAX_VIDEO_VERSIONS_PER_DRAFT", 2),
+    },
+    maxStorageBytes: envInt("AP_MAX_STORAGE_BYTES_PER_USER", 300 * 1024 * 1024),
     maxActiveTokens: envInt("AP_MAX_ACTIVE_TOKENS_PER_USER", 25),
     uploadsPerTenMinutes: envInt("AP_UPLOADS_PER_10MIN", 30),
     uploadsPerDay: envInt("AP_UPLOADS_PER_DAY", 300),
   };
+}
+
+export function retentionForKind(limits: EffectiveLimits, kind: DraftKind): number | null {
+  return limits.keepVersionsByKind[kind];
 }
 
 /** Attempts per draft+IP per 15 minutes; guards viewers, so it is plan-independent. */

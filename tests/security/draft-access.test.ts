@@ -69,6 +69,7 @@ function draft(overrides: Partial<Draft>): Draft {
     ownerId: "owner-1",
     slug: "s",
     title: "t",
+    kind: "html",
     visibility: "private",
     passwordHash: null,
     currentVersionId: "v1",
@@ -81,7 +82,9 @@ function draft(overrides: Partial<Draft>): Draft {
 
 describe("resolveDraftView", () => {
   it("not-found for missing draft or no current version", () => {
-    expect(resolveDraftView(null, { userId: null, accessToken: undefined }).state).toBe("not-found");
+    expect(resolveDraftView(null, { userId: null, accessToken: undefined }).state).toBe(
+      "not-found",
+    );
     expect(
       resolveDraftView(draft({ currentVersionId: null }), { userId: null, accessToken: undefined })
         .state,
@@ -91,7 +94,8 @@ describe("resolveDraftView", () => {
   it("owner is always granted regardless of visibility", () => {
     for (const visibility of ["private", "public", "password"] as const) {
       expect(
-        resolveDraftView(draft({ visibility }), { userId: "owner-1", accessToken: undefined }).state,
+        resolveDraftView(draft({ visibility }), { userId: "owner-1", accessToken: undefined })
+          .state,
       ).toBe("granted");
     }
   });
@@ -105,8 +109,10 @@ describe("resolveDraftView", () => {
 
   it("private is not-found for non-owners", () => {
     expect(
-      resolveDraftView(draft({ visibility: "private" }), { userId: "other", accessToken: undefined })
-        .state,
+      resolveDraftView(draft({ visibility: "private" }), {
+        userId: "other",
+        accessToken: undefined,
+      }).state,
     ).toBe("not-found");
   });
 

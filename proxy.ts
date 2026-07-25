@@ -7,6 +7,7 @@ function contentSecurityPolicy(nonce: string): string {
     `script-src 'self' 'nonce-${nonce}' 'strict-dynamic'${process.env.NODE_ENV === "development" ? " 'unsafe-eval'" : ""}`,
     "style-src 'self' 'unsafe-inline'",
     "img-src 'self' data: https:",
+    "media-src 'self'",
     "font-src 'self'",
     `connect-src 'self'${process.env.NODE_ENV === "development" ? " ws:" : ""}`,
     "frame-src 'self'",

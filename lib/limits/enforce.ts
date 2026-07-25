@@ -1,7 +1,7 @@
 import { createHmac } from "node:crypto";
-import { and, eq, gt, isNull, or, sql } from "drizzle-orm";
+import { and, eq, gt, isNull, ne, or, sql } from "drizzle-orm";
 import { getDb, type Database } from "@/db/client";
-import { apiTokens, draftVersions, drafts, users, type UserPlan } from "@/db/schema";
+import { apiTokens, draftVersions, drafts, uploadIntents, users, type UserPlan } from "@/db/schema";
 import { QuotaExceededError, RateLimitedError } from "./errors";
 import { limitsForPlan, passwordAttemptsPerWindow, type EffectiveLimits } from "./plans";
 import { consumeRateLimit, consumeRateLimits } from "./rate-limit";
@@ -45,6 +45,7 @@ export async function lockAndAssertUploadQuota(
     userId: string;
     sizeBytes: number;
     newDraft: boolean;
+    excludeIntentId?: string;
   },
   db: Pick<Database, "execute" | "select">,
 ): Promise<EffectiveLimits> {
@@ -66,19 +67,66 @@ export async function lockAndAssertUploadQuota(
   }
 
   if (limits.maxStorageBytes !== null) {
-    const [row] = await db
-      .select({ total: sql<string>`coalesce(sum(${draftVersions.sizeBytes}), 0)` })
-      .from(draftVersions)
-      .innerJoin(drafts, eq(draftVersions.draftId, drafts.id))
-      .where(and(eq(drafts.ownerId, params.userId), isNull(drafts.deletedAt)));
-    if (Number(row?.total ?? 0) + params.sizeBytes > limits.maxStorageBytes) {
+    const [[row], [reservationRow]] = await Promise.all([
+      db
+        .select({ total: sql<string>`coalesce(sum(${draftVersions.sizeBytes}), 0)` })
+        .from(draftVersions)
+        .innerJoin(drafts, eq(draftVersions.draftId, drafts.id))
+        .where(and(eq(drafts.ownerId, params.userId), isNull(drafts.deletedAt))),
+      db
+        .select({ total: sql<string>`coalesce(sum(${uploadIntents.expectedBytes}), 0)` })
+        .from(uploadIntents)
+        .where(
+          and(
+            eq(uploadIntents.ownerId, params.userId),
+            eq(uploadIntents.status, "pending"),
+            gt(uploadIntents.expiresAt, sql`now()`),
+            params.excludeIntentId ? ne(uploadIntents.id, params.excludeIntentId) : undefined,
+          ),
+        ),
+    ]);
+    const committed = Number(row?.total ?? 0);
+    const reserved = Number(reservationRow?.total ?? 0);
+    if (committed + reserved + params.sizeBytes > limits.maxStorageBytes) {
       throw new QuotaExceededError(
-        `Storage quota reached (${Math.floor(limits.maxStorageBytes / (1024 * 1024))} MiB). Delete drafts to free up space.`,
+        `Storage quota reached: ${Math.ceil(committed / (1024 * 1024))} MiB stored, ${Math.ceil(
+          reserved / (1024 * 1024),
+        )} MiB reserved, and ${Math.ceil(params.sizeBytes / (1024 * 1024))} MiB requested (${Math.floor(
+          limits.maxStorageBytes / (1024 * 1024),
+        )} MiB limit). Old versions are pruned only after an upload completes; cancel or wait for pending uploads, or delete content.`,
       );
     }
   }
 
   return limits;
+}
+
+export async function getUserStorageUsage(userId: string): Promise<{
+  committedBytes: number;
+  reservedBytes: number;
+}> {
+  const db = getDb();
+  const [[committed], [reserved]] = await Promise.all([
+    db
+      .select({ total: sql<string>`coalesce(sum(${draftVersions.sizeBytes}), 0)` })
+      .from(draftVersions)
+      .innerJoin(drafts, eq(draftVersions.draftId, drafts.id))
+      .where(and(eq(drafts.ownerId, userId), isNull(drafts.deletedAt))),
+    db
+      .select({ total: sql<string>`coalesce(sum(${uploadIntents.expectedBytes}), 0)` })
+      .from(uploadIntents)
+      .where(
+        and(
+          eq(uploadIntents.ownerId, userId),
+          eq(uploadIntents.status, "pending"),
+          gt(uploadIntents.expiresAt, sql`now()`),
+        ),
+      ),
+  ]);
+  return {
+    committedBytes: Number(committed?.total ?? 0),
+    reservedBytes: Number(reserved?.total ?? 0),
+  };
 }
 
 /** Callable with a transaction so the count is atomic with the insert. */

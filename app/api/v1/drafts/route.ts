@@ -45,6 +45,7 @@ export async function POST(req: Request): Promise<Response> {
       visibility,
       password: upload.password,
       bytes: upload.bytes,
+      originalFilename: upload.originalFilename,
       source: actor.kind === "token" ? "api_token" : "browser",
       tokenId: actor.kind === "token" ? actor.tokenId : undefined,
       rateLimitConsumed: true,

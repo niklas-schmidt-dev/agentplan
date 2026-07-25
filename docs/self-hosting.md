@@ -103,6 +103,32 @@ R2_BUCKET=agentplan
 
 Create a private bucket and scope the API token to that bucket.
 
+Browser media uploads also require an R2 CORS policy. Replace the example origin
+with every AgentPlan origin that may create uploads:
+
+```json
+[
+  {
+    "AllowedOrigins": ["https://agentplan.example"],
+    "AllowedMethods": ["PUT"],
+    "AllowedHeaders": ["Content-Type", "Content-Length", "If-None-Match"],
+    "ExposeHeaders": ["ETag"],
+    "MaxAgeSeconds": 3600
+  }
+]
+```
+
+Keep `AP_ENABLED_UPLOAD_KINDS=html` until the live provider checks have passed.
+Enable images with `html,image`; enable MP4 only after Range, copy, signed PUT,
+and throttled playback recovery have been verified for the deployment.
+
+Media upload bytes go directly to the private store, but completion reads the
+object once to validate and hash it. Viewer requests remain proxied through the
+application for immediate authorization and moderation changes. This means each
+media view consumes a private storage read, Function duration, and proxied data
+transfer. A future short-lived signed-GET mode may trade immediate revocation for
+lower delivery cost; this release intentionally does not.
+
 ### Local filesystem
 
 For development and CI only:

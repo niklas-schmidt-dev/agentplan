@@ -8,6 +8,7 @@ const MAX_REQUEST_BYTES = MAX_UPLOAD_BYTES + 64 * 1024;
 
 export type ParsedUpload = {
   bytes: Uint8Array;
+  originalFilename: string;
   title: string;
   visibility: Visibility | undefined;
   password: string | undefined;
@@ -93,7 +94,8 @@ export async function readUpload(req: Request): Promise<ParsedUpload | Response>
   const passwordField = form.get("password");
   const fields = draftFieldsSchema.safeParse({
     title: typeof titleField === "string" && titleField ? titleField : undefined,
-    visibility: typeof visibilityField === "string" && visibilityField ? visibilityField : undefined,
+    visibility:
+      typeof visibilityField === "string" && visibilityField ? visibilityField : undefined,
     password: typeof passwordField === "string" && passwordField ? passwordField : undefined,
   });
   if (!fields.success) {
@@ -102,6 +104,7 @@ export async function readUpload(req: Request): Promise<ParsedUpload | Response>
 
   return {
     bytes: new Uint8Array(await file.arrayBuffer()),
+    originalFilename: file.name,
     title: fields.data.title ?? titleFromFilename(file.name),
     visibility: fields.data.visibility,
     password: fields.data.password,

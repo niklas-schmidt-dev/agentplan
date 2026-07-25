@@ -18,19 +18,14 @@ function readCode(relative: string): string {
 }
 
 describe("iframe sandbox is never weakened", () => {
-  const viewerFiles = [
-    "app/p/[slug]/page.tsx",
-    "app/dashboard/drafts/[id]/page.tsx",
-  ];
+  const viewerFiles = ["app/p/[slug]/page.tsx", "app/dashboard/drafts/[id]/page.tsx"];
 
   for (const file of viewerFiles) {
     describe(file, () => {
       const source = readCode(file);
 
       it("uses the exact approved sandbox allowlist", () => {
-        expect(source).toContain(
-          'sandbox="allow-scripts allow-forms allow-modals allow-popups"',
-        );
+        expect(source).toContain('sandbox="allow-scripts allow-forms allow-modals allow-popups"');
       });
 
       it("never grants same-origin or top-navigation", () => {
@@ -81,6 +76,7 @@ describe("application-wide response hardening", () => {
     expect(proxySource).toContain("'strict-dynamic'");
     expect(proxySource).not.toContain("script-src 'self' 'unsafe-inline'");
     expect(proxySource).toContain("frame-ancestors 'none'");
+    expect(proxySource).toContain("media-src 'self'");
     expect(readCode("app/layout.tsx")).toContain('export const dynamic = "force-dynamic"');
   });
 });

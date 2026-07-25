@@ -2,10 +2,39 @@ import { FsStorage } from "./fs";
 import { R2Storage } from "./r2";
 import { VercelBlobStorage } from "./vercel-blob";
 
+export type DirectUploadTarget = {
+  method: "PUT";
+  url: string;
+  headers: Record<string, string>;
+};
+
+export type StorageObjectMetadata = {
+  size: number;
+  contentType: string | null;
+  etag: string | null;
+};
+
+export type StorageOpenResult = StorageObjectMetadata & {
+  body: ReadableStream<Uint8Array>;
+  contentRange: string | null;
+};
+
 export interface ObjectStorage {
   put(key: string, body: Uint8Array, contentType: string): Promise<void>;
   /** Returns null when the object does not exist. */
   get(key: string): Promise<Uint8Array | null>;
+  createUploadTarget(input: {
+    key: string;
+    contentType: string;
+    sizeBytes: number;
+    expiresAt: Date;
+    callbackUrl?: string;
+    callbackPayload?: string;
+    localUploadUrl?: string;
+  }): Promise<DirectUploadTarget>;
+  head(key: string): Promise<StorageObjectMetadata | null>;
+  open(key: string, range?: { start: number; end: number }): Promise<StorageOpenResult | null>;
+  copy(sourceKey: string, destinationKey: string, contentType: string): Promise<void>;
   delete(key: string): Promise<void>;
 }
 
@@ -48,6 +77,15 @@ export function getStorage(): ObjectStorage {
   return cachedStorage;
 }
 
-export function storageKeyFor(ownerId: string, draftId: string, versionId: string): string {
-  return `drafts/${ownerId}/${draftId}/${versionId}.html`;
+export function storageKeyFor(
+  ownerId: string,
+  draftId: string,
+  versionId: string,
+  extension = ".html",
+): string {
+  return `drafts/${ownerId}/${draftId}/${versionId}${extension}`;
+}
+
+export function stagingKeyFor(ownerId: string, intentId: string, extension: string): string {
+  return `staging/${ownerId}/${intentId}${extension}`;
 }
