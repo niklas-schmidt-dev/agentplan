@@ -36,6 +36,9 @@ describe.skipIf(!hasDb)("media upload lifecycle (integration)", () => {
         name: "Media Owner",
         email: `${ownerId}@example.test`,
         emailVerified: true,
+        // Keep this seed valid even when test ordering leaves the database
+        // empty; the signup-policy trigger rewrites later inserts to user.
+        role: "admin",
       });
     png = new Uint8Array(
       await sharp({

@@ -33,6 +33,10 @@ describe.skipIf(!hasDb)("bundle upload lifecycle (integration)", () => {
         name: "Bundle Owner",
         email: `${ownerId}@example.test`,
         emailVerified: true,
+        // The signup-policy trigger requires an explicit admin proposal when
+        // this test is the first writer against a freshly migrated database.
+        // It rewrites the role to user when another account already exists.
+        role: "admin",
       });
     png = new Uint8Array(
       await sharp({
