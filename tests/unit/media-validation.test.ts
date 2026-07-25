@@ -1,6 +1,6 @@
 import { Readable } from "node:stream";
 import sharp from "sharp";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import { uploadSpecFor } from "@agentplan/upload-contract";
 import type { StorageOpenResult } from "@/lib/storage";
 import {
@@ -20,10 +20,7 @@ function objectFor(bytes: Uint8Array, contentType: string): StorageOpenResult {
 }
 
 describe("media validation", () => {
-  afterEach(() => vi.unstubAllEnvs());
-
-  it("derives kind from registered extension and MIME, never client input", () => {
-    vi.stubEnv("AP_ENABLED_UPLOAD_KINDS", "html,image");
+  it("accepts every registered media kind and rejects HTML direct uploads", () => {
     expect(
       validateDirectUploadMetadata({
         filename: "photo.JpEg",
@@ -38,13 +35,13 @@ describe("media validation", () => {
         sizeBytes: 100,
       }),
     ).toThrow(MediaValidationError);
-    expect(() =>
+    expect(
       validateDirectUploadMetadata({
         filename: "movie.mp4",
         contentType: "video/mp4",
         sizeBytes: 100,
-      }),
-    ).toThrow(/not enabled/i);
+      }).kind,
+    ).toBe("video");
   });
 
   it("validates image magic, dimensions, byte count, and hash", async () => {

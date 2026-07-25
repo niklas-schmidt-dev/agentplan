@@ -118,9 +118,9 @@ with every AgentPlan origin that may create uploads:
 ]
 ```
 
-Keep `AP_ENABLED_UPLOAD_KINDS=html` until the live provider checks have passed.
-Enable images with `html,image`; enable MP4 only after Range, copy, signed PUT,
-and throttled playback recovery have been verified for the deployment.
+HTML, raster image, and MP4 uploads are always enabled. Before production use,
+verify Range, copy, signed PUT, and throttled playback recovery behavior for the
+deployment's storage provider.
 
 Media upload bytes go directly to the private store, but completion reads the
 object once to validate and hash it. Viewer requests remain proxied through the

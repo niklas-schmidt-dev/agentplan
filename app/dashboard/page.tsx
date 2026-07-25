@@ -10,7 +10,6 @@ import { limitsForPlan } from "@/lib/limits/plans";
 import { listPendingUploadIntents } from "@/lib/uploads/service";
 import { draftUrl } from "@/lib/urls";
 import { visibilitySchema } from "@/lib/validation/api";
-import { enabledUploadKinds } from "@/lib/validation/media";
 
 export const metadata = { title: "Dashboard" };
 
@@ -35,7 +34,6 @@ export default async function DashboardPage({
     listPendingUploadIntents(user.id),
   ]);
   const limits = limitsForPlan(plan);
-  const enabledKinds = [...new Set(["html" as const, ...enabledUploadKinds()])];
 
   return (
     <main className="mx-auto flex min-h-dvh w-full max-w-5xl flex-col gap-6 px-6 py-8">
@@ -44,7 +42,7 @@ export default async function DashboardPage({
       <details className="rounded-md border border-edge bg-surface p-4" open={drafts.length === 0}>
         <summary className="cursor-pointer font-mono text-sm text-lime">+ new draft</summary>
         <div className="pt-4">
-          <NewDraftForm enabledKinds={enabledKinds} />
+          <NewDraftForm />
         </div>
       </details>
 

@@ -1,40 +1,17 @@
 import { createHash } from "node:crypto";
 import { fileTypeFromBuffer } from "file-type";
 import sharp, { type Metadata } from "sharp";
-import {
-  uploadKinds,
-  uploadSpecFor,
-  type UploadKind,
-  type UploadSpec,
-} from "@agentplan/upload-contract";
+import { uploadSpecFor, type UploadSpec } from "@agentplan/upload-contract";
 import type { StorageOpenResult } from "@/lib/storage";
 
 export class MediaValidationError extends Error {
   constructor(
-    public readonly code:
-      | "INVALID_FILE_TYPE"
-      | "FILE_TOO_LARGE"
-      | "EMPTY_FILE"
-      | "UPLOAD_KIND_DISABLED"
-      | "SIZE_MISMATCH",
+    public readonly code: "INVALID_FILE_TYPE" | "FILE_TOO_LARGE" | "EMPTY_FILE" | "SIZE_MISMATCH",
     message: string,
   ) {
     super(message);
     this.name = "MediaValidationError";
   }
-}
-
-export function enabledUploadKinds(): Set<UploadKind> {
-  const configured = process.env.AP_ENABLED_UPLOAD_KINDS ?? "html";
-  const requested = configured
-    .split(",")
-    .map((kind) => kind.trim().toLowerCase())
-    .filter(Boolean);
-  return new Set(
-    requested.filter((kind): kind is UploadKind =>
-      (uploadKinds as readonly string[]).includes(kind),
-    ),
-  );
 }
 
 export function validateDirectUploadMetadata(input: {
@@ -47,12 +24,6 @@ export function validateDirectUploadMetadata(input: {
     throw new MediaValidationError(
       "INVALID_FILE_TYPE",
       "Direct uploads support JPEG, PNG, WebP, GIF, AVIF, and MP4 files.",
-    );
-  }
-  if (!enabledUploadKinds().has(spec.kind)) {
-    throw new MediaValidationError(
-      "UPLOAD_KIND_DISABLED",
-      `${spec.kind === "image" ? "Image" : "Video"} uploads are not enabled.`,
     );
   }
   if (!Number.isSafeInteger(input.sizeBytes) || input.sizeBytes <= 0) {

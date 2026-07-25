@@ -8,7 +8,6 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 process.env.STORAGE_DRIVER = "fs";
 process.env.STORAGE_FS_ROOT = mkdtempSync(path.join(os.tmpdir(), "agentplan-media-"));
 process.env.BETTER_AUTH_SECRET ??= "media-integration-test-secret-not-for-production";
-process.env.AP_ENABLED_UPLOAD_KINDS = "html,image,video";
 
 import { GET as getContent, HEAD as headContent } from "@/app/p/[slug]/content/route";
 import { closeDb, getDb } from "@/db/client";
