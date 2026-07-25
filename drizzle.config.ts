@@ -1,5 +1,6 @@
 import "dotenv/config";
 import { defineConfig } from "drizzle-kit";
+import { normalizeNodePostgresUrl } from "./db/connection-url";
 
 const migrationUrl =
   [
@@ -15,6 +16,6 @@ export default defineConfig({
   dbCredentials: {
     // Prefer a direct connection for DDL. Neon names its automatically
     // provisioned direct URL DATABASE_URL_UNPOOLED.
-    url: migrationUrl,
+    url: migrationUrl ? normalizeNodePostgresUrl(migrationUrl) : "",
   },
 });
