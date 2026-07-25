@@ -1,7 +1,7 @@
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { cache } from "react";
-import { eq } from "drizzle-orm";
+import { and, eq, isNull } from "drizzle-orm";
 import { getDb } from "@/db/client";
 import { users } from "@/db/schema";
 import { getAuth, type Auth } from "./auth";
@@ -34,7 +34,7 @@ export async function requireAdmin(): Promise<SessionUser> {
   const [currentUser] = await getDb()
     .select({ role: users.role })
     .from(users)
-    .where(eq(users.id, user.id))
+    .where(and(eq(users.id, user.id), isNull(users.blockedAt)))
     .limit(1);
   if (currentUser?.role !== "admin") {
     redirect("/dashboard");

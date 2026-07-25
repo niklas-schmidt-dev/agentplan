@@ -1,0 +1,3 @@
+ALTER TABLE "blocked_oauth_accounts" ADD CONSTRAINT "blocked_oauth_accounts_noncredential_check" CHECK ("blocked_oauth_accounts"."provider_id" <> 'credential');--> statement-breakpoint
+ALTER TABLE "user_blocks" ADD CONSTRAINT "user_blocks_normalized_email_check" CHECK (char_length("user_blocks"."normalized_email") > 0 AND "user_blocks"."normalized_email" = lower(btrim("user_blocks"."normalized_email")));--> statement-breakpoint
+ALTER TABLE "user_blocks" ADD CONSTRAINT "user_blocks_reason_check" CHECK (char_length(btrim("user_blocks"."reason")) BETWEEN 1 AND 500);

@@ -99,16 +99,25 @@ export default async function AdminPage({
 
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h1 className="font-mono text-sm text-ink-muted">admin / users</h1>
-        <Link
-          href="/dashboard/admin/content"
-          className="rounded border border-edge px-3 py-1.5 font-mono text-xs text-ink-muted transition-colors hover:border-lime hover:text-lime"
-        >
-          moderate content →
-        </Link>
+        <div className="flex items-center gap-2">
+          <Link
+            href="/dashboard/admin/blocks"
+            className="rounded border border-edge px-3 py-1.5 font-mono text-xs text-ink-muted transition-colors hover:border-lime hover:text-lime"
+          >
+            blocked identities →
+          </Link>
+          <Link
+            href="/dashboard/admin/content"
+            className="rounded border border-edge px-3 py-1.5 font-mono text-xs text-ink-muted transition-colors hover:border-lime hover:text-lime"
+          >
+            moderate content →
+          </Link>
+        </div>
       </div>
 
-      <section className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+      <section className="grid grid-cols-2 gap-3 sm:grid-cols-5">
         <StatTile label="users" value={String(stats.users)} />
+        <StatTile label="blocks" value={String(stats.blockedUsers)} />
         <StatTile label="drafts" value={String(stats.liveDrafts)} />
         <StatTile
           label="versions"
@@ -134,7 +143,14 @@ export default async function AdminPage({
       </section>
 
       <section className="flex flex-col gap-3">
-        <h2 className="font-mono text-sm text-ink-muted">users</h2>
+        <div>
+          <h2 className="font-mono text-sm text-ink-muted">users</h2>
+          <p className="mt-1 max-w-3xl text-xs text-ink-faint">
+            Block keeps uploads and identity data but revokes access. Delete allows registration
+            again. Delete + block removes account data while retaining known email and OAuth
+            identities.
+          </p>
+        </div>
         <ul className="flex flex-col divide-y divide-edge rounded-md border border-edge bg-surface">
           {userRows.map((user) => {
             const isSelf = user.id === admin.id;
@@ -162,6 +178,11 @@ export default async function AdminPage({
                     {user.role === "admin" ? (
                       <span className="rounded-sm border border-lime/40 px-1.5 py-0.5 text-lime">
                         admin
+                      </span>
+                    ) : null}
+                    {user.blockedAt ? (
+                      <span className="rounded-sm border border-danger/50 bg-danger/10 px-1.5 py-0.5 text-danger">
+                        blocked
                       </span>
                     ) : null}
                     <span className="text-ink-faint">
@@ -197,6 +218,9 @@ export default async function AdminPage({
                   plan={user.plan}
                   role={user.role}
                   isSelf={isSelf}
+                  blockedAt={user.blockedAt}
+                  blockId={user.blockId}
+                  blockReason={user.blockReason}
                 />
               </li>
             );

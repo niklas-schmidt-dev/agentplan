@@ -1,6 +1,7 @@
 import { eq, sql } from "drizzle-orm";
 import { getDb } from "@/db/client";
-import { appSettings, users } from "@/db/schema";
+import { appSettings } from "@/db/schema";
+import { assertCurrentAdmin } from "@/lib/admin/authorization";
 import { recordAuditEvent } from "@/lib/audit/events";
 
 const SIGNUPS_ENABLED_KEY = "signups_enabled";
@@ -21,13 +22,7 @@ export async function setSignupsEnabled(
   await getDb().transaction(async (tx) => {
     await tx.execute(sql`select pg_advisory_xact_lock(hashtext('agentplan:admin-membership'))`);
     await tx.execute(sql`select pg_advisory_xact_lock(hashtext('agentplan:signup-policy'))`);
-    const [currentActor] = await tx
-      .select({ role: users.role })
-      .from(users)
-      .where(eq(users.id, actor.userId));
-    if (currentActor?.role !== "admin") {
-      throw new Error("Only current admins can change signup settings");
-    }
+    await assertCurrentAdmin(tx, actor.userId);
 
     await tx
       .insert(appSettings)

@@ -5,13 +5,16 @@ import { nextCookies } from "better-auth/next-js";
 import { getDb } from "@/db/client";
 import * as schema from "@/db/schema";
 import { appUrl } from "@/lib/urls";
+import {
+  ACCOUNT_BLOCKED_CODE,
+  IDENTITY_BLOCKED_CODE,
+  IdentityBlockedError,
+  isOauthIdentityBlocked,
+  isUserBlocked,
+} from "./blocked-identities";
 import { sendAuthEmail } from "./email";
 import { authRateLimitStorage } from "./rate-limit";
-import {
-  BootstrapAuthorizationError,
-  evaluateSignup,
-  SignupsDisabledError,
-} from "./signup-policy";
+import { BootstrapAuthorizationError, evaluateSignup, SignupsDisabledError } from "./signup-policy";
 
 /** GitHub OAuth is optional: without credentials only email/password is offered. */
 export function isGithubConfigured(): boolean {
@@ -25,7 +28,12 @@ function createAuth() {
   return betterAuth({
     appName: "AgentPlan",
     baseURL: appUrl(),
-    database: drizzleAdapter(getDb(), { provider: "pg", usePlural: true, schema }),
+    database: drizzleAdapter(getDb(), {
+      provider: "pg",
+      usePlural: true,
+      schema,
+      transaction: true,
+    }),
     emailAndPassword: {
       enabled: true,
       requireEmailVerification: true,
@@ -84,7 +92,40 @@ function createAuth() {
               if (error instanceof BootstrapAuthorizationError) {
                 throw new APIError("FORBIDDEN", { message: error.message });
               }
+              if (error instanceof IdentityBlockedError) {
+                throw new APIError("FORBIDDEN", {
+                  message: error.message,
+                  code: IDENTITY_BLOCKED_CODE,
+                });
+              }
               throw error;
+            }
+          },
+        },
+      },
+      account: {
+        create: {
+          before: async (account) => {
+            if (
+              (await isUserBlocked(account.userId)) ||
+              (await isOauthIdentityBlocked(account.providerId, account.accountId))
+            ) {
+              throw new APIError("FORBIDDEN", {
+                message: "Unable to create this account.",
+                code: IDENTITY_BLOCKED_CODE,
+              });
+            }
+          },
+        },
+      },
+      session: {
+        create: {
+          before: async (session) => {
+            if (await isUserBlocked(session.userId)) {
+              throw new APIError("FORBIDDEN", {
+                message: "This account has been blocked.",
+                code: ACCOUNT_BLOCKED_CODE,
+              });
             }
           },
         },

@@ -18,6 +18,9 @@ export type AuditEventType =
   | "user.role_changed"
   | "user.deletion_pending"
   | "user.deleted"
+  | "user.deletion_failed"
+  | "user.blocked"
+  | "user.unblocked"
   | "settings.signups_changed";
 
 /** Best-effort: an audit failure must never fail the user-facing operation. */
@@ -29,13 +32,15 @@ export async function recordAuditEvent(event: {
   metadata?: Record<string, unknown>;
 }): Promise<void> {
   try {
-    await getDb().insert(auditEvents).values({
-      eventType: event.type,
-      userId: event.userId ?? null,
-      draftId: event.draftId ?? null,
-      tokenId: event.tokenId ?? null,
-      metadata: event.metadata ?? {},
-    });
+    await getDb()
+      .insert(auditEvents)
+      .values({
+        eventType: event.type,
+        userId: event.userId ?? null,
+        draftId: event.draftId ?? null,
+        tokenId: event.tokenId ?? null,
+        metadata: event.metadata ?? {},
+      });
   } catch (error) {
     console.error("Failed to record audit event", event.type, error);
   }
@@ -57,7 +62,12 @@ export async function purgeExpiredAuditEvents(batchSize = 500): Promise<number> 
   if (!stale.length) return 0;
   const deleted = await getDb()
     .delete(auditEvents)
-    .where(inArray(auditEvents.id, stale.map((row) => row.id)))
+    .where(
+      inArray(
+        auditEvents.id,
+        stale.map((row) => row.id),
+      ),
+    )
     .returning({ id: auditEvents.id });
   return deleted.length;
 }

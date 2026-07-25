@@ -1,6 +1,8 @@
+import { sql } from "drizzle-orm";
 import {
   boolean,
   char,
+  check,
   index,
   integer,
   jsonb,
@@ -20,24 +22,31 @@ export const userRole = pgEnum("user_role", ["user", "admin"]);
 
 // --- Better Auth tables (shape must match better-auth's generated schema) ---
 
-export const users = pgTable("users", {
-  id: text("id").primaryKey(),
-  name: text("name").notNull(),
-  email: text("email").notNull().unique(),
-  emailVerified: boolean("email_verified").default(false).notNull(),
-  image: text("image"),
-  // App-managed, invisible to Better Auth. "unlimited" bypasses quotas and
-  // upload rate limits; set via scripts/set-user-plan.ts.
-  plan: userPlan("plan").notNull().default("free"),
-  // Assigned by the signup hook in lib/auth/auth.ts: the very first user
-  // becomes "admin"; admins manage users and settings under /dashboard/admin.
-  role: userRole("role").notNull().default("user"),
-  createdAt: timestamp("created_at").defaultNow().notNull(),
-  updatedAt: timestamp("updated_at")
-    .defaultNow()
-    .$onUpdate(() => new Date())
-    .notNull(),
-});
+export const users = pgTable(
+  "users",
+  {
+    id: text("id").primaryKey(),
+    name: text("name").notNull(),
+    email: text("email").notNull().unique(),
+    emailVerified: boolean("email_verified").default(false).notNull(),
+    image: text("image"),
+    // App-managed, invisible to Better Auth. "unlimited" bypasses quotas and
+    // upload rate limits; set via scripts/set-user-plan.ts.
+    plan: userPlan("plan").notNull().default("free"),
+    // Assigned by the signup hook in lib/auth/auth.ts: the very first user
+    // becomes "admin"; admins manage users and settings under /dashboard/admin.
+    role: userRole("role").notNull().default("user"),
+    // Denormalized from user_blocks by database triggers. This is the hot-path
+    // access flag; user_blocks remains the durable moderation record.
+    blockedAt: timestamp("blocked_at", { withTimezone: true }),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at")
+      .defaultNow()
+      .$onUpdate(() => new Date())
+      .notNull(),
+  },
+  (table) => [index("users_role_blocked_at_idx").on(table.role, table.blockedAt)],
+);
 
 export const sessions = pgTable(
   "sessions",
@@ -100,6 +109,46 @@ export const verifications = pgTable(
 
 // --- Application tables ---
 
+export const userBlocks = pgTable(
+  "user_blocks",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    // Deliberately no user FKs: the block and its attribution must survive
+    // deletion of either the subject or the administrator who created it.
+    userId: text("user_id").notNull(),
+    normalizedEmail: varchar("normalized_email", { length: 320 }).notNull(),
+    reason: varchar("reason", { length: 500 }).notNull(),
+    blockedByUserId: text("blocked_by_user_id").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex("user_blocks_user_id_idx").on(table.userId),
+    uniqueIndex("user_blocks_normalized_email_idx").on(table.normalizedEmail),
+    index("user_blocks_created_at_idx").on(table.createdAt.desc()),
+    check(
+      "user_blocks_normalized_email_check",
+      sql`char_length(${table.normalizedEmail}) > 0 AND ${table.normalizedEmail} = lower(btrim(${table.normalizedEmail}))`,
+    ),
+    check("user_blocks_reason_check", sql`char_length(btrim(${table.reason})) BETWEEN 1 AND 500`),
+  ],
+);
+
+export const blockedOauthAccounts = pgTable(
+  "blocked_oauth_accounts",
+  {
+    blockId: uuid("block_id")
+      .notNull()
+      .references(() => userBlocks.id, { onDelete: "cascade" }),
+    providerId: text("provider_id").notNull(),
+    accountId: text("account_id").notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.providerId, table.accountId] }),
+    index("blocked_oauth_accounts_block_id_idx").on(table.blockId),
+    check("blocked_oauth_accounts_noncredential_check", sql`${table.providerId} <> 'credential'`),
+  ],
+);
+
 export const draftVisibility = pgEnum("draft_visibility", ["public", "private", "password"]);
 export const versionSource = pgEnum("version_source", ["browser", "api_token"]);
 
@@ -115,10 +164,9 @@ export const drafts = pgTable(
     visibility: draftVisibility("visibility").notNull().default("private"),
     // Salted scrypt hash; set only when visibility is "password", null otherwise.
     passwordHash: text("password_hash"),
-    currentVersionId: uuid("current_version_id").references(
-      (): AnyPgColumn => draftVersions.id,
-      { onDelete: "set null" },
-    ),
+    currentVersionId: uuid("current_version_id").references((): AnyPgColumn => draftVersions.id, {
+      onDelete: "set null",
+    }),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp("updated_at", { withTimezone: true })
       .defaultNow()
@@ -222,6 +270,7 @@ export type User = typeof users.$inferSelect;
 export type Draft = typeof drafts.$inferSelect;
 export type DraftVersion = typeof draftVersions.$inferSelect;
 export type ApiToken = typeof apiTokens.$inferSelect;
+export type UserBlock = typeof userBlocks.$inferSelect;
 export type Visibility = (typeof draftVisibility.enumValues)[number];
 export type UserPlan = (typeof userPlan.enumValues)[number];
 export type UserRole = (typeof userRole.enumValues)[number];

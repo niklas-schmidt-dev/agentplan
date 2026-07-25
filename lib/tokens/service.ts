@@ -1,6 +1,6 @@
 import { and, desc, eq, gt, isNotNull, isNull, lte, or, sql } from "drizzle-orm";
 import { getDb } from "@/db/client";
-import { apiTokens, type ApiToken } from "@/db/schema";
+import { apiTokens, users, type ApiToken } from "@/db/schema";
 import { recordAuditEvent } from "@/lib/audit/events";
 import { assertTokenCreationAllowed } from "@/lib/limits/enforce";
 import { RateLimitedError } from "@/lib/limits/errors";
@@ -49,6 +49,13 @@ export async function createToken(params: {
     await tx.execute(
       sql`select pg_advisory_xact_lock(hashtext('tokens'), hashtext(${params.userId}))`,
     );
+    const [owner] = await tx
+      .select({ blockedAt: users.blockedAt })
+      .from(users)
+      .where(eq(users.id, params.userId))
+      .limit(1);
+    if (!owner) throw new Error("User not found");
+    if (owner.blockedAt) throw new Error("Blocked users cannot create API tokens");
     await assertTokenCreationAllowed(params.userId, tx);
     const [inserted] = await tx
       .insert(apiTokens)
@@ -131,29 +138,36 @@ export type BearerActor = {
 };
 
 /** Validates `Authorization: Bearer ap_live_…`. Returns null on any failure. */
-export async function authenticateBearer(authorizationHeader: string | null): Promise<BearerActor | null> {
+export async function authenticateBearer(
+  authorizationHeader: string | null,
+): Promise<BearerActor | null> {
   if (!authorizationHeader?.startsWith("Bearer ")) return null;
   const token = authorizationHeader.slice("Bearer ".length).trim();
   if (!token.startsWith("ap_live_")) return null;
 
   const candidateHash = hashToken(token);
   const [record] = await getDb()
-    .select()
+    .select({ token: apiTokens })
     .from(apiTokens)
-    .where(eq(apiTokens.tokenHash, candidateHash))
+    .innerJoin(users, eq(apiTokens.userId, users.id))
+    .where(and(eq(apiTokens.tokenHash, candidateHash), isNull(users.blockedAt)))
     .limit(1);
 
   if (!record) return null;
-  if (!constantTimeEqual(record.tokenHash, candidateHash)) return null;
-  if (record.revokedAt) return null;
-  if (record.expiresAt && record.expiresAt.getTime() <= Date.now()) return null;
+  if (!constantTimeEqual(record.token.tokenHash, candidateHash)) return null;
+  if (record.token.revokedAt) return null;
+  if (record.token.expiresAt && record.token.expiresAt.getTime() <= Date.now()) return null;
 
   // Best-effort usage tracking; never blocks the request.
   getDb()
     .update(apiTokens)
     .set({ lastUsedAt: sql`now()` })
-    .where(eq(apiTokens.id, record.id))
+    .where(eq(apiTokens.id, record.token.id))
     .catch(() => {});
 
-  return { userId: record.userId, tokenId: record.id, scopes: record.scopes };
+  return {
+    userId: record.token.userId,
+    tokenId: record.token.id,
+    scopes: record.token.scopes,
+  };
 }

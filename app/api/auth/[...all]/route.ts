@@ -1,4 +1,5 @@
 import { getAuth } from "@/lib/auth/auth";
+import { IDENTITY_BLOCKED_CODE } from "@/lib/auth/blocked-identities";
 import { checkAuthAccountRateLimit } from "@/lib/auth/rate-limit";
 
 export const runtime = "nodejs";
@@ -34,7 +35,10 @@ async function handler(req: Request): Promise<Response> {
   if (response.ok) return genericSignupResponse(startedAt);
   try {
     const body = (await response.clone().json()) as { code?: unknown };
-    if (typeof body.code === "string" && body.code.includes("USER_ALREADY_EXISTS")) {
+    if (
+      typeof body.code === "string" &&
+      (body.code.includes("USER_ALREADY_EXISTS") || body.code.includes(IDENTITY_BLOCKED_CODE))
+    ) {
       return genericSignupResponse(startedAt);
     }
   } catch {

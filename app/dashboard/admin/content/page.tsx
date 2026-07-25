@@ -141,6 +141,11 @@ export default async function AdminContentPage({
                       : "no version"}
                     {" · "}
                     {draft.ownerEmail}
+                    {draft.ownerBlocked ? (
+                      <span className="ml-1 rounded-sm border border-danger/50 bg-danger/10 px-1 py-0.5 text-danger">
+                        blocked owner
+                      </span>
+                    ) : null}
                     {" · updated "}
                     {formatRelativeTime(draft.updatedAt)}
                   </p>
@@ -149,7 +154,7 @@ export default async function AdminContentPage({
                   </code>
                 </div>
                 <div className="flex items-center gap-2">
-                  {draft.visibility === "public" ? (
+                  {draft.visibility === "public" && !draft.ownerBlocked ? (
                     <a
                       href={`/p/${encodeURIComponent(draft.slug)}`}
                       target="_blank"
