@@ -16,7 +16,7 @@ import { isEmailDeliveryConfigured, sendAuthEmail } from "./email";
 import { authRateLimitStorage } from "./rate-limit";
 import { BootstrapAuthorizationError, evaluateSignup, SignupsDisabledError } from "./signup-policy";
 
-/** GitHub OAuth is optional: without credentials only email/password is offered. */
+/** GitHub OAuth is an optional addition to the baseline email/password login. */
 export function isGithubConfigured(): boolean {
   return Boolean(process.env.GITHUB_CLIENT_ID && process.env.GITHUB_CLIENT_SECRET);
 }
@@ -36,23 +36,53 @@ function createAuth() {
       transaction: true,
     }),
     emailAndPassword: {
-      enabled: emailDeliveryConfigured,
-      requireEmailVerification: true,
+      enabled: true,
+      requireEmailVerification: emailDeliveryConfigured,
       autoSignIn: false,
-      revokeSessionsOnPasswordReset: true,
-      sendResetPassword: async ({ user, url }) => {
-        await sendAuthEmail({ kind: "reset_password", to: user.email, name: user.name, url });
-      },
+      ...(emailDeliveryConfigured
+        ? {
+            revokeSessionsOnPasswordReset: true,
+            sendResetPassword: async ({
+              user,
+              url,
+            }: {
+              user: { email: string; name: string };
+              url: string;
+            }) => {
+              await sendAuthEmail({
+                kind: "reset_password",
+                to: user.email,
+                name: user.name,
+                url,
+              });
+            },
+          }
+        : {}),
     },
-    emailVerification: {
-      sendOnSignUp: true,
-      sendOnSignIn: true,
-      autoSignInAfterVerification: true,
-      expiresIn: 60 * 60,
-      sendVerificationEmail: async ({ user, url }) => {
-        await sendAuthEmail({ kind: "verify_email", to: user.email, name: user.name, url });
-      },
-    },
+    ...(emailDeliveryConfigured
+      ? {
+          emailVerification: {
+            sendOnSignUp: true,
+            sendOnSignIn: true,
+            autoSignInAfterVerification: true,
+            expiresIn: 60 * 60,
+            sendVerificationEmail: async ({
+              user,
+              url,
+            }: {
+              user: { email: string; name: string };
+              url: string;
+            }) => {
+              await sendAuthEmail({
+                kind: "verify_email",
+                to: user.email,
+                name: user.name,
+                url,
+              });
+            },
+          },
+        }
+      : {}),
     rateLimit: {
       enabled: true,
       customStorage: authRateLimitStorage,

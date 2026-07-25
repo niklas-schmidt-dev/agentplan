@@ -51,7 +51,7 @@ the stable viewer URL.
 
 ## Self-host AgentPlan
 
-[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2Fniklas-schmidt-dev%2Fagentplan&project-name=agentplan&repository-name=agentplan&products=%5B%7B%22type%22%3A%22integration%22%2C%22protocol%22%3A%22storage%22%2C%22productSlug%22%3A%22neon%22%2C%22integrationSlug%22%3A%22neon%22%7D%2C%7B%22type%22%3A%22blob%22%7D%5D&envDescription=AgentPlan+needs+an+initial+admin+email%2C+an+auth+secret%2C+and+a+cron+secret.+Neon+and+Blob+are+provisioned+during+this+flow.+Configure+Resend+or+GitHub+OAuth+after+deployment+to+enable+sign-in.&envLink=https%3A%2F%2Fgithub.com%2Fniklas-schmidt-dev%2Fagentplan%2Fblob%2Fmain%2Fdocs%2Fself-hosting.md%23must-have-values&env=ADMIN_BOOTSTRAP_EMAIL&env=BETTER_AUTH_SECRET&env=CRON_SECRET)
+[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2Fniklas-schmidt-dev%2Fagentplan&project-name=agentplan&repository-name=agentplan&products=%5B%7B%22type%22%3A%22integration%22%2C%22protocol%22%3A%22storage%22%2C%22productSlug%22%3A%22neon%22%2C%22integrationSlug%22%3A%22neon%22%7D%2C%7B%22type%22%3A%22blob%22%7D%5D&envDescription=AgentPlan+needs+an+initial+admin+email%2C+an+auth+secret%2C+and+a+cron+secret.+Neon+and+Blob+are+provisioned+during+this+flow.+Email%2Fpassword+works+immediately%3B+Resend+and+GitHub+OAuth+are+optional.&envLink=https%3A%2F%2Fgithub.com%2Fniklas-schmidt-dev%2Fagentplan%2Fblob%2Fmain%2Fdocs%2Fself-hosting.md%23must-have-values&env=ADMIN_BOOTSTRAP_EMAIL&env=BETTER_AUTH_SECRET&env=CRON_SECRET)
 
 The one-click deployment provisions the app, Postgres, and private object
 storage. See [Self-hosting AgentPlan](docs/self-hosting.md) for the complete
@@ -67,9 +67,9 @@ setup guide.
   provisions private Vercel Blob; Cloudflare R2 remains available as an
   S3-compatible alternative. Visibility is enforced by the application, never
   by an object URL.
-- **Better Auth** with optional verified email/password through Resend (or a generic
-  delivery webhook) and optional GitHub OAuth for browser sessions. Each sign-in
-  method appears only when its complete configuration is present;
+- **Better Auth** with email/password available by default and optional email
+  verification/password recovery through Resend (or a generic delivery webhook).
+  GitHub OAuth is an optional additional sign-in method;
   scoped API tokens (`ap_live_…`, stored as SHA-256 hashes) for agents and the CLI.
   On an empty database, only `ADMIN_BOOTSTRAP_EMAIL` can register; that identity
   becomes the single initial admin. Admins can disable sign-ups, change account
@@ -130,10 +130,10 @@ Requirements: Node.js 24+, npm, and a Postgres instance.
 
 1. `npm ci`
 2. Copy `.env.example` to `.env` and fill in the database URL,
-   `ADMIN_BOOTSTRAP_EMAIL`, Better Auth secret, storage configuration, and
-   at least one sign-in method. For email/password, use Resend or the generic
-   webhook. Without either, development suppresses delivery and an unverified
-   email account cannot sign in. GitHub-only development needs no email variables.
+   `ADMIN_BOOTSTRAP_EMAIL`, Better Auth secret, and storage configuration.
+   Email/password works without a mail provider. Resend or the generic webhook
+   optionally adds email verification and forgotten-password recovery; GitHub
+   OAuth optionally adds another sign-in method.
 3. `npm run db:migrate` (prefers `DATABASE_URL_DIRECT` or
    `DATABASE_URL_UNPOOLED`)
 4. `npm run dev`
@@ -308,8 +308,9 @@ threat model. In short:
 Use the Deploy Button above for the shortest path. It creates a Vercel project,
 provisions Neon Postgres and Vercel Blob, and prompts for three must-have values.
 Choose **Private** when creating the Blob store; AgentPlan intentionally fails
-against a public store. After deployment, connect at least one sign-in method:
-Resend email, the generic email webhook, or GitHub OAuth.
+against a public store. Email/password is available immediately. After deployment,
+you may add Resend or the generic email webhook for verification and password
+recovery, and/or GitHub OAuth as an additional sign-in method.
 
 Committed database migrations run automatically on production builds created
 through the Neon Deploy Button. Manual installations should migrate separately,

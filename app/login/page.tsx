@@ -20,7 +20,7 @@ export default async function LoginPage() {
       </Link>
       <h1 className="text-2xl font-semibold tracking-tight text-ink">Sign in</h1>
       <AuthForm
-        emailEnabled={isEmailDeliveryConfigured()}
+        emailDeliveryEnabled={isEmailDeliveryConfigured()}
         githubEnabled={isGithubConfigured()}
         signupsEnabled={signupsEnabled}
       />

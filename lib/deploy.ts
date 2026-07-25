@@ -21,7 +21,7 @@ function createVercelDeployUrl(): string {
     "repository-name": "agentplan",
     products: JSON.stringify(VERCEL_DEPLOY_PRODUCTS),
     envDescription:
-      "AgentPlan needs an initial admin email, an auth secret, and a cron secret. Neon and Blob are provisioned during this flow. Configure Resend or GitHub OAuth after deployment to enable sign-in.",
+      "AgentPlan needs an initial admin email, an auth secret, and a cron secret. Neon and Blob are provisioned during this flow. Email/password works immediately; Resend and GitHub OAuth are optional.",
     envLink:
       "https://github.com/niklas-schmidt-dev/agentplan/blob/main/docs/self-hosting.md#must-have-values",
   });

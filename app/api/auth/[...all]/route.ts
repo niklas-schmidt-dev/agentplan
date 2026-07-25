@@ -1,5 +1,6 @@
 import { getAuth } from "@/lib/auth/auth";
 import { IDENTITY_BLOCKED_CODE } from "@/lib/auth/blocked-identities";
+import { isEmailDeliveryConfigured } from "@/lib/auth/email";
 import { checkAuthAccountRateLimit } from "@/lib/auth/rate-limit";
 
 export const runtime = "nodejs";
@@ -12,7 +13,11 @@ async function genericSignupResponse(startedAt: number): Promise<Response> {
     await new Promise((resolve) => setTimeout(resolve, remainingMs));
   }
   return Response.json(
-    { message: "If this address can be registered, a verification link has been sent." },
+    {
+      message: isEmailDeliveryConfigured()
+        ? "If this address can be registered, a verification link has been sent."
+        : "If this address can be registered, you can now sign in.",
+    },
     {
       status: 202,
       headers: { "Cache-Control": "private, no-store" },

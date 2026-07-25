@@ -235,7 +235,7 @@ describe.skipIf(!hasDb)("identity blocking (integration)", () => {
     );
     expect(response.status).toBe(202);
     expect(await response.json()).toEqual({
-      message: "If this address can be registered, a verification link has been sent.",
+      message: "If this address can be registered, you can now sign in.",
     });
     expect(await getDb().select().from(users).where(eq(users.email, victimEmail))).toHaveLength(1);
   });
