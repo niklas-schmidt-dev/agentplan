@@ -2,41 +2,45 @@ import { getDraftBySlug, getVersionById } from "@/db/queries/drafts";
 import { authenticateSession } from "@/lib/api/auth";
 import { readAccessCookie } from "@/lib/drafts/access";
 import { resolveDraftView } from "@/lib/drafts/view-access";
+import { etagMatches, parseSingleByteRange } from "@/lib/http/range";
 import { getStorage } from "@/lib/storage";
 
 export const runtime = "nodejs";
+export const maxDuration = 300;
 
-// Applied even on direct navigation to this URL: the CSP sandbox directive
-// (without allow-same-origin) puts the document in an opaque origin, so the
-// hostile HTML can never run with agentplan.app's origin or cookies.
-const CONTENT_SANDBOX = "sandbox allow-scripts allow-forms allow-modals allow-popups";
+const HTML_SANDBOX = "sandbox allow-scripts allow-forms allow-modals allow-popups";
+const MEDIA_SANDBOX = "sandbox";
 
-function notFoundResponse(): Response {
-  return new Response("Not found", {
-    status: 404,
-    headers: {
-      "Content-Type": "text/plain; charset=utf-8",
-      "X-Content-Type-Options": "nosniff",
-      "Referrer-Policy": "no-referrer",
-      "Strict-Transport-Security": "max-age=63072000; includeSubDomains",
-      "Permissions-Policy": "camera=(), microphone=(), geolocation=()",
-      "Content-Security-Policy": `${CONTENT_SANDBOX}; frame-ancestors 'self'`,
-      "X-Robots-Tag": "noindex",
-      "Cache-Control": "private, no-store",
-    },
+function commonHeaders(contentSecurityPolicy: string): Headers {
+  return new Headers({
+    "X-Content-Type-Options": "nosniff",
+    "Referrer-Policy": "no-referrer",
+    "Strict-Transport-Security": "max-age=63072000; includeSubDomains",
+    "Permissions-Policy": "camera=(), microphone=(), geolocation=()",
+    "Content-Security-Policy": `${contentSecurityPolicy}; frame-ancestors 'self'`,
+    "X-Robots-Tag": "noindex",
   });
 }
 
-export async function GET(
+function notFoundResponse(): Response {
+  const headers = commonHeaders(MEDIA_SANDBOX);
+  headers.set("Content-Type", "text/plain; charset=utf-8");
+  headers.set("Cache-Control", "private, no-store");
+  return new Response("Not found", { status: 404, headers });
+}
+
+async function resolveContent(
   req: Request,
-  { params }: { params: Promise<{ slug: string }> },
-): Promise<Response> {
-  const { slug } = await params;
+  slug: string,
+): Promise<
+  | {
+      draft: NonNullable<Awaited<ReturnType<typeof getDraftBySlug>>>;
+      version: NonNullable<Awaited<ReturnType<typeof getVersionById>>>;
+    }
+  | Response
+> {
   const draft = await getDraftBySlug(slug);
   if (!draft || !draft.currentVersionId) return notFoundResponse();
-
-  // Public content stays independent of the auth backend. Private/password
-  // drafts still authorize through the single resolver below.
   let userId: string | null = null;
   let accessToken: string | undefined;
   if (draft.visibility !== "public") {
@@ -46,32 +50,74 @@ export async function GET(
       accessToken = readAccessCookie(req.headers.get("cookie"), draft.id);
     }
   }
-  const resolution = resolveDraftView(draft, {
-    userId,
-    accessToken,
-  });
-  if (resolution.state !== "granted") return notFoundResponse();
-
+  if (resolveDraftView(draft, { userId, accessToken }).state !== "granted") {
+    return notFoundResponse();
+  }
   const version = await getVersionById(draft.id, draft.currentVersionId);
   if (!version) return notFoundResponse();
+  return { draft, version };
+}
 
-  const bytes = await getStorage().get(version.storageKey);
-  if (!bytes) return notFoundResponse();
+function responseHeaders(
+  draft: NonNullable<Awaited<ReturnType<typeof getDraftBySlug>>>,
+  version: NonNullable<Awaited<ReturnType<typeof getVersionById>>>,
+): Headers {
+  const headers = commonHeaders(draft.kind === "html" ? HTML_SANDBOX : MEDIA_SANDBOX);
+  headers.set(
+    "Content-Type",
+    draft.kind === "html" ? "text/html; charset=utf-8" : version.contentType,
+  );
+  headers.set("Content-Disposition", "inline");
+  headers.set("ETag", `"${version.contentSha256}"`);
+  headers.set(
+    "Cache-Control",
+    draft.visibility === "public" ? "public, max-age=0, must-revalidate" : "private, no-store",
+  );
+  if (draft.kind === "video") headers.set("Accept-Ranges", "bytes");
+  return headers;
+}
 
-  // Copy into a fresh ArrayBuffer-backed view; satisfies BodyInit's typing.
-  return new Response(new Uint8Array(bytes), {
-    status: 200,
-    headers: {
-      "Content-Type": "text/html; charset=utf-8",
-      "Content-Length": String(bytes.byteLength),
-      "X-Content-Type-Options": "nosniff",
-      "Referrer-Policy": "no-referrer",
-      "Strict-Transport-Security": "max-age=63072000; includeSubDomains",
-      "Permissions-Policy": "camera=(), microphone=(), geolocation=()",
-      "Content-Security-Policy": `${CONTENT_SANDBOX}; frame-ancestors 'self'`,
-      "X-Robots-Tag": "noindex",
-      "Cache-Control":
-        draft.visibility === "public" ? "public, max-age=0, must-revalidate" : "private, no-store",
-    },
-  });
+type Params = { params: Promise<{ slug: string }> };
+
+export async function HEAD(req: Request, { params }: Params): Promise<Response> {
+  const resolved = await resolveContent(req, (await params).slug);
+  if (resolved instanceof Response) return resolved;
+  const headers = responseHeaders(resolved.draft, resolved.version);
+  headers.set("Content-Length", String(resolved.version.sizeBytes));
+  return new Response(null, { status: 200, headers });
+}
+
+export async function GET(req: Request, { params }: Params): Promise<Response> {
+  const resolved = await resolveContent(req, (await params).slug);
+  if (resolved instanceof Response) return resolved;
+  const { draft, version } = resolved;
+  const headers = responseHeaders(draft, version);
+  const etag = headers.get("ETag")!;
+  if (etagMatches(req.headers.get("if-none-match"), etag)) {
+    return new Response(null, { status: 304, headers });
+  }
+
+  let range: { start: number; end: number } | undefined;
+  const rangeHeader = draft.kind === "video" ? req.headers.get("range") : null;
+  if (rangeHeader) {
+    const ifRange = req.headers.get("if-range");
+    if (!ifRange || ifRange === etag) {
+      const parsed = parseSingleByteRange(rangeHeader, version.sizeBytes);
+      if (!parsed.ok) {
+        headers.set("Content-Range", `bytes */${version.sizeBytes}`);
+        return new Response(null, { status: 416, headers });
+      }
+      range = { start: parsed.start, end: parsed.end };
+    }
+  }
+
+  const object = await getStorage().open(version.storageKey, range);
+  if (!object) return notFoundResponse();
+  if (range) {
+    headers.set("Content-Range", `bytes ${range.start}-${range.end}/${version.sizeBytes}`);
+    headers.set("Content-Length", String(range.end - range.start + 1));
+    return new Response(object.body, { status: 206, headers });
+  }
+  headers.set("Content-Length", String(version.sizeBytes));
+  return new Response(object.body, { status: 200, headers });
 }

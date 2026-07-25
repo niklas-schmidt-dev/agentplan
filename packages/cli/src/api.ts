@@ -5,6 +5,7 @@ export type ApiDraft = {
   title: string;
   slug: string;
   visibility: "public" | "private" | "password";
+  kind: "html" | "image" | "video";
   version: number | null;
   url: string;
   createdAt: string;
@@ -16,6 +17,8 @@ export type ApiVersion = {
   version: number;
   contentSha256: string;
   sizeBytes: number;
+  contentType: string;
+  originalFilename: string | null;
   source: string;
   createdAt: string;
 };
@@ -59,7 +62,11 @@ export class AgentPlanApi {
     try {
       body = await response.json();
     } catch {
-      throw new ApiError(response.status, "BAD_RESPONSE", `Unexpected response (${response.status}).`);
+      throw new ApiError(
+        response.status,
+        "BAD_RESPONSE",
+        `Unexpected response (${response.status}).`,
+      );
     }
 
     if (!response.ok) {
@@ -113,6 +120,41 @@ export class AgentPlanApi {
     return this.request(`/api/v1/drafts/${encodeURIComponent(draftId)}/versions`, {
       method: "POST",
       body: this.uploadForm(bytes, filename, {}),
+    });
+  }
+
+  createUploadIntent(input: {
+    filename: string;
+    contentType: string;
+    sizeBytes: number;
+    target:
+      | {
+          type: "new";
+          title?: string;
+          visibility: "public" | "private" | "password";
+          password?: string;
+        }
+      | { type: "draft"; draftId: string };
+  }): Promise<{
+    intent: { id: string; status: string; expiresAt: string };
+    upload: { method: string; url: string; headers: Record<string, string> };
+  }> {
+    return this.request("/api/v1/uploads/intents", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(input),
+    });
+  }
+
+  completeUploadIntent(intentId: string): Promise<{ draft: ApiDraft; version: ApiVersion }> {
+    return this.request(`/api/v1/uploads/intents/${encodeURIComponent(intentId)}/complete`, {
+      method: "POST",
+    });
+  }
+
+  cancelUploadIntent(intentId: string): Promise<void> {
+    return this.request(`/api/v1/uploads/intents/${encodeURIComponent(intentId)}`, {
+      method: "DELETE",
     });
   }
 }

@@ -2,11 +2,15 @@ import Link from "next/link";
 import { listDraftsForOwner } from "@/db/queries/drafts";
 import { CopyButton } from "@/components/dashboard/copy-button";
 import { DashboardHeader } from "@/components/dashboard/header";
-import { NewDraftForm } from "@/components/dashboard/upload-form";
+import { NewDraftForm, PendingUploads } from "@/components/dashboard/upload-form";
 import { isAdmin, requireUser } from "@/lib/auth/session";
 import { formatBytes, formatRelativeTime } from "@/lib/format";
+import { getUserPlan, getUserStorageUsage } from "@/lib/limits/enforce";
+import { limitsForPlan } from "@/lib/limits/plans";
+import { listPendingUploadIntents } from "@/lib/uploads/service";
 import { draftUrl } from "@/lib/urls";
 import { visibilitySchema } from "@/lib/validation/api";
+import { enabledUploadKinds } from "@/lib/validation/media";
 
 export const metadata = { title: "Dashboard" };
 
@@ -20,11 +24,18 @@ export default async function DashboardPage({
   const visibility = visibilitySchema.safeParse(params.visibility);
   const search = params.q?.trim() || undefined;
 
-  const drafts = await listDraftsForOwner(user.id, {
-    search,
-    visibility: visibility.success ? visibility.data : undefined,
-    updatedWithinDays: params.recent === "1" ? 7 : undefined,
-  });
+  const [drafts, usage, plan, intents] = await Promise.all([
+    listDraftsForOwner(user.id, {
+      search,
+      visibility: visibility.success ? visibility.data : undefined,
+      updatedWithinDays: params.recent === "1" ? 7 : undefined,
+    }),
+    getUserStorageUsage(user.id),
+    getUserPlan(user.id),
+    listPendingUploadIntents(user.id),
+  ]);
+  const limits = limitsForPlan(plan);
+  const enabledKinds = [...new Set(["html" as const, ...enabledUploadKinds()])];
 
   return (
     <main className="mx-auto flex min-h-dvh w-full max-w-5xl flex-col gap-6 px-6 py-8">
@@ -33,9 +44,25 @@ export default async function DashboardPage({
       <details className="rounded-md border border-edge bg-surface p-4" open={drafts.length === 0}>
         <summary className="cursor-pointer font-mono text-sm text-lime">+ new draft</summary>
         <div className="pt-4">
-          <NewDraftForm />
+          <NewDraftForm enabledKinds={enabledKinds} />
         </div>
       </details>
+
+      <section className="rounded-md border border-edge bg-surface px-4 py-3 font-mono text-xs text-ink-muted">
+        storage: {formatBytes(usage.committedBytes)} committed
+        {usage.reservedBytes > 0 ? ` + ${formatBytes(usage.reservedBytes)} reserved` : ""}
+        {" / "}
+        {limits.maxStorageBytes === null ? "unlimited" : formatBytes(limits.maxStorageBytes)}
+      </section>
+
+      <PendingUploads
+        intents={intents.map((intent) => ({
+          id: intent.id,
+          filename: intent.originalFilename,
+          reservedBytes: intent.expectedBytes,
+          expiresAt: intent.expiresAt.toISOString(),
+        }))}
+      />
 
       <form method="GET" className="flex flex-wrap items-center gap-3 font-mono text-xs">
         <label className="flex items-center gap-2 text-ink-muted">
@@ -60,7 +87,13 @@ export default async function DashboardPage({
           <option value="password">password</option>
         </select>
         <label className="flex items-center gap-1.5 text-ink-muted">
-          <input type="checkbox" name="recent" value="1" defaultChecked={params.recent === "1"} className="accent-lime" />
+          <input
+            type="checkbox"
+            name="recent"
+            value="1"
+            defaultChecked={params.recent === "1"}
+            className="accent-lime"
+          />
           updated this week
         </label>
         <button
@@ -73,7 +106,8 @@ export default async function DashboardPage({
 
       {drafts.length === 0 ? (
         <p className="font-mono text-sm text-ink-faint">
-          No drafts{search || visibility.success || params.recent ? " match these filters" : " yet"}.
+          No drafts{search || visibility.success || params.recent ? " match these filters" : " yet"}
+          .
         </p>
       ) : (
         <ul className="flex flex-col divide-y divide-edge rounded-md border border-edge bg-surface">
@@ -90,6 +124,8 @@ export default async function DashboardPage({
                   <span className={draft.visibility === "public" ? "text-lime" : ""}>
                     {draft.visibility}
                   </span>
+                  {" · "}
+                  {draft.kind}
                   {" · "}
                   {draft.currentVersion
                     ? `v${draft.currentVersion.versionNumber} · ${formatBytes(draft.currentVersion.sizeBytes)}`

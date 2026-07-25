@@ -1,22 +1,22 @@
 #!/usr/bin/env node
 
 import { spawn } from "node:child_process";
+import { createReadStream } from "node:fs";
 import { readFile, stat } from "node:fs/promises";
 import path from "node:path";
 import { parseArgs } from "node:util";
+import { uploadSpecFor, type UploadSpec } from "@agentplan/upload-contract";
 import { AgentPlanApi, ApiError, DEFAULT_API_URL, type ApiDraft } from "./api.js";
 import { clearConfig, loadConfig, saveConfig } from "./config.js";
 import { hasNewDraftOnlyOptions, type UploadFlags } from "./upload-options.js";
 import { isSafeHttpUrl, normalizeApiBaseUrl } from "./url.js";
 
-const MAX_UPLOAD_BYTES = 2 * 1024 * 1024;
-
-const USAGE = `agentplan — publish agent-generated HTML behind stable links
+const USAGE = `agentplan — publish HTML, images, and MP4 behind stable links
 
 Usage:
   agentplan login                       store an API token (created in the dashboard)
   agentplan logout                      remove the stored token
-  agentplan upload <file.html>          upload a new draft (private by default)
+  agentplan upload <file>               upload a new draft (private by default)
     --public | --private                set visibility
     --password <password>               protect the draft with a password
     --password-stdin                    read the draft password from stdin (safer)
@@ -121,18 +121,53 @@ async function commandLogout(): Promise<void> {
   process.stderr.write("Logged out. Stored token removed.\n");
 }
 
-async function readHtmlFile(filePath: string): Promise<{ bytes: Uint8Array; filename: string }> {
+async function inspectUploadFile(
+  filePath: string,
+): Promise<{ filename: string; sizeBytes: number; spec: UploadSpec }> {
   const filename = path.basename(filePath);
-  if (!/\.html?$/i.test(filename)) fail("Only .html and .htm files are supported.", 2);
-  let size: number;
+  let sizeBytes: number;
   try {
-    size = (await stat(filePath)).size;
+    sizeBytes = (await stat(filePath)).size;
   } catch {
     fail(`Cannot read ${filePath}.`, 2);
   }
-  if (size === 0) fail("The file is empty.", 2);
-  if (size > MAX_UPLOAD_BYTES) fail("The file exceeds the 2 MiB limit.", 2);
-  return { bytes: new Uint8Array(await readFile(filePath)), filename };
+  const spec = uploadSpecFor(filename, null);
+  if (!spec) fail("Supported files are HTML, JPEG, PNG, WebP, GIF, AVIF, and MP4.", 2);
+  if (sizeBytes === 0) fail("The file is empty.", 2);
+  if (sizeBytes > spec.maxBytes) {
+    fail(`The file exceeds the ${spec.maxBytes / (1024 * 1024)} MiB limit.`, 2);
+  }
+  return { filename, sizeBytes, spec };
+}
+
+async function uploadProviderFile(
+  filePath: string,
+  sizeBytes: number,
+  upload: { method: string; url: string; headers: Record<string, string> },
+): Promise<void> {
+  const headers = new Headers(upload.headers);
+  headers.set("content-length", String(sizeBytes));
+  let response: Response;
+  try {
+    response = await fetch(upload.url, {
+      method: upload.method,
+      headers,
+      body: createReadStream(filePath),
+      redirect: "error",
+      referrerPolicy: "no-referrer",
+      credentials: "omit",
+      duplex: "half",
+    } as RequestInit & { duplex: "half" });
+  } catch (error) {
+    throw new ApiError(0, "STORAGE_UPLOAD_FAILED", `Storage upload failed: ${String(error)}`);
+  }
+  if (!response.ok) {
+    throw new ApiError(
+      response.status,
+      "STORAGE_UPLOAD_FAILED",
+      `Storage upload failed (${response.status}).`,
+    );
+  }
 }
 
 async function readPasswordFromStdin(): Promise<string> {
@@ -158,7 +193,7 @@ function printDraft(draft: ApiDraft, action: string): void {
 }
 
 async function commandUpload(file: string | undefined, flags: UploadFlags): Promise<void> {
-  if (!file) fail("Usage: agentplan upload <file.html>", 2);
+  if (!file) fail("Usage: agentplan upload <file>", 2);
   if (flags.password !== undefined && flags["password-stdin"]) {
     fail("Use only one of --password or --password-stdin.", 2);
   }
@@ -175,10 +210,11 @@ async function commandUpload(file: string | undefined, flags: UploadFlags): Prom
   }
   const password = flags["password-stdin"] ? await readPasswordFromStdin() : flags.password;
 
-  const { bytes, filename } = await readHtmlFile(file);
+  const { filename, sizeBytes, spec } = await inspectUploadFile(file);
   const api = await resolveApi();
 
-  if (flags.draft) {
+  if (spec.kind === "html" && flags.draft) {
+    const bytes = new Uint8Array(await readFile(file));
     const result = await api.addVersion(flags.draft, bytes, filename);
     if (flags.json) {
       process.stdout.write(`${JSON.stringify(result)}\n`);
@@ -188,18 +224,43 @@ async function commandUpload(file: string | undefined, flags: UploadFlags): Prom
     return;
   }
 
-  const visibility = flags.public
+  const visibility: "public" | "private" | "password" = flags.public
     ? "public"
     : password !== undefined
       ? "password"
       : flags.private
         ? "private"
-        : undefined;
-  const result = await api.createDraft(bytes, filename, {
-    title: flags.title,
-    visibility,
-    password,
-  });
+        : "private";
+  let result: { draft: ApiDraft; version?: unknown };
+  if (spec.kind === "html") {
+    const bytes = new Uint8Array(await readFile(file));
+    result = await api.createDraft(bytes, filename, {
+      title: flags.title,
+      visibility,
+      password,
+    });
+  } else {
+    const intent = await api.createUploadIntent({
+      filename,
+      contentType: spec.contentType,
+      sizeBytes,
+      target: flags.draft
+        ? { type: "draft", draftId: flags.draft }
+        : {
+            type: "new",
+            title: flags.title,
+            visibility,
+            password,
+          },
+    });
+    try {
+      await uploadProviderFile(file, sizeBytes, intent.upload);
+      result = await api.completeUploadIntent(intent.intent.id);
+    } catch (error) {
+      await api.cancelUploadIntent(intent.intent.id).catch(() => undefined);
+      throw error;
+    }
+  }
   if (flags.json) {
     process.stdout.write(`${JSON.stringify(result)}\n`);
   } else {

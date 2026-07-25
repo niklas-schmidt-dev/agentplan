@@ -7,6 +7,7 @@ export function serializeDraft(draft: Draft, versionNumber: number | null) {
     title: draft.title,
     slug: draft.slug,
     visibility: draft.visibility,
+    kind: draft.kind,
     version: versionNumber,
     url: draftUrl(draft.slug),
     createdAt: draft.createdAt.toISOString(),
@@ -20,6 +21,8 @@ export function serializeVersion(version: DraftVersion) {
     version: version.versionNumber,
     contentSha256: version.contentSha256,
     sizeBytes: version.sizeBytes,
+    contentType: version.contentType,
+    originalFilename: version.originalFilename,
     source: version.source,
     createdAt: version.createdAt.toISOString(),
   };

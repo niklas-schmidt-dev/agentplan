@@ -56,11 +56,39 @@ export default async function DraftViewerPage({
     );
   }
 
+  const contentUrl = `/p/${encodeURIComponent(slug)}/content`;
+  if (resolution.draft.kind === "image") {
+    return (
+      <main className="fixed inset-0 grid min-h-dvh place-items-center bg-black p-4">
+        {/* The raw response owns MIME validation and CSP; avoid next/image because it drops auth. */}
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          src={contentUrl}
+          alt={resolution.draft.title}
+          className="max-h-full max-w-full object-contain"
+        />
+      </main>
+    );
+  }
+  if (resolution.draft.kind === "video") {
+    return (
+      <main className="fixed inset-0 grid min-h-dvh place-items-center bg-black p-4">
+        <video
+          src={contentUrl}
+          controls
+          playsInline
+          preload="metadata"
+          className="max-h-full max-w-full"
+          aria-label={resolution.draft.title}
+        />
+      </main>
+    );
+  }
   return (
     // Hostile-HTML boundary: never add allow-same-origin or any
     // allow-top-navigation variant to this sandbox.
     <iframe
-      src={`/p/${encodeURIComponent(slug)}/content`}
+      src={contentUrl}
       sandbox="allow-scripts allow-forms allow-modals allow-popups"
       title={resolution.draft.title}
       className="fixed inset-0 h-dvh w-screen border-0 bg-white"

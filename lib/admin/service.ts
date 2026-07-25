@@ -22,9 +22,11 @@ import {
   draftVersions,
   drafts,
   sessions,
+  uploadIntents,
   userBlocks,
   users,
   type Draft,
+  type DraftKind,
   type DraftVersion,
   type User,
   type UserPlan,
@@ -34,6 +36,7 @@ import { assertCurrentAdmin, countActiveAdmins } from "@/lib/admin/authorization
 import { recordAuditEvent } from "@/lib/audit/events";
 import { normalizeBlockedEmail } from "@/lib/auth/blocked-identities";
 import { getStorage } from "@/lib/storage";
+import { queueStorageDeletion, tryDeleteStorageKey } from "@/lib/storage/cleanup";
 
 const activeTokenFilter = and(
   isNull(apiTokens.revokedAt),
@@ -78,6 +81,7 @@ export async function getAdminStats(): Promise<AdminStats> {
 export type AdminUserRow = User & {
   draftCount: number;
   storageBytes: number;
+  reservedBytes: number;
   tokenCount: number;
   blockId: string | null;
   blockReason: string | null;
@@ -102,7 +106,7 @@ export async function listUsersWithUsage({
   if (allUsers.length === 0) return [];
   const pageUserIds = allUsers.map((user) => user.id);
 
-  const [draftAgg, storageAgg, tokenAgg, blockRows] = await Promise.all([
+  const [draftAgg, storageAgg, reservedAgg, tokenAgg, blockRows] = await Promise.all([
     db
       .select({ ownerId: drafts.ownerId, drafts: count() })
       .from(drafts)
@@ -114,6 +118,17 @@ export async function listUsersWithUsage({
       .innerJoin(drafts, eq(draftVersions.draftId, drafts.id))
       .where(and(liveDraftFilter, inArray(drafts.ownerId, pageUserIds)))
       .groupBy(drafts.ownerId),
+    db
+      .select({ ownerId: uploadIntents.ownerId, bytes: sum(uploadIntents.expectedBytes) })
+      .from(uploadIntents)
+      .where(
+        and(
+          inArray(uploadIntents.ownerId, pageUserIds),
+          eq(uploadIntents.status, "pending"),
+          gt(uploadIntents.expiresAt, sql`now()`),
+        ),
+      )
+      .groupBy(uploadIntents.ownerId),
     db
       .select({ userId: apiTokens.userId, tokens: count() })
       .from(apiTokens)
@@ -131,6 +146,7 @@ export async function listUsersWithUsage({
 
   const draftsByOwner = new Map(draftAgg.map((row) => [row.ownerId, row.drafts]));
   const bytesByOwner = new Map(storageAgg.map((row) => [row.ownerId, Number(row.bytes ?? 0)]));
+  const reservedByOwner = new Map(reservedAgg.map((row) => [row.ownerId, Number(row.bytes ?? 0)]));
   const tokensByUser = new Map(tokenAgg.map((row) => [row.userId, row.tokens]));
   const blocksByUser = new Map(blockRows.map((row) => [row.userId, row]));
 
@@ -138,6 +154,7 @@ export async function listUsersWithUsage({
     ...user,
     draftCount: draftsByOwner.get(user.id) ?? 0,
     storageBytes: bytesByOwner.get(user.id) ?? 0,
+    reservedBytes: reservedByOwner.get(user.id) ?? 0,
     tokenCount: tokensByUser.get(user.id) ?? 0,
     blockId: blocksByUser.get(user.id)?.id ?? null,
     blockReason: blocksByUser.get(user.id)?.reason ?? null,
@@ -229,7 +246,7 @@ export async function listIdentityBlocks({
 export type AdminDraftRow = Draft & {
   ownerEmail: string;
   ownerBlocked: boolean;
-  currentVersion: Pick<DraftVersion, "versionNumber" | "sizeBytes"> | null;
+  currentVersion: Pick<DraftVersion, "versionNumber" | "sizeBytes" | "contentType"> | null;
 };
 
 export type AdminDraftPage = {
@@ -241,11 +258,13 @@ export type AdminDraftPage = {
 export async function listDraftsForAdmin({
   search,
   ownerId,
+  kind,
   limit = 50,
   offset = 0,
 }: {
   search?: string;
   ownerId?: string;
+  kind?: DraftKind;
   limit?: number;
   offset?: number;
 } = {}): Promise<AdminDraftPage> {
@@ -255,6 +274,7 @@ export async function listDraftsForAdmin({
   const normalizedSearch = search?.trim().slice(0, 200);
   const conditions = [liveDraftFilter];
   if (ownerId) conditions.push(eq(drafts.ownerId, ownerId));
+  if (kind) conditions.push(eq(drafts.kind, kind));
   if (normalizedSearch) {
     const pattern = `%${normalizedSearch}%`;
     conditions.push(
@@ -276,6 +296,7 @@ export async function listDraftsForAdmin({
         ownerBlockedAt: users.blockedAt,
         versionNumber: draftVersions.versionNumber,
         sizeBytes: draftVersions.sizeBytes,
+        contentType: draftVersions.contentType,
       })
       .from(drafts)
       .innerJoin(users, eq(drafts.ownerId, users.id))
@@ -298,6 +319,7 @@ export async function listDraftsForAdmin({
           : {
               versionNumber: row.versionNumber,
               sizeBytes: row.sizeBytes ?? 0,
+              contentType: row.contentType ?? "application/octet-stream",
             },
     })),
   };
@@ -391,17 +413,50 @@ export async function removeDraftAsAdmin(
   actor: { userId: string },
   draftId: string,
 ): Promise<{ ownerId: string; slug: string } | null> {
-  return getDb().transaction(async (tx) => {
+  const result = await getDb().transaction(async (tx) => {
     await tx.execute(sql`select pg_advisory_xact_lock(hashtext('agentplan:admin-membership'))`);
     await assertCurrentAdmin(tx, actor.userId);
 
+    const [target] = await tx
+      .select({ ownerId: drafts.ownerId })
+      .from(drafts)
+      .where(and(eq(drafts.id, draftId), isNull(drafts.deletedAt)));
+    if (!target) return null;
+    await tx.execute(
+      sql`select pg_advisory_xact_lock(hashtext('agentplan:user-storage'), hashtext(${target.ownerId}))`,
+    );
     const [removed] = await tx
       .update(drafts)
       .set({ deletedAt: sql`now()`, updatedAt: sql`now()` })
       .where(and(eq(drafts.id, draftId), isNull(drafts.deletedAt)))
-      .returning({ id: drafts.id, ownerId: drafts.ownerId, slug: drafts.slug });
+      .returning({
+        id: drafts.id,
+        ownerId: drafts.ownerId,
+        slug: drafts.slug,
+        kind: drafts.kind,
+      });
     if (!removed) return null;
 
+    const pending = await tx
+      .update(uploadIntents)
+      .set({ status: "cancelled", failureCode: "MODERATED", updatedAt: sql`now()` })
+      .where(and(eq(uploadIntents.targetDraftId, draftId), eq(uploadIntents.status, "pending")))
+      .returning({
+        stagingKey: uploadIntents.stagingKey,
+        finalKey: uploadIntents.finalKey,
+        expiresAt: uploadIntents.expiresAt,
+      });
+    for (const intent of pending) {
+      await queueStorageDeletion(
+        {
+          storageKey: intent.stagingKey,
+          reason: "draft_moderated",
+          notBefore: intent.expiresAt,
+        },
+        tx,
+      );
+      await queueStorageDeletion({ storageKey: intent.finalKey, reason: "draft_moderated" }, tx);
+    }
     await tx.insert(auditEvents).values({
       eventType: "draft.moderated",
       userId: actor.userId,
@@ -409,10 +464,20 @@ export async function removeDraftAsAdmin(
       metadata: {
         ownerId: removed.ownerId,
         slug: removed.slug,
+        kind: removed.kind,
+        cancelledUploadIntents: pending.length,
       },
     });
-    return { ownerId: removed.ownerId, slug: removed.slug };
+    return { ownerId: removed.ownerId, slug: removed.slug, pending };
   });
+  if (!result) return null;
+  for (const intent of result.pending) {
+    await Promise.all([
+      tryDeleteStorageKey(intent.stagingKey),
+      tryDeleteStorageKey(intent.finalKey),
+    ]);
+  }
+  return { ownerId: result.ownerId, slug: result.slug };
 }
 
 function normalizeBlockReason(reason: string): string {
@@ -553,6 +618,7 @@ type UserDeletionMetadata = {
   storageCleanup: "pending" | "complete";
   objectsDeleted?: number;
   identityBlockId?: string;
+  storageCleanupNotBefore?: string;
 };
 
 function parsePendingDeletionMetadata(metadata: unknown): UserDeletionMetadata | null {
@@ -571,6 +637,10 @@ function parsePendingDeletionMetadata(metadata: unknown): UserDeletionMetadata |
     storageCleanup: candidate.storageCleanup === "complete" ? "complete" : "pending",
     objectsDeleted: candidate.objectsDeleted,
     identityBlockId: candidate.identityBlockId,
+    storageCleanupNotBefore:
+      typeof candidate.storageCleanupNotBefore === "string"
+        ? candidate.storageCleanupNotBefore
+        : undefined,
   };
 }
 
@@ -581,6 +651,12 @@ async function purgeUserDeletionObjects(
   try {
     for (const storageKey of metadata.storageKeys) {
       await getStorage().delete(storageKey);
+    }
+    const notBefore = metadata.storageCleanupNotBefore
+      ? new Date(metadata.storageCleanupNotBefore)
+      : null;
+    if (notBefore && notBefore.getTime() > Date.now()) {
+      return false;
     }
     await getDb()
       .update(auditEvents)
@@ -726,12 +802,32 @@ async function deleteUser(
       .from(draftVersions)
       .innerJoin(drafts, eq(draftVersions.draftId, drafts.id))
       .where(eq(drafts.ownerId, targetUserId));
+    const intents = await tx
+      .select({
+        stagingKey: uploadIntents.stagingKey,
+        finalKey: uploadIntents.finalKey,
+        expiresAt: uploadIntents.expiresAt,
+      })
+      .from(uploadIntents)
+      .where(and(eq(uploadIntents.ownerId, targetUserId), ne(uploadIntents.status, "completed")));
+    const storageKeys = Array.from(
+      new Set([
+        ...versions.map((version) => version.storageKey),
+        ...intents.flatMap((intent) => [intent.stagingKey, intent.finalKey]),
+      ]),
+    );
+    const latestExpiry = intents.reduce<Date | null>(
+      (latest, intent) =>
+        latest === null || intent.expiresAt > latest ? intent.expiresAt : latest,
+      null,
+    );
 
     const metadata: UserDeletionMetadata = {
       targetUserId,
-      storageKeys: versions.map((version) => version.storageKey),
+      storageKeys,
       storageCleanup: "pending",
       identityBlockId,
+      storageCleanupNotBefore: latestExpiry?.toISOString(),
     };
     const [event] = await tx
       .insert(auditEvents)

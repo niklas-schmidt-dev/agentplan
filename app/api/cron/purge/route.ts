@@ -4,6 +4,8 @@ import { purgeExpiredAuditEvents } from "@/lib/audit/events";
 import { purgeDeletedDrafts, purgeExpiredRateLimits } from "@/lib/drafts/purge";
 import { constantTimeEqual } from "@/lib/security/compare";
 import { purgeRetiredTokens } from "@/lib/tokens/service";
+import { purgeStorageDeletionJobs } from "@/lib/storage/cleanup";
+import { purgeExpiredUploadIntents } from "@/lib/uploads/service";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -18,10 +20,12 @@ export async function GET(req: Request): Promise<Response> {
   }
 
   try {
-    const [drafts, users, tokens] = await Promise.all([
+    const [drafts, users, tokens, storage, uploadIntents] = await Promise.all([
       purgeDeletedDrafts(),
       purgePendingUserDeletionObjects(),
       purgeRetiredTokens(),
+      purgeStorageDeletionJobs(),
+      purgeExpiredUploadIntents(),
     ]);
     await purgeExpiredRateLimits();
     const auditEvents = await purgeExpiredAuditEvents();
@@ -31,6 +35,9 @@ export async function GET(req: Request): Promise<Response> {
       userDeletionsPurged: users.purged,
       userDeletionsFailed: users.failed,
       retiredTokensPurged: tokens,
+      storageObjectsPurged: storage.purged,
+      storageObjectsFailed: storage.failed,
+      uploadIntentsExpired: uploadIntents,
       auditEventsPurged: auditEvents,
     });
   } catch (error) {

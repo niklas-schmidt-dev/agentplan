@@ -1,9 +1,9 @@
 # AgentPlan
 
-Publish agent-generated static HTML documents behind stable, shareable links.
+Publish HTML documents, raster images, and MP4 video behind stable, shareable links.
 
 AgentPlan is a small service for AI agents (and their humans) that need to turn a
-generated HTML file — a plan, a report, a dashboard — into a URL. Upload from the
+generated file — a plan, report, image, or demo video — into a URL. Upload from the
 browser, the API, or the CLI:
 
 [![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2Fniklas-schmidt-dev%2Fagentplan&project-name=agentplan&repository-name=agentplan&products=%5B%7B%22type%22%3A%22integration%22%2C%22protocol%22%3A%22storage%22%2C%22productSlug%22%3A%22neon%22%2C%22integrationSlug%22%3A%22neon%22%7D%2C%7B%22type%22%3A%22blob%22%7D%5D&envDescription=AgentPlan+needs+an+initial+admin+email%2C+an+auth+secret%2C+a+secure+email-delivery+webhook%2C+and+a+cron+secret.+Neon+and+Blob+are+provisioned+during+this+flow.&envLink=https%3A%2F%2Fgithub.com%2Fniklas-schmidt-dev%2Fagentplan%2Fblob%2Fmain%2Fdocs%2Fself-hosting.md%23required-values&env=ADMIN_BOOTSTRAP_EMAIL&env=BETTER_AUTH_SECRET&env=AUTH_EMAIL_WEBHOOK_URL&env=AUTH_EMAIL_WEBHOOK_SECRET&env=CRON_SECRET)
@@ -23,7 +23,7 @@ the link and the password).
 - **Postgres** with Drizzle ORM for drafts, versions, tokens, and audit events.
   The one-click deployment provisions Neon; PlanetScale Postgres and other
   compatible providers are supported.
-- **Private object storage** for all uploaded HTML. The one-click deployment
+- **Private object storage** for all uploaded content. The one-click deployment
   provisions private Vercel Blob; Cloudflare R2 remains available as an
   S3-compatible alternative. Visibility is enforced by the application, never
   by an object URL.
@@ -38,6 +38,9 @@ the link and the password).
   it is served from an isolated route and displayed inside a sandboxed iframe
   (`sandbox="allow-scripts allow-forms allow-modals allow-popups"`, no
   `allow-same-origin`).
+- Raster images (JPEG, PNG, WebP, GIF, and AVIF) and MP4 files use short-lived
+  direct-upload capabilities, staging-to-final provider copies, signature/magic
+  validation, immutable versions, and native media viewers.
 
 ## Architecture
 
@@ -162,6 +165,11 @@ DELETE /api/v1/drafts/:id
 POST   /api/v1/drafts/:id/versions                  (multipart file upload)
 GET    /api/v1/drafts/:id/versions
 POST   /api/v1/drafts/:id/versions/:versionId/restore
+POST   /api/v1/uploads/intents                      (image/video reservation)
+GET    /api/v1/uploads/intents
+GET    /api/v1/uploads/intents/:id
+POST   /api/v1/uploads/intents/:id/complete
+DELETE /api/v1/uploads/intents/:id
 GET    /api/v1/tokens                               (session only)
 POST   /api/v1/tokens                               (session only)
 DELETE /api/v1/tokens/:id                           (session only)
@@ -178,16 +186,16 @@ Errors have a stable shape agents can match on:
 Free-plan limits (all server-enforced; tunable via `AP_*` env vars, defaults in
 `lib/limits/plans.ts`):
 
-| Limit                          | Default                                          |
-| ------------------------------ | ------------------------------------------------ |
-| Upload size                    | 2 MiB per HTML file                              |
-| Drafts per user                | 100                                              |
-| Versions kept per draft        | 100 (oldest are pruned, uploads never hard-fail) |
-| Total storage per user         | 250 MiB                                          |
-| Active API tokens per user     | 25                                               |
-| Uploads per user               | 30 / 10 min and 300 / day                        |
-| Token create/revoke operations | 60 / hour and 200 / day                          |
-| Draft password attempts        | 10 / 15 min per draft + IP                       |
+| Limit                          | Default                               |
+| ------------------------------ | ------------------------------------- |
+| Upload size                    | HTML 2 MiB; image 10 MiB; MP4 100 MiB |
+| Drafts per user                | 100                                   |
+| Versions kept per draft        | HTML 100; image 20; video 2           |
+| Total storage per user         | 300 MiB                               |
+| Active API tokens per user     | 25                                    |
+| Uploads per user               | 30 / 10 min and 300 / day             |
+| Token create/revoke operations | 60 / hour and 200 / day               |
+| Draft password attempts        | 10 / 15 min per draft + IP            |
 
 Exceeded quotas return `403 QUOTA_EXCEEDED`; rate limits return `429 RATE_LIMITED`
 with a `Retry-After` header. Rate limiting is a fixed-window counter in Postgres, so
@@ -195,6 +203,12 @@ it needs no extra infrastructure and is correct across serverless instances.
 
 Soft-deleted drafts (and their stored objects) are hard-deleted after 7 days by a
 daily cron (`/api/cron/purge`, authorized via `CRON_SECRET`).
+
+The 300 MiB default also applies to existing self-hosted deployments after
+upgrade unless `AP_MAX_STORAGE_BYTES_PER_USER` is explicitly set. Media is
+rollout-gated: the default `AP_ENABLED_UPLOAD_KINDS=html` preserves HTML-only
+behavior; use `html,image` after provider checks, then add `video` only after the
+documented Range and long-playback tests.
 Revoked/expired token rows are removed after 30 days, and ordinary audit events
 after 180 days. Pending user-deletion cleanup jobs are retained until object cleanup
 completes; their object keys and target identifier are erased at completion.
@@ -237,7 +251,7 @@ threat model. In short:
 - Uploaded HTML is served only from an isolated route inside a sandboxed iframe, in an
   opaque origin. Uploaded scripts run, but cannot read AgentPlan cookies, touch the
   parent DOM, navigate the parent, or make credentialed requests to AgentPlan.
-- All HTML lives in private Vercel Blob or a private R2 bucket; visibility is an
+- All content lives in private Vercel Blob or a private R2 bucket; visibility is an
   application-level decision enforced on every request. Private drafts return
   `404` to non-owners.
 - Password-protected drafts store a salted scrypt hash of the password. Entering

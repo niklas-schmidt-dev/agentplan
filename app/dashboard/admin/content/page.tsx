@@ -14,15 +14,18 @@ function contentHref({
   page,
   search,
   owner,
+  kind,
 }: {
   page?: number;
   search?: string;
   owner?: string;
+  kind?: string;
 }): string {
   const query = new URLSearchParams();
   if (page && page > 1) query.set("page", String(page));
   if (search) query.set("q", search);
   if (owner) query.set("owner", owner);
+  if (kind) query.set("kind", kind);
   const suffix = query.toString();
   return `/dashboard/admin/content${suffix ? `?${suffix}` : ""}`;
 }
@@ -30,7 +33,7 @@ function contentHref({
 export default async function AdminContentPage({
   searchParams,
 }: {
-  searchParams: Promise<{ page?: string; q?: string; owner?: string }>;
+  searchParams: Promise<{ page?: string; q?: string; owner?: string; kind?: string }>;
 }) {
   const admin = await requireAdmin();
   const params = await searchParams;
@@ -38,15 +41,20 @@ export default async function AdminContentPage({
   const page = Number.isSafeInteger(parsedPage) && parsedPage > 0 ? parsedPage : 1;
   const search = params.q?.trim().slice(0, 200) || undefined;
   const owner = params.owner?.trim().slice(0, 255) || undefined;
+  const kind =
+    params.kind === "html" || params.kind === "image" || params.kind === "video"
+      ? params.kind
+      : undefined;
   const result = await listDraftsForAdmin({
     search,
     ownerId: owner,
+    kind,
     limit: DRAFTS_PER_PAGE,
     offset: (page - 1) * DRAFTS_PER_PAGE,
   });
   const totalPages = Math.max(1, Math.ceil(result.total / DRAFTS_PER_PAGE));
   if (page > totalPages) {
-    redirect(contentHref({ page: totalPages, search, owner }));
+    redirect(contentHref({ page: totalPages, search, owner, kind }));
   }
   const retentionDays = deletedDraftRetentionDays();
 
@@ -87,13 +95,24 @@ export default async function AdminContentPage({
             className="w-full rounded border border-edge bg-surface px-3 py-2 text-sm text-ink placeholder:text-ink-faint"
           />
         </label>
+        <select
+          name="kind"
+          defaultValue={kind ?? ""}
+          className="rounded border border-edge bg-surface px-3 py-2 text-ink-muted"
+          aria-label="Filter by kind"
+        >
+          <option value="">all kinds</option>
+          <option value="html">HTML</option>
+          <option value="image">image</option>
+          <option value="video">video</option>
+        </select>
         <button
           type="submit"
           className="rounded border border-edge px-3 py-2 text-ink-muted transition-colors hover:border-lime hover:text-lime"
         >
           search
         </button>
-        {search || owner ? (
+        {search || owner || kind ? (
           <Link
             href="/dashboard/admin/content"
             className="rounded px-2 py-2 text-ink-faint transition-colors hover:text-ink"
@@ -130,6 +149,9 @@ export default async function AdminContentPage({
                 <div className="min-w-0 flex-1">
                   <p className="truncate text-sm font-medium text-ink">{draft.title}</p>
                   <p className="truncate font-mono text-xs text-ink-faint">
+                    <span className="mr-1 rounded-sm border border-edge px-1 py-0.5 text-ink-muted">
+                      {draft.kind}
+                    </span>
                     <span className={draft.visibility === "public" ? "text-lime" : ""}>
                       {draft.visibility}
                     </span>
@@ -137,7 +159,7 @@ export default async function AdminContentPage({
                     {draft.currentVersion
                       ? `v${draft.currentVersion.versionNumber} · ${formatBytes(
                           draft.currentVersion.sizeBytes,
-                        )}`
+                        )} · ${draft.currentVersion.contentType}`
                       : "no version"}
                     {" · "}
                     {draft.ownerEmail}
@@ -180,7 +202,7 @@ export default async function AdminContentPage({
           {page > 1 ? (
             <Link
               className="transition-colors hover:text-lime"
-              href={contentHref({ page: page - 1, search, owner })}
+              href={contentHref({ page: page - 1, search, owner, kind })}
             >
               ← previous
             </Link>
@@ -193,7 +215,7 @@ export default async function AdminContentPage({
           {page < totalPages ? (
             <Link
               className="transition-colors hover:text-lime"
-              href={contentHref({ page: page + 1, search, owner })}
+              href={contentHref({ page: page + 1, search, owner, kind })}
             >
               next →
             </Link>

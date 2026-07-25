@@ -8,7 +8,8 @@
     "node": ">=24"
   },
   "workspaces": [
-    "packages/cli"
+    "packages/cli",
+    "packages/upload-contract"
   ],
   "scripts": {
     "dev": "next dev",
@@ -28,11 +29,14 @@
     "check": "npm run lint && npm run typecheck && npm run test && npm run build"
   },
   "dependencies": {
+    "@agentplan/upload-contract": "*",
     "@aws-sdk/client-s3": "^3.1092.0",
+    "@aws-sdk/s3-request-presigner": "^3.1094.0",
     "@vercel/blob": "^2.6.1",
     "@vercel/functions": "^3.7.5",
     "better-auth": "^1.6.23",
     "drizzle-orm": "^0.45.2",
+    "file-type": "^22.0.1",
     "geist": "^1.7.2",
     "jose": "^6.2.3",
     "next": "^16.2.11",

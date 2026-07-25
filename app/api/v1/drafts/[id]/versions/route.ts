@@ -3,6 +3,7 @@ import { authenticateApiRequest, isFailure } from "@/lib/api/auth";
 import {
   insufficientScope,
   internalError,
+  apiError,
   limitErrorResponse,
   notFound,
   unauthorized,
@@ -27,6 +28,13 @@ export async function POST(req: Request, { params }: Params): Promise<Response> 
   if (!id.success) return notFound();
   const draft = await getDraftForOwner(id.data, actor.userId);
   if (!draft) return notFound();
+  if (draft.kind !== "html") {
+    return apiError(
+      409,
+      "UPLOAD_KIND_MISMATCH",
+      `This draft accepts ${draft.kind} versions through the direct-upload API.`,
+    );
+  }
 
   try {
     await consumeUploadRateLimit(actor.userId);
@@ -42,6 +50,7 @@ export async function POST(req: Request, { params }: Params): Promise<Response> 
     const { version, draft: updatedDraft } = await addVersionToDraft({
       draft,
       bytes: upload.bytes,
+      originalFilename: upload.originalFilename,
       source: actor.kind === "token" ? "api_token" : "browser",
       tokenId: actor.kind === "token" ? actor.tokenId : undefined,
       rateLimitConsumed: true,

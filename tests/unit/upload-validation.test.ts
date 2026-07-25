@@ -1,9 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  MAX_UPLOAD_BYTES,
-  titleFromFilename,
-  validateUpload,
-} from "@/lib/validation/upload";
+import { MAX_UPLOAD_BYTES, titleFromFilename, validateUpload } from "@/lib/validation/upload";
 
 describe("validateUpload", () => {
   const ok = { filename: "plan.html", contentType: "text/html", sizeBytes: 100 };
@@ -25,9 +21,7 @@ describe("validateUpload", () => {
   });
 
   it("rejects explicitly non-HTML content types", () => {
-    expect(validateUpload({ ...ok, contentType: "image/svg+xml" })?.code).toBe(
-      "INVALID_FILE_TYPE",
-    );
+    expect(validateUpload({ ...ok, contentType: "image/svg+xml" })?.code).toBe("INVALID_FILE_TYPE");
     expect(validateUpload({ ...ok, contentType: "application/octet-stream" })?.code).toBe(
       "INVALID_FILE_TYPE",
     );
@@ -38,9 +32,7 @@ describe("validateUpload", () => {
   });
 
   it("rejects oversized files", () => {
-    expect(validateUpload({ ...ok, sizeBytes: MAX_UPLOAD_BYTES + 1 })?.code).toBe(
-      "FILE_TOO_LARGE",
-    );
+    expect(validateUpload({ ...ok, sizeBytes: MAX_UPLOAD_BYTES + 1 })?.code).toBe("FILE_TOO_LARGE");
     expect(validateUpload({ ...ok, sizeBytes: MAX_UPLOAD_BYTES })).toBeNull();
   });
 });
@@ -48,6 +40,8 @@ describe("validateUpload", () => {
 describe("titleFromFilename", () => {
   it("derives a display title", () => {
     expect(titleFromFilename("launch-plan_v2.html")).toBe("Launch plan v2");
+    expect(titleFromFilename("Mixed-Casing.Html")).toBe("Mixed Casing");
+    expect(titleFromFilename("demo.MP4")).toBe("Demo");
   });
 
   it("ignores directory components", () => {

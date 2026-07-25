@@ -18,3 +18,15 @@ describe("AgentPlanApi transport", () => {
     expect(fetchSpy).toHaveBeenCalledOnce();
   });
 });
+
+describe("CLI direct storage transport", () => {
+  it("streams files through a credential-free, no-redirect request", () => {
+    const source = readFileSync("packages/cli/src/index.ts", "utf8");
+    expect(source).toContain("body: createReadStream(filePath)");
+    expect(source).toContain('credentials: "omit"');
+    expect(source).toContain('redirect: "error"');
+    expect(source).toContain('referrerPolicy: "no-referrer"');
+    expect(source).toContain('headers.set("content-length", String(sizeBytes))');
+  });
+});
+import { readFileSync } from "node:fs";

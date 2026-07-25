@@ -194,10 +194,16 @@ export default async function AdminPage({
                     <UsageMeter label="drafts" used={user.draftCount} limit={limits.maxDrafts} />
                     <UsageMeter
                       label="storage"
-                      used={user.storageBytes}
+                      used={user.storageBytes + user.reservedBytes}
                       limit={limits.maxStorageBytes}
                       format={formatBytes}
                     />
+                    {user.reservedBytes > 0 ? (
+                      <p className="text-ink-faint sm:col-start-2">
+                        {formatBytes(user.storageBytes)} committed +{" "}
+                        {formatBytes(user.reservedBytes)} reserved
+                      </p>
+                    ) : null}
                     <UsageMeter
                       label="tokens"
                       used={user.tokenCount}

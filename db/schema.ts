@@ -151,6 +151,13 @@ export const blockedOauthAccounts = pgTable(
 
 export const draftVisibility = pgEnum("draft_visibility", ["public", "private", "password"]);
 export const versionSource = pgEnum("version_source", ["browser", "api_token"]);
+export const draftKind = pgEnum("draft_kind", ["html", "image", "video"]);
+export const uploadIntentStatus = pgEnum("upload_intent_status", [
+  "pending",
+  "completed",
+  "cancelled",
+  "failed",
+]);
 
 export const drafts = pgTable(
   "drafts",
@@ -161,6 +168,7 @@ export const drafts = pgTable(
       .references(() => users.id, { onDelete: "cascade" }),
     slug: varchar("slug", { length: 80 }).notNull().unique(),
     title: varchar("title", { length: 200 }).notNull(),
+    kind: draftKind("kind").notNull().default("html"),
     visibility: draftVisibility("visibility").notNull().default("private"),
     // Salted scrypt hash; set only when visibility is "password", null otherwise.
     passwordHash: text("password_hash"),
@@ -188,6 +196,7 @@ export const draftVersions = pgTable(
     storageKey: text("storage_key").notNull(),
     contentSha256: char("content_sha256", { length: 64 }).notNull(),
     contentType: varchar("content_type", { length: 100 }).notNull(),
+    originalFilename: varchar("original_filename", { length: 255 }),
     sizeBytes: integer("size_bytes").notNull(),
     source: versionSource("source").notNull(),
     createdByTokenId: uuid("created_by_token_id").references(() => apiTokens.id, {
@@ -200,6 +209,75 @@ export const draftVersions = pgTable(
       table.draftId,
       table.versionNumber,
     ),
+  ],
+);
+
+export const uploadIntents = pgTable(
+  "upload_intents",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    ownerId: text("owner_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    targetDraftId: uuid("target_draft_id").references(() => drafts.id, {
+      onDelete: "set null",
+    }),
+    draftId: uuid("draft_id").notNull(),
+    versionId: uuid("version_id").notNull(),
+    stagingKey: text("staging_key").notNull(),
+    finalKey: text("final_key").notNull(),
+    kind: draftKind("kind").notNull(),
+    originalFilename: varchar("original_filename", { length: 255 }).notNull(),
+    contentType: varchar("content_type", { length: 100 }).notNull(),
+    expectedBytes: integer("expected_bytes").notNull(),
+    title: varchar("title", { length: 200 }),
+    visibility: draftVisibility("visibility"),
+    passwordHash: text("password_hash"),
+    source: versionSource("source").notNull(),
+    createdByTokenId: uuid("created_by_token_id").references(() => apiTokens.id, {
+      onDelete: "set null",
+    }),
+    status: uploadIntentStatus("status").notNull().default("pending"),
+    failureCode: varchar("failure_code", { length: 50 }),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .$onUpdate(() => new Date())
+      .notNull(),
+  },
+  (table) => [
+    uniqueIndex("upload_intents_staging_key_idx").on(table.stagingKey),
+    uniqueIndex("upload_intents_final_key_idx").on(table.finalKey),
+    index("upload_intents_owner_status_expiry_idx").on(
+      table.ownerId,
+      table.status,
+      table.expiresAt,
+    ),
+    index("upload_intents_target_draft_idx").on(table.targetDraftId),
+  ],
+);
+
+export const storageDeletionJobs = pgTable(
+  "storage_deletion_jobs",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    storageKey: text("storage_key").notNull(),
+    reason: varchar("reason", { length: 50 }).notNull(),
+    notBefore: timestamp("not_before", { withTimezone: true }).defaultNow().notNull(),
+    attempts: integer("attempts").notNull().default(0),
+    lastError: varchar("last_error", { length: 100 }),
+    nextAttemptAt: timestamp("next_attempt_at", { withTimezone: true }).defaultNow().notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .$onUpdate(() => new Date())
+      .notNull(),
+  },
+  (table) => [
+    uniqueIndex("storage_deletion_jobs_storage_key_idx").on(table.storageKey),
+    index("storage_deletion_jobs_retry_idx").on(table.nextAttemptAt, table.notBefore),
   ],
 );
 
@@ -270,6 +348,8 @@ export type User = typeof users.$inferSelect;
 export type Draft = typeof drafts.$inferSelect;
 export type DraftVersion = typeof draftVersions.$inferSelect;
 export type ApiToken = typeof apiTokens.$inferSelect;
+export type UploadIntent = typeof uploadIntents.$inferSelect;
+export type DraftKind = (typeof draftKind.enumValues)[number];
 export type UserBlock = typeof userBlocks.$inferSelect;
 export type Visibility = (typeof draftVisibility.enumValues)[number];
 export type UserPlan = (typeof userPlan.enumValues)[number];
