@@ -1,22 +1,61 @@
 # AgentPlan
 
-Publish HTML documents, complete HTML plan folders, raster images, and MP4 video
-behind stable, shareable links.
+AgentPlan turns HTML plans, reports, dashboards, raster images, and MP4 videos
+into stable, shareable links. Upload a single file or a complete HTML folder with
+relative images and video from the browser, API, CLI, or an AI agent.
 
-AgentPlan is a small service for AI agents (and their humans) that need to turn a
-generated file — a plan, report, image, or demo video — into a URL. Upload from the
-browser, the API, or the CLI:
+Every upload is private by default and includes immutable version history. You
+can make a link public or password-protected when you want to share it.
 
-[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2Fniklas-schmidt-dev%2Fagentplan&project-name=agentplan&repository-name=agentplan&products=%5B%7B%22type%22%3A%22integration%22%2C%22protocol%22%3A%22storage%22%2C%22productSlug%22%3A%22neon%22%2C%22integrationSlug%22%3A%22neon%22%7D%2C%7B%22type%22%3A%22blob%22%7D%5D&envDescription=AgentPlan+needs+an+initial+admin+email%2C+an+auth+secret%2C+and+a+cron+secret.+Neon+and+Blob+are+provisioned+during+this+flow.+Configure+Resend+or+GitHub+OAuth+after+deployment+to+enable+sign-in.&envLink=https%3A%2F%2Fgithub.com%2Fniklas-schmidt-dev%2Fagentplan%2Fblob%2Fmain%2Fdocs%2Fself-hosting.md%23must-have-values&env=ADMIN_BOOTSTRAP_EMAIL&env=BETTER_AUTH_SECRET&env=CRON_SECRET)
+## Install
+
+Install the official CLI and connect it to your AgentPlan account:
+
+```bash
+npm install --global agentplan-cli
+agentplan login
+agentplan upload ./plan.html
+```
+
+You can also run the CLI without installing it:
 
 ```bash
 npx agentplan-cli upload ./plan.html
 ```
 
-Every upload gets a stable link like `https://agentplan.app/p/launch-plan-x7k2`,
-immutable version history, and owner-controlled visibility — `private` (owner
-only, the default), `public` (anyone with the link), or `password` (anyone with
-the link and the password).
+The same command accepts standalone images, MP4 files, and HTML directories:
+
+```bash
+agentplan upload ./diagram.webp
+agentplan upload ./demo.mp4
+agentplan upload ./plan-directory
+```
+
+## Agent skill
+
+Install the [AgentPlan skill](https://www.skills.sh/niklas-schmidt-dev/agentplan/agentplan)
+to teach Codex, Claude Code, Cursor, and other compatible agents when to upload
+a single file or a complete HTML plan folder:
+
+```bash
+npx skills add https://github.com/niklas-schmidt-dev/agentplan --skill agentplan
+```
+
+After installation, a normal request is enough:
+
+> Publish this plan with its images and video using AgentPlan.
+
+The skill preserves relative media paths, selects the HTML entry document, uses
+private visibility by default, and can publish new versions without changing
+the stable viewer URL.
+
+## Self-host AgentPlan
+
+[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2Fniklas-schmidt-dev%2Fagentplan&project-name=agentplan&repository-name=agentplan&products=%5B%7B%22type%22%3A%22integration%22%2C%22protocol%22%3A%22storage%22%2C%22productSlug%22%3A%22neon%22%2C%22integrationSlug%22%3A%22neon%22%7D%2C%7B%22type%22%3A%22blob%22%7D%5D&envDescription=AgentPlan+needs+an+initial+admin+email%2C+an+auth+secret%2C+and+a+cron+secret.+Neon+and+Blob+are+provisioned+during+this+flow.+Configure+Resend+or+GitHub+OAuth+after+deployment+to+enable+sign-in.&envLink=https%3A%2F%2Fgithub.com%2Fniklas-schmidt-dev%2Fagentplan%2Fblob%2Fmain%2Fdocs%2Fself-hosting.md%23must-have-values&env=ADMIN_BOOTSTRAP_EMAIL&env=BETTER_AUTH_SECRET&env=CRON_SECRET)
+
+The one-click deployment provisions the app, Postgres, and private object
+storage. See [Self-hosting AgentPlan](docs/self-hosting.md) for the complete
+setup guide.
 
 ## How it works
 
@@ -113,41 +152,12 @@ The test suite runs against a real Postgres database. Point `TEST_DATABASE_URL`
 (unit/integration) or `DATABASE_URL` (e2e) at a disposable branch or local instance;
 tests that require a database skip automatically when it is absent.
 
-## CLI
+## CLI reference
 
 The npm package is [`agentplan-cli`](https://www.npmjs.com/package/agentplan-cli);
 the command it provides is `agentplan`.
 
-### Agent skill
-
-Install AgentPlan's skill for Codex, Claude Code, Cursor, and other compatible
-agents through [skills.sh](https://skills.sh):
-
-```bash
-npx skills@1.5.20 add niklas-schmidt-dev/agentplan --skill agentplan
-```
-
-The skill teaches agents when to upload a single file or an HTML plan folder,
-how to preserve relative image/MP4 paths, how to choose an entry document, and
-how to publish a new version without changing the viewer URL. A normal request
-such as “publish this plan with its images and video using AgentPlan” is enough;
-no special prompt template is required.
-
-Run it without installing:
-
-```bash
-npx agentplan-cli@0.2.0 login
-npx agentplan-cli@0.2.0 upload ./plan.html
-```
-
-Or install the command globally:
-
-```bash
-npm install --global agentplan-cli@0.2.0
-agentplan login
-```
-
-Once installed, the full command set is:
+The full command set is:
 
 ```bash
 agentplan login                          # store an API token (created in the dashboard)
