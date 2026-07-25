@@ -23,6 +23,7 @@ describe("HTML bundle contract", () => {
     "images/hero.png#fragment",
     "images/%2fescape.png",
     "images/\ud800.png",
+    "__ap/private.png",
   ])("rejects unsafe path %s", (value) => {
     expect(() => normalizeBundlePath(value)).toThrow();
   });

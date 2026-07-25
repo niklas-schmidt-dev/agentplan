@@ -1,6 +1,13 @@
 import { getDraftBySlug, getVersionAsset, getVersionById } from "@/db/queries/drafts";
 import { authenticateSession } from "@/lib/api/auth";
 import { readAccessCookie } from "@/lib/drafts/access";
+import {
+  authorizeBundleViewGrant,
+  BUNDLE_VIEW_PATH_PREFIX,
+  bundleVersionPath,
+  issueBundlePasswordGrant,
+  issueBundleSessionGrant,
+} from "@/lib/drafts/bundle-view-access";
 import { resolveDraftView } from "@/lib/drafts/view-access";
 import { etagMatches, parseSingleByteRange } from "@/lib/http/range";
 import { getStorage } from "@/lib/storage";
@@ -37,25 +44,53 @@ type Params = {
 async function resolveBundleFile(req: Request, params: Awaited<Params["params"]>) {
   const draft = await getDraftBySlug(params.slug);
   if (!draft || draft.kind !== "html") return null;
-  let userId: string | null = null;
-  let accessToken: string | undefined;
-  if (draft.visibility !== "public") {
-    const session = await authenticateSession(req);
-    userId = session?.userId ?? null;
-    if (draft.visibility === "password") {
-      accessToken = readAccessCookie(req.headers.get("cookie"), draft.id);
-    }
-  }
-  if (resolveDraftView(draft, { userId, accessToken }).state !== "granted") return null;
-
   const version = await getVersionById(draft.id, params.versionId);
   if (!version?.isBundle) return null;
+  const segments = params.logicalPath;
+  const grantToken =
+    segments[0] === BUNDLE_VIEW_PATH_PREFIX && segments.length >= 3 ? segments[1]! : null;
+  const logicalSegments = grantToken ? segments.slice(2) : segments;
+  let redirectGrant: string | undefined;
+  if (draft.visibility !== "public") {
+    if (grantToken) {
+      if (!(await authorizeBundleViewGrant(grantToken, draft, version.id))) return null;
+    } else {
+      const session = await authenticateSession(req);
+      const userId = session?.userId ?? null;
+      const accessToken =
+        draft.visibility === "password"
+          ? readAccessCookie(req.headers.get("cookie"), draft.id)
+          : undefined;
+      if (resolveDraftView(draft, { userId, accessToken }).state !== "granted") return null;
+      if (userId === draft.ownerId && session) {
+        redirectGrant = issueBundleSessionGrant({
+          draftId: draft.id,
+          versionId: version.id,
+          sessionId: session.sessionId,
+        });
+      } else if (draft.visibility === "password" && draft.passwordHash) {
+        redirectGrant = issueBundlePasswordGrant({
+          draftId: draft.id,
+          versionId: version.id,
+          passwordHash: draft.passwordHash,
+        });
+      }
+    }
+  }
   let logicalPath: string;
   try {
-    logicalPath = normalizeBundlePath(params.logicalPath.join("/"));
+    logicalPath = normalizeBundlePath(logicalSegments.join("/"));
   } catch {
     return null;
   }
+  const redirectLocation = redirectGrant
+    ? bundleVersionPath({
+        slug: params.slug,
+        versionId: version.id,
+        logicalPath,
+        grant: redirectGrant,
+      })
+    : undefined;
   if (logicalPath === (version.entryPath ?? "index.html")) {
     return {
       draft,
@@ -66,6 +101,7 @@ async function resolveBundleFile(req: Request, params: Awaited<Params["params"]>
       sizeBytes: version.sizeBytes,
       isVideo: false,
       isHtml: true,
+      redirectLocation,
     };
   }
   const asset = await getVersionAsset(version.id, logicalPath);
@@ -79,6 +115,7 @@ async function resolveBundleFile(req: Request, params: Awaited<Params["params"]>
     sizeBytes: asset.sizeBytes,
     isVideo: asset.contentType === "video/mp4",
     isHtml: false,
+    redirectLocation,
   };
 }
 
@@ -111,6 +148,12 @@ async function storageMatches(
 export async function HEAD(req: Request, { params }: Params): Promise<Response> {
   const file = await resolveBundleFile(req, await params);
   if (!file) return notFoundResponse();
+  if (file.redirectLocation) {
+    const headers = commonHeaders(file.isHtml ? HTML_SANDBOX : MEDIA_SANDBOX);
+    headers.set("Location", file.redirectLocation);
+    headers.set("Cache-Control", "private, no-store");
+    return new Response(null, { status: 307, headers });
+  }
   if (!(await storageMatches(file))) return notFoundResponse();
   const headers = fileHeaders(file);
   headers.set("Content-Length", String(file.sizeBytes));
@@ -120,6 +163,12 @@ export async function HEAD(req: Request, { params }: Params): Promise<Response> 
 export async function GET(req: Request, { params }: Params): Promise<Response> {
   const file = await resolveBundleFile(req, await params);
   if (!file) return notFoundResponse();
+  if (file.redirectLocation) {
+    const headers = commonHeaders(file.isHtml ? HTML_SANDBOX : MEDIA_SANDBOX);
+    headers.set("Location", file.redirectLocation);
+    headers.set("Cache-Control", "private, no-store");
+    return new Response(null, { status: 307, headers });
+  }
   const headers = fileHeaders(file);
   const etag = headers.get("ETag")!;
   if (etagMatches(req.headers.get("if-none-match"), etag)) {

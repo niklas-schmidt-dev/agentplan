@@ -115,6 +115,9 @@ export function normalizeBundlePath(input) {
   if (parts.some((part) => !part || part === "." || part === "..")) {
     throw new Error(`Invalid bundle path: ${input}`);
   }
+  if (parts[0] === "__ap") {
+    throw new Error(`Bundle path uses AgentPlan's reserved viewer prefix: ${input}`);
+  }
   if (new TextEncoder().encode(value).byteLength > MAX_BUNDLE_PATH_BYTES) {
     throw new Error(`Bundle path exceeds ${MAX_BUNDLE_PATH_BYTES} bytes: ${input}`);
   }

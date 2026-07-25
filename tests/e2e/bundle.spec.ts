@@ -26,7 +26,7 @@ test("uploads and renders a version-pinned HTML bundle", async ({ page }) => {
         { path: "nested/images/pixel.gif", contentType: "image/gif", sizeBytes: gif.byteLength },
         { path: "nested/video/demo.mp4", contentType: "video/mp4", sizeBytes: mp4.byteLength },
       ],
-      target: { type: "new", title: "Bundle E2E", visibility: "public" },
+      target: { type: "new", title: "Bundle E2E", visibility: "private" },
     },
   });
   expect(createdResponse.status()).toBe(201);
@@ -79,11 +79,17 @@ test("uploads and renders a version-pinned HTML bundle", async ({ page }) => {
   expect(compatibility.headers()["location"]).toContain(`/v/${completed.version.id}/`);
 
   await page.goto(`/p/${completed.draft.slug}`);
-  await expect(page.locator("iframe")).toHaveAttribute("src", /\/v\//);
+  await expect(page.locator("iframe")).toHaveAttribute("src", /\/v\/.*\/__ap\//);
   await expect
-    .poll(() => page.frames().some((candidate) => candidate.url().includes(`/v/`)))
+    .poll(() =>
+      page
+        .frames()
+        .some((candidate) => candidate.url().includes(`/v/`) && candidate.url().includes(`/__ap/`)),
+    )
     .toBe(true);
-  const frame = page.frames().find((candidate) => candidate.url().includes(`/v/`));
+  const frame = page
+    .frames()
+    .find((candidate) => candidate.url().includes(`/v/`) && candidate.url().includes(`/__ap/`));
   expect(frame).toBeTruthy();
   await expect(frame!.locator("#hero")).toHaveJSProperty("complete", true);
   await expect

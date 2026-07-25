@@ -18,6 +18,14 @@ element and CSS image URLs resolve through a version-pinned route, so a republis
 cannot mix files from two versions. Arbitrary `fetch()` from the opaque-origin
 sandbox is intentionally unsupported.
 
+Private and password-protected bundle entry URLs include a signed, version-bound
+viewer path. Relative media URLs inherit that path, so the opaque-origin sandbox
+does not need to send account or password cookies with subresource requests.
+Owner grants are bound to a live account session; password grants are bound to
+the current password hash. Grants expire after 12 hours, are never persisted,
+and stop working when the session, password, version, draft, or account is
+removed.
+
 ## Provider acceptance checks
 
 For Vercel Blob, verify private signed PUTs under both configured credential
