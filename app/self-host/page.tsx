@@ -23,7 +23,7 @@ const services = [
     index: "03",
     name: "AgentPlan",
     detail:
-      "Migrations run on the first production build. Register with your bootstrap email when it is live.",
+      "Migrations run on the first production build. Add Resend or GitHub OAuth before signing in.",
   },
 ];
 
@@ -67,9 +67,9 @@ export default function SelfHostPage() {
             </span>
           </a>
           <p className="max-w-lg font-mono text-xs leading-5 text-ink-faint">
-            In the Blob step, choose{" "}
-            <strong className="font-medium text-ink-muted">Private</strong>. You will also enter five
-            deployment values for admin access, authentication, email, and scheduled cleanup.
+            In the Blob step, choose <strong className="font-medium text-ink-muted">Private</strong>
+            . The deploy flow asks for three must-have values. Afterward, choose Resend email,
+            GitHub OAuth, or both; email is optional for GitHub-only deployments.
           </p>
         </div>
 

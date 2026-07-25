@@ -11,8 +11,6 @@ export const VERCEL_DEPLOY_PRODUCTS = [
 export const VERCEL_REQUIRED_ENV = [
   "ADMIN_BOOTSTRAP_EMAIL",
   "BETTER_AUTH_SECRET",
-  "AUTH_EMAIL_WEBHOOK_URL",
-  "AUTH_EMAIL_WEBHOOK_SECRET",
   "CRON_SECRET",
 ] as const;
 
@@ -23,9 +21,9 @@ function createVercelDeployUrl(): string {
     "repository-name": "agentplan",
     products: JSON.stringify(VERCEL_DEPLOY_PRODUCTS),
     envDescription:
-      "AgentPlan needs an initial admin email, an auth secret, a secure email-delivery webhook, and a cron secret. Neon and Blob are provisioned during this flow.",
+      "AgentPlan needs an initial admin email, an auth secret, and a cron secret. Neon and Blob are provisioned during this flow. Configure Resend or GitHub OAuth after deployment to enable sign-in.",
     envLink:
-      "https://github.com/niklas-schmidt-dev/agentplan/blob/main/docs/self-hosting.md#required-values",
+      "https://github.com/niklas-schmidt-dev/agentplan/blob/main/docs/self-hosting.md#must-have-values",
   });
   for (const name of VERCEL_REQUIRED_ENV) params.append("env", name);
   return `https://vercel.com/new/clone?${params.toString()}`;

@@ -2,6 +2,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { AuthForm } from "@/components/auth-form";
 import { isGithubConfigured } from "@/lib/auth/auth";
+import { isEmailDeliveryConfigured } from "@/lib/auth/email";
 import { getOptionalUser } from "@/lib/auth/session";
 import { getSignupsEnabled } from "@/lib/settings/service";
 
@@ -18,7 +19,11 @@ export default async function LoginPage() {
         <span className="text-lime">agentplan</span>.app
       </Link>
       <h1 className="text-2xl font-semibold tracking-tight text-ink">Sign in</h1>
-      <AuthForm githubEnabled={isGithubConfigured()} signupsEnabled={signupsEnabled} />
+      <AuthForm
+        emailEnabled={isEmailDeliveryConfigured()}
+        githubEnabled={isGithubConfigured()}
+        signupsEnabled={signupsEnabled}
+      />
     </main>
   );
 }

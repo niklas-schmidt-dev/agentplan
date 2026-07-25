@@ -7,7 +7,7 @@ AgentPlan is a small service for AI agents (and their humans) that need to turn 
 generated file — a plan, report, image, or demo video — into a URL. Upload from the
 browser, the API, or the CLI:
 
-[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2Fniklas-schmidt-dev%2Fagentplan&project-name=agentplan&repository-name=agentplan&products=%5B%7B%22type%22%3A%22integration%22%2C%22protocol%22%3A%22storage%22%2C%22productSlug%22%3A%22neon%22%2C%22integrationSlug%22%3A%22neon%22%7D%2C%7B%22type%22%3A%22blob%22%7D%5D&envDescription=AgentPlan+needs+an+initial+admin+email%2C+an+auth+secret%2C+a+secure+email-delivery+webhook%2C+and+a+cron+secret.+Neon+and+Blob+are+provisioned+during+this+flow.&envLink=https%3A%2F%2Fgithub.com%2Fniklas-schmidt-dev%2Fagentplan%2Fblob%2Fmain%2Fdocs%2Fself-hosting.md%23required-values&env=ADMIN_BOOTSTRAP_EMAIL&env=BETTER_AUTH_SECRET&env=AUTH_EMAIL_WEBHOOK_URL&env=AUTH_EMAIL_WEBHOOK_SECRET&env=CRON_SECRET)
+[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2Fniklas-schmidt-dev%2Fagentplan&project-name=agentplan&repository-name=agentplan&products=%5B%7B%22type%22%3A%22integration%22%2C%22protocol%22%3A%22storage%22%2C%22productSlug%22%3A%22neon%22%2C%22integrationSlug%22%3A%22neon%22%7D%2C%7B%22type%22%3A%22blob%22%7D%5D&envDescription=AgentPlan+needs+an+initial+admin+email%2C+an+auth+secret%2C+and+a+cron+secret.+Neon+and+Blob+are+provisioned+during+this+flow.+Configure+Resend+or+GitHub+OAuth+after+deployment+to+enable+sign-in.&envLink=https%3A%2F%2Fgithub.com%2Fniklas-schmidt-dev%2Fagentplan%2Fblob%2Fmain%2Fdocs%2Fself-hosting.md%23must-have-values&env=ADMIN_BOOTSTRAP_EMAIL&env=BETTER_AUTH_SECRET&env=CRON_SECRET)
 
 ```bash
 npx agentplan-cli upload ./plan.html
@@ -22,14 +22,15 @@ the link and the password).
 
 - **Next.js (App Router)** application deployed on Vercel with the Node.js runtime.
 - **Postgres** with Drizzle ORM for drafts, versions, tokens, and audit events.
-  The one-click deployment provisions Neon; PlanetScale Postgres and other
+  The Deploy Button provisions Neon; PlanetScale Postgres and other
   compatible providers are supported.
-- **Private object storage** for all uploaded content. The one-click deployment
+- **Private object storage** for all uploaded content. The Deploy Button
   provisions private Vercel Blob; Cloudflare R2 remains available as an
   S3-compatible alternative. Visibility is enforced by the application, never
   by an object URL.
-- **Better Auth** with verified email/password and optional GitHub OAuth (offered
-  only when `GITHUB_CLIENT_ID`/`GITHUB_CLIENT_SECRET` are set) for browser sessions;
+- **Better Auth** with optional verified email/password through Resend (or a generic
+  delivery webhook) and optional GitHub OAuth for browser sessions. Each sign-in
+  method appears only when its complete configuration is present;
   scoped API tokens (`ap_live_…`, stored as SHA-256 hashes) for agents and the CLI.
   On an empty database, only `ADMIN_BOOTSTRAP_EMAIL` can register; that identity
   becomes the single initial admin. Admins can disable sign-ups, change account
@@ -91,9 +92,9 @@ Requirements: Node.js 24+, npm, and a Postgres instance.
 1. `npm ci`
 2. Copy `.env.example` to `.env` and fill in the database URL,
    `ADMIN_BOOTSTRAP_EMAIL`, Better Auth secret, storage configuration, and
-   optional GitHub OAuth. Email/password development also needs an email webhook;
-   without one, development suppresses delivery and an unverified account cannot
-   sign in.
+   at least one sign-in method. For email/password, use Resend or the generic
+   webhook. Without either, development suppresses delivery and an unverified
+   email account cannot sign in. GitHub-only development needs no email variables.
 3. `npm run db:migrate` (prefers `DATABASE_URL_DIRECT` or
    `DATABASE_URL_UNPOOLED`)
 4. `npm run dev`
@@ -295,9 +296,10 @@ threat model. In short:
 ## Deployment (Vercel)
 
 Use the Deploy Button above for the shortest path. It creates a Vercel project,
-provisions Neon Postgres and Vercel Blob, and prompts for the remaining secrets.
+provisions Neon Postgres and Vercel Blob, and prompts for three must-have values.
 Choose **Private** when creating the Blob store; AgentPlan intentionally fails
-against a public store.
+against a public store. After deployment, connect at least one sign-in method:
+Resend email, the generic email webhook, or GitHub OAuth.
 
 Committed database migrations run automatically on production builds created
 through the Neon Deploy Button. Manual installations should migrate separately,
@@ -305,9 +307,10 @@ or explicitly set `AUTO_MIGRATE=1` when their migration URL has DDL permission.
 Vercel's system hostname is used automatically until you configure
 `BETTER_AUTH_URL` or `NEXT_PUBLIC_APP_URL` for a custom domain.
 
-See [Self-hosting AgentPlan](docs/self-hosting.md) for the complete one-click
-walkthrough, required email-webhook contract, non-Vercel instructions,
-PlanetScale Postgres, and Cloudflare R2 configuration.
+See [Self-hosting AgentPlan](docs/self-hosting.md) for the complete Deploy Button
+walkthrough, must-have versus optional environment variables, Resend and webhook
+email delivery, non-Vercel instructions, PlanetScale Postgres, and Cloudflare R2
+configuration.
 
 ## License
 

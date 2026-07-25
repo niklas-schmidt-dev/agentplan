@@ -1,9 +1,13 @@
 import Link from "next/link";
+import { redirect } from "next/navigation";
 import { ForgotPasswordForm } from "@/components/password-recovery-form";
+import { isEmailDeliveryConfigured } from "@/lib/auth/email";
 
 export const metadata = { title: "Reset password" };
 
 export default function ForgotPasswordPage() {
+  if (!isEmailDeliveryConfigured()) redirect("/login");
+
   return (
     <main className="mx-auto flex min-h-dvh w-full max-w-sm flex-col justify-center gap-8 px-6 py-16">
       <Link href="/" className="font-mono text-sm text-ink-muted transition-colors hover:text-lime">

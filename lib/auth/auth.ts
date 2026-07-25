@@ -12,7 +12,7 @@ import {
   isOauthIdentityBlocked,
   isUserBlocked,
 } from "./blocked-identities";
-import { sendAuthEmail } from "./email";
+import { isEmailDeliveryConfigured, sendAuthEmail } from "./email";
 import { authRateLimitStorage } from "./rate-limit";
 import { BootstrapAuthorizationError, evaluateSignup, SignupsDisabledError } from "./signup-policy";
 
@@ -24,6 +24,7 @@ export function isGithubConfigured(): boolean {
 function createAuth() {
   const githubClientId = process.env.GITHUB_CLIENT_ID;
   const githubClientSecret = process.env.GITHUB_CLIENT_SECRET;
+  const emailDeliveryConfigured = isEmailDeliveryConfigured();
 
   return betterAuth({
     appName: "AgentPlan",
@@ -35,7 +36,7 @@ function createAuth() {
       transaction: true,
     }),
     emailAndPassword: {
-      enabled: true,
+      enabled: emailDeliveryConfigured,
       requireEmailVerification: true,
       autoSignIn: false,
       revokeSessionsOnPasswordReset: true,
