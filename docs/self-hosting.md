@@ -132,6 +132,12 @@ lower delivery cost; this release intentionally does not because browser testing
 showed that an expired redirected video target is not reliably refreshed after a
 seek.
 
+Because hostile bundle HTML runs with an opaque sandbox origin, protected bundle
+entry URLs carry a signed, version-scoped viewer path that relative media URLs
+inherit. Owner paths require the originating account session to remain active;
+password paths are invalidated when the password changes. The signed grant
+expires after 12 hours and is not a raw storage URL.
+
 ### Local filesystem
 
 For development and CI only:

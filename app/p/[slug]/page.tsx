@@ -4,7 +4,12 @@ import { notFound } from "next/navigation";
 import { DraftPasswordForm } from "@/components/draft-password-form";
 import { getDraftBySlug, getVersionById } from "@/db/queries/drafts";
 import { readAccessCookie } from "@/lib/drafts/access";
-import { getOptionalUser } from "@/lib/auth/session";
+import {
+  bundleVersionPath,
+  issueBundlePasswordGrant,
+  issueBundleSessionGrant,
+} from "@/lib/drafts/bundle-view-access";
+import { getOptionalSession, getOptionalUser } from "@/lib/auth/session";
 import { resolveDraftView, type ViewResolution } from "@/lib/drafts/view-access";
 
 async function resolveView(slug: string): Promise<ViewResolution> {
@@ -88,11 +93,29 @@ export default async function DraftViewerPage({
   if (resolution.draft.currentVersionId) {
     const version = await getVersionById(resolution.draft.id, resolution.draft.currentVersionId);
     if (version?.isBundle) {
-      const entryPath = (version.entryPath ?? "index.html")
-        .split("/")
-        .map(encodeURIComponent)
-        .join("/");
-      htmlUrl = `/p/${encodeURIComponent(slug)}/v/${version.id}/${entryPath}`;
+      let grant: string | undefined;
+      if (resolution.draft.visibility !== "public") {
+        const session = await getOptionalSession();
+        if (session?.user.id === resolution.draft.ownerId) {
+          grant = issueBundleSessionGrant({
+            draftId: resolution.draft.id,
+            versionId: version.id,
+            sessionId: session.session.id,
+          });
+        } else if (resolution.draft.visibility === "password" && resolution.draft.passwordHash) {
+          grant = issueBundlePasswordGrant({
+            draftId: resolution.draft.id,
+            versionId: version.id,
+            passwordHash: resolution.draft.passwordHash,
+          });
+        }
+      }
+      htmlUrl = bundleVersionPath({
+        slug,
+        versionId: version.id,
+        logicalPath: version.entryPath ?? "index.html",
+        grant,
+      });
     }
   }
   return (

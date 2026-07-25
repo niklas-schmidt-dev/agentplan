@@ -43,9 +43,13 @@ export async function authenticateApiRequest(
 }
 
 /** Session-only authentication — used for token management endpoints. */
-export async function authenticateSession(req: Request): Promise<{ userId: string } | null> {
+export async function authenticateSession(
+  req: Request,
+): Promise<{ userId: string; sessionId: string } | null> {
   const session = await getAuth().api.getSession({ headers: req.headers });
-  return session?.user && hasTrustedSessionOrigin(req) ? { userId: session.user.id } : null;
+  return session?.user && hasTrustedSessionOrigin(req)
+    ? { userId: session.user.id, sessionId: session.session.id }
+    : null;
 }
 
 export function isFailure(actor: ApiActor | ApiAuthFailure): actor is ApiAuthFailure {

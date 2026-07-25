@@ -1,6 +1,11 @@
 import { getDraftBySlug, getVersionById } from "@/db/queries/drafts";
 import { authenticateSession } from "@/lib/api/auth";
 import { readAccessCookie } from "@/lib/drafts/access";
+import {
+  bundleVersionPath,
+  issueBundlePasswordGrant,
+  issueBundleSessionGrant,
+} from "@/lib/drafts/bundle-view-access";
 import { resolveDraftView } from "@/lib/drafts/view-access";
 import { etagMatches, parseSingleByteRange } from "@/lib/http/range";
 import { getStorage } from "@/lib/storage";
@@ -36,16 +41,20 @@ async function resolveContent(
   | {
       draft: NonNullable<Awaited<ReturnType<typeof getDraftBySlug>>>;
       version: NonNullable<Awaited<ReturnType<typeof getVersionById>>>;
+      sessionId: string | null;
+      userId: string | null;
     }
   | Response
 > {
   const draft = await getDraftBySlug(slug);
   if (!draft || !draft.currentVersionId) return notFoundResponse();
   let userId: string | null = null;
+  let sessionId: string | null = null;
   let accessToken: string | undefined;
   if (draft.visibility !== "public") {
     const session = await authenticateSession(req);
     userId = session?.userId ?? null;
+    sessionId = session?.sessionId ?? null;
     if (draft.visibility === "password") {
       accessToken = readAccessCookie(req.headers.get("cookie"), draft.id);
     }
@@ -55,7 +64,7 @@ async function resolveContent(
   }
   const version = await getVersionById(draft.id, draft.currentVersionId);
   if (!version) return notFoundResponse();
-  return { draft, version };
+  return { draft, version, sessionId, userId };
 }
 
 function responseHeaders(
@@ -79,11 +88,33 @@ function responseHeaders(
 
 function bundleEntryLocation(
   slug: string,
+  draft: NonNullable<Awaited<ReturnType<typeof getDraftBySlug>>>,
   version: NonNullable<Awaited<ReturnType<typeof getVersionById>>>,
+  sessionId: string | null,
+  userId: string | null,
 ): string {
-  const entryPath = version.entryPath ?? "index.html";
-  const encodedPath = entryPath.split("/").map(encodeURIComponent).join("/");
-  return `/p/${encodeURIComponent(slug)}/v/${version.id}/${encodedPath}`;
+  let grant: string | undefined;
+  if (draft.visibility !== "public") {
+    if (userId === draft.ownerId && sessionId) {
+      grant = issueBundleSessionGrant({
+        draftId: draft.id,
+        versionId: version.id,
+        sessionId,
+      });
+    } else if (draft.visibility === "password" && draft.passwordHash) {
+      grant = issueBundlePasswordGrant({
+        draftId: draft.id,
+        versionId: version.id,
+        passwordHash: draft.passwordHash,
+      });
+    }
+  }
+  return bundleVersionPath({
+    slug,
+    versionId: version.id,
+    logicalPath: version.entryPath ?? "index.html",
+    grant,
+  });
 }
 
 type Params = { params: Promise<{ slug: string }> };
@@ -94,7 +125,16 @@ export async function HEAD(req: Request, { params }: Params): Promise<Response> 
   if (resolved instanceof Response) return resolved;
   if (resolved.version.isBundle) {
     const headers = commonHeaders(HTML_SANDBOX);
-    headers.set("Location", bundleEntryLocation(slug, resolved.version));
+    headers.set(
+      "Location",
+      bundleEntryLocation(
+        slug,
+        resolved.draft,
+        resolved.version,
+        resolved.sessionId,
+        resolved.userId,
+      ),
+    );
     headers.set("Cache-Control", "private, no-store");
     return new Response(null, { status: 307, headers });
   }
@@ -110,7 +150,10 @@ export async function GET(req: Request, { params }: Params): Promise<Response> {
   const { draft, version } = resolved;
   if (version.isBundle) {
     const headers = commonHeaders(HTML_SANDBOX);
-    headers.set("Location", bundleEntryLocation(slug, version));
+    headers.set(
+      "Location",
+      bundleEntryLocation(slug, draft, version, resolved.sessionId, resolved.userId),
+    );
     headers.set("Cache-Control", "private, no-store");
     return new Response(null, { status: 307, headers });
   }
