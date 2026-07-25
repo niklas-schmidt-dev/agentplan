@@ -205,10 +205,9 @@ Soft-deleted drafts (and their stored objects) are hard-deleted after 7 days by 
 daily cron (`/api/cron/purge`, authorized via `CRON_SECRET`).
 
 The 300 MiB default also applies to existing self-hosted deployments after
-upgrade unless `AP_MAX_STORAGE_BYTES_PER_USER` is explicitly set. Media is
-rollout-gated: the default `AP_ENABLED_UPLOAD_KINDS=html` preserves HTML-only
-behavior; use `html,image` after provider checks, then add `video` only after the
-documented Range and long-playback tests.
+upgrade unless `AP_MAX_STORAGE_BYTES_PER_USER` is explicitly set. HTML, raster
+images, and MP4 uploads are always available; there is no upload-kind feature
+flag.
 Revoked/expired token rows are removed after 30 days, and ordinary audit events
 after 180 days. Pending user-deletion cleanup jobs are retained until object cleanup
 completes; their object keys and target identifier are erased at completion.

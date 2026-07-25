@@ -2,7 +2,12 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { uploadSpecFor, uploadSpecs, type UploadKind } from "@agentplan/upload-contract";
+import {
+  uploadKinds,
+  uploadSpecFor,
+  uploadSpecs,
+  type UploadKind,
+} from "@agentplan/upload-contract";
 
 const inputClass =
   "rounded border border-edge bg-surface px-3 py-2 font-mono text-sm text-ink placeholder:text-ink-faint";
@@ -18,7 +23,7 @@ async function uploadError(response: Response): Promise<string> {
 
 type UploadState = "idle" | "uploading" | "validating";
 
-function acceptForKinds(kinds: UploadKind[]): string {
+function acceptForKinds(kinds: readonly UploadKind[]): string {
   return uploadSpecs
     .filter((spec) => kinds.includes(spec.kind))
     .flatMap((spec) => [...spec.extensions, spec.contentType])
@@ -82,7 +87,7 @@ async function directUpload(
   return completeResponse.json() as Promise<{ draft: { id: string } }>;
 }
 
-export function NewDraftForm({ enabledKinds }: { enabledKinds: UploadKind[] }) {
+export function NewDraftForm() {
   const router = useRouter();
   const [error, setError] = useState<string | null>(null);
   const [state, setState] = useState<UploadState>("idle");
@@ -101,9 +106,9 @@ export function NewDraftForm({ enabledKinds }: { enabledKinds: UploadKind[] }) {
       return;
     }
     const spec = uploadSpecFor(file.name, file.type);
-    if (!spec || !enabledKinds.includes(spec.kind)) {
+    if (!spec) {
       setState("idle");
-      setError("That file type is not enabled.");
+      setError("That file type is not supported.");
       return;
     }
     try {
@@ -146,15 +151,11 @@ export function NewDraftForm({ enabledKinds }: { enabledKinds: UploadKind[] }) {
         <input
           type="file"
           name="file"
-          accept={acceptForKinds(enabledKinds)}
+          accept={acceptForKinds(uploadKinds)}
           required
           className={inputClass}
         />
-        <span className="text-ink-faint">
-          HTML 2 MiB
-          {enabledKinds.includes("image") ? " · images 10 MiB" : ""}
-          {enabledKinds.includes("video") ? " · MP4 100 MiB" : ""}
-        </span>
+        <span className="text-ink-faint">HTML 2 MiB · images 10 MiB · MP4 100 MiB</span>
       </label>
       <label className="flex flex-col gap-1 font-mono text-xs text-ink-muted">
         title <span className="text-ink-faint">(optional, defaults to filename)</span>

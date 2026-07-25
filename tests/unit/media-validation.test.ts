@@ -22,8 +22,7 @@ function objectFor(bytes: Uint8Array, contentType: string): StorageOpenResult {
 describe("media validation", () => {
   afterEach(() => vi.unstubAllEnvs());
 
-  it("derives kind from registered extension and MIME, never client input", () => {
-    vi.stubEnv("AP_ENABLED_UPLOAD_KINDS", "html,image");
+  it("accepts every registered media kind and rejects HTML direct uploads", () => {
     expect(
       validateDirectUploadMetadata({
         filename: "photo.JpEg",
@@ -38,13 +37,32 @@ describe("media validation", () => {
         sizeBytes: 100,
       }),
     ).toThrow(MediaValidationError);
-    expect(() =>
+    expect(
       validateDirectUploadMetadata({
         filename: "movie.mp4",
         contentType: "video/mp4",
         sizeBytes: 100,
-      }),
-    ).toThrow(/not enabled/i);
+      }).kind,
+    ).toBe("video");
+  });
+
+  it("ignores stale upload-kind configuration", () => {
+    vi.stubEnv("AP_ENABLED_UPLOAD_KINDS", "html");
+
+    expect(
+      validateDirectUploadMetadata({
+        filename: "photo.webp",
+        contentType: "image/webp",
+        sizeBytes: 100,
+      }).kind,
+    ).toBe("image");
+    expect(
+      validateDirectUploadMetadata({
+        filename: "movie.mp4",
+        contentType: "video/mp4",
+        sizeBytes: 100,
+      }).kind,
+    ).toBe("video");
   });
 
   it("validates image magic, dimensions, byte count, and hash", async () => {

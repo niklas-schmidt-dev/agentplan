@@ -14,7 +14,6 @@ import { isAdmin, requireUser } from "@/lib/auth/session";
 import { formatBytes, formatRelativeTime, shortHash } from "@/lib/format";
 import { draftUrl } from "@/lib/urls";
 import { uuidSchema } from "@/lib/validation/api";
-import { enabledUploadKinds } from "@/lib/validation/media";
 
 export const metadata = { title: "Draft" };
 
@@ -26,7 +25,6 @@ export default async function DraftDetailPage({ params }: { params: Promise<{ id
   if (!draft) notFound();
   const versions = await listVersions(draft.id);
   const url = draftUrl(draft.slug);
-  const versionUploadsEnabled = draft.kind === "html" || enabledUploadKinds().has(draft.kind);
 
   return (
     <main className="mx-auto flex min-h-dvh w-full max-w-5xl flex-col gap-6 px-6 py-8">
@@ -106,13 +104,7 @@ export default async function DraftDetailPage({ params }: { params: Promise<{ id
       </section>
 
       <section className="flex flex-col gap-3">
-        {versionUploadsEnabled ? (
-          <NewVersionForm draftId={draft.id} kind={draft.kind} />
-        ) : (
-          <p className="font-mono text-xs text-ink-faint">
-            New {draft.kind} versions are currently disabled. Existing versions remain viewable.
-          </p>
-        )}
+        <NewVersionForm draftId={draft.id} kind={draft.kind} />
 
         <h2 className="font-mono text-sm text-ink-muted">version history</h2>
         <ul className="flex flex-col divide-y divide-edge rounded-md border border-edge bg-surface">
