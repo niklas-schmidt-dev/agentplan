@@ -3,6 +3,7 @@ import { listDraftsForOwner } from "@/db/queries/drafts";
 import { CopyButton } from "@/components/dashboard/copy-button";
 import { DashboardHeader } from "@/components/dashboard/header";
 import { NewDraftForm, PendingUploads } from "@/components/dashboard/upload-form";
+import { UsageMeter } from "@/components/dashboard/usage-meter";
 import { isAdmin, requireUser } from "@/lib/auth/session";
 import { formatBytes, formatRelativeTime } from "@/lib/format";
 import { getUserPlan, getUserStorageUsage } from "@/lib/limits/enforce";
@@ -46,11 +47,20 @@ export default async function DashboardPage({
         </div>
       </details>
 
-      <section className="rounded-md border border-edge bg-surface px-4 py-3 font-mono text-xs text-ink-muted">
-        storage: {formatBytes(usage.committedBytes)} committed
-        {usage.reservedBytes > 0 ? ` + ${formatBytes(usage.reservedBytes)} reserved` : ""}
-        {" / "}
-        {limits.maxStorageBytes === null ? "unlimited" : formatBytes(limits.maxStorageBytes)}
+      <section className="rounded-md border border-edge bg-surface px-4 py-3 font-mono text-xs">
+        <div className="max-w-xs">
+          <UsageMeter
+            label="storage"
+            used={usage.committedBytes + usage.reservedBytes}
+            limit={limits.maxStorageBytes}
+            format={formatBytes}
+            detail={
+              usage.reservedBytes > 0
+                ? `${formatBytes(usage.committedBytes)} committed + ${formatBytes(usage.reservedBytes)} reserved`
+                : undefined
+            }
+          />
+        </div>
       </section>
 
       <PendingUploads
@@ -110,7 +120,10 @@ export default async function DashboardPage({
           .
         </p>
       ) : (
-        <ul className="flex flex-col divide-y divide-edge rounded-md border border-edge bg-surface">
+        <ul
+          role="list"
+          className="flex flex-col divide-y divide-edge rounded-md border border-edge bg-surface"
+        >
           {drafts.map((draft) => (
             <li key={draft.id} className="flex flex-wrap items-center gap-x-4 gap-y-2 p-4">
               <div className="min-w-0 flex-1">

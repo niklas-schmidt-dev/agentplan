@@ -22,7 +22,7 @@ export function DangerButton({
         type="button"
         disabled={disabled}
         onClick={() => setArming(true)}
-        className="rounded border border-edge px-2 py-1 font-mono text-xs text-danger transition-colors hover:border-danger disabled:opacity-60"
+        className="rounded border border-edge px-2 py-1 font-mono text-xs text-danger hover:border-danger disabled:opacity-60"
       >
         {label}
       </button>
@@ -34,7 +34,7 @@ export function DangerButton({
       <button
         type="submit"
         disabled={disabled}
-        className="rounded border border-danger bg-danger/10 px-2 py-1 font-mono text-xs text-danger transition-colors hover:bg-danger hover:text-canvas disabled:opacity-60"
+        className="rounded border border-danger bg-danger/10 px-2 py-1 font-mono text-xs text-danger hover:bg-danger hover:text-canvas disabled:opacity-60"
       >
         {confirmLabel}
       </button>
