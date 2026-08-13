@@ -72,20 +72,31 @@ export function AdminUserActions({
             <label className="sr-only" htmlFor={`plan-${userId}`}>
               Account plan
             </label>
-            <select
-              id={`plan-${userId}`}
-              name="plan"
-              defaultValue={plan}
-              disabled={planPending}
-              className="rounded border border-edge bg-canvas px-2 py-1 text-ink-muted disabled:opacity-60"
-            >
-              <option value="free">free</option>
-              <option value="unlimited">unlimited</option>
-            </select>
+            <span className="inline-grid grid-cols-[1fr_--spacing(6)]">
+              <select
+                id={`plan-${userId}`}
+                name="plan"
+                defaultValue={plan}
+                disabled={planPending}
+                className="col-span-full row-start-1 appearance-none rounded border border-edge bg-canvas py-1 pr-6 pl-2 text-ink-muted disabled:opacity-60"
+              >
+                <option value="free">free</option>
+                <option value="unlimited">unlimited</option>
+              </select>
+              <svg
+                viewBox="0 0 8 5"
+                width="8"
+                height="5"
+                fill="none"
+                className="pointer-events-none col-start-2 row-start-1 place-self-center text-ink-muted"
+              >
+                <path d="M.5.5 4 4 7.5.5" stroke="currentcolor" />
+              </svg>
+            </span>
             <button
               type="submit"
               disabled={planPending}
-              className="rounded border border-edge px-2 py-1 text-ink-muted transition-colors hover:border-lime hover:text-lime disabled:opacity-60"
+              className="rounded border border-edge px-2 py-1 text-ink-muted hover:border-lime hover:text-lime disabled:opacity-60"
             >
               {planPending ? "saving…" : "set plan"}
             </button>
@@ -98,7 +109,7 @@ export function AdminUserActions({
             <button
               type="submit"
               disabled={rolePending}
-              className="rounded border border-edge px-2 py-1 text-ink-muted transition-colors hover:border-lime hover:text-lime disabled:opacity-60"
+              className="rounded border border-edge px-2 py-1 text-ink-muted hover:border-lime hover:text-lime disabled:opacity-60"
             >
               {rolePending ? "…" : role === "admin" ? "remove admin" : "make admin"}
             </button>
@@ -166,7 +177,7 @@ export function AdminUserActions({
             <button
               type="submit"
               disabled={unblockPending}
-              className="rounded border border-edge px-2 py-1 text-ink-muted transition-colors hover:border-lime hover:text-lime disabled:opacity-60"
+              className="rounded border border-edge px-2 py-1 text-ink-muted hover:border-lime hover:text-lime disabled:opacity-60"
             >
               {unblockPending ? "unblocking…" : "unblock"}
             </button>
