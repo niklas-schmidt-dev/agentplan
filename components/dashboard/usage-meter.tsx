@@ -14,7 +14,14 @@ export function UsageMeter({
   format?: (value: number) => string;
   detail?: string;
 }) {
-  const percentage = limit === null ? null : Math.min((used / limit) * 100, 100);
+  const percentage =
+    limit === null
+      ? null
+      : limit === 0
+        ? used > 0
+          ? 100
+          : 0
+        : Math.min((used / limit) * 100, 100);
   const nearLimit = percentage !== null && percentage >= 90;
 
   return (
@@ -35,7 +42,8 @@ export function UsageMeter({
           aria-label={`${label} quota usage`}
           aria-valuemin={0}
           aria-valuemax={limit ?? undefined}
-          aria-valuenow={used}
+          aria-valuenow={limit === null ? undefined : Math.min(used, limit)}
+          aria-valuetext={limit === null ? undefined : `${format(used)} of ${format(limit)}`}
           className="h-1 overflow-hidden rounded-full bg-edge"
         >
           <div
