@@ -72,3 +72,7 @@ export function retiredTokenRetentionDays(): number {
 export function auditRetentionDays(): number {
   return envInt("AP_AUDIT_RETENTION_DAYS", 180);
 }
+
+export function viewRetentionDays(): number {
+  return envInt("AP_VIEW_RETENTION_DAYS", 365);
+}

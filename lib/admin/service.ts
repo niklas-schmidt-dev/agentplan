@@ -36,6 +36,7 @@ import {
   type UserRole,
 } from "@/db/schema";
 import { assertCurrentAdmin, countActiveAdmins } from "@/lib/admin/authorization";
+import { getViewCountsByOwner } from "@/lib/analytics/queries";
 import { recordAuditEvent } from "@/lib/audit/events";
 import { normalizeBlockedEmail } from "@/lib/auth/blocked-identities";
 import { getStorage } from "@/lib/storage";
@@ -90,6 +91,8 @@ export type AdminUserRow = User & {
   storageBytes: number;
   reservedBytes: number;
   tokenCount: number;
+  /** Non-owner views on this user's live drafts over the last 30 days. */
+  views30d: number;
   blockId: string | null;
   blockReason: string | null;
 };
@@ -113,61 +116,63 @@ export async function listUsersWithUsage({
   if (allUsers.length === 0) return [];
   const pageUserIds = allUsers.map((user) => user.id);
 
-  const [draftAgg, storageAgg, reservedAgg, reclaimAgg, tokenAgg, blockRows] = await Promise.all([
-    db
-      .select({ ownerId: drafts.ownerId, drafts: count() })
-      .from(drafts)
-      .where(and(liveDraftFilter, inArray(drafts.ownerId, pageUserIds)))
-      .groupBy(drafts.ownerId),
-    db
-      .select({
-        ownerId: drafts.ownerId,
-        bytes: sql<string>`sum(coalesce(${draftVersions.totalSizeBytes}, ${draftVersions.sizeBytes}))`,
-      })
-      .from(draftVersions)
-      .innerJoin(drafts, eq(draftVersions.draftId, drafts.id))
-      .where(and(liveDraftFilter, inArray(drafts.ownerId, pageUserIds)))
-      .groupBy(drafts.ownerId),
-    db
-      .select({ ownerId: uploadIntents.ownerId, bytes: sum(uploadIntents.expectedBytes) })
-      .from(uploadIntents)
-      .where(
-        and(
-          inArray(uploadIntents.ownerId, pageUserIds),
-          eq(uploadIntents.status, "pending"),
-          gt(uploadIntents.expiresAt, sql`now()`),
-        ),
-      )
-      .groupBy(uploadIntents.ownerId),
-    db
-      .select({
-        ownerId: uploadIntents.ownerId,
-        bytes: sum(uploadIntentReclaims.sizeBytes),
-      })
-      .from(uploadIntentReclaims)
-      .innerJoin(uploadIntents, eq(uploadIntentReclaims.intentId, uploadIntents.id))
-      .where(
-        and(
-          inArray(uploadIntents.ownerId, pageUserIds),
-          eq(uploadIntents.status, "pending"),
-          gt(uploadIntents.expiresAt, sql`now()`),
-        ),
-      )
-      .groupBy(uploadIntents.ownerId),
-    db
-      .select({ userId: apiTokens.userId, tokens: count() })
-      .from(apiTokens)
-      .where(and(activeTokenFilter, inArray(apiTokens.userId, pageUserIds)))
-      .groupBy(apiTokens.userId),
-    db
-      .select({
-        userId: userBlocks.userId,
-        id: userBlocks.id,
-        reason: userBlocks.reason,
-      })
-      .from(userBlocks)
-      .where(inArray(userBlocks.userId, pageUserIds)),
-  ]);
+  const [draftAgg, storageAgg, reservedAgg, reclaimAgg, tokenAgg, blockRows, viewsByOwner] =
+    await Promise.all([
+      db
+        .select({ ownerId: drafts.ownerId, drafts: count() })
+        .from(drafts)
+        .where(and(liveDraftFilter, inArray(drafts.ownerId, pageUserIds)))
+        .groupBy(drafts.ownerId),
+      db
+        .select({
+          ownerId: drafts.ownerId,
+          bytes: sql<string>`sum(coalesce(${draftVersions.totalSizeBytes}, ${draftVersions.sizeBytes}))`,
+        })
+        .from(draftVersions)
+        .innerJoin(drafts, eq(draftVersions.draftId, drafts.id))
+        .where(and(liveDraftFilter, inArray(drafts.ownerId, pageUserIds)))
+        .groupBy(drafts.ownerId),
+      db
+        .select({ ownerId: uploadIntents.ownerId, bytes: sum(uploadIntents.expectedBytes) })
+        .from(uploadIntents)
+        .where(
+          and(
+            inArray(uploadIntents.ownerId, pageUserIds),
+            eq(uploadIntents.status, "pending"),
+            gt(uploadIntents.expiresAt, sql`now()`),
+          ),
+        )
+        .groupBy(uploadIntents.ownerId),
+      db
+        .select({
+          ownerId: uploadIntents.ownerId,
+          bytes: sum(uploadIntentReclaims.sizeBytes),
+        })
+        .from(uploadIntentReclaims)
+        .innerJoin(uploadIntents, eq(uploadIntentReclaims.intentId, uploadIntents.id))
+        .where(
+          and(
+            inArray(uploadIntents.ownerId, pageUserIds),
+            eq(uploadIntents.status, "pending"),
+            gt(uploadIntents.expiresAt, sql`now()`),
+          ),
+        )
+        .groupBy(uploadIntents.ownerId),
+      db
+        .select({ userId: apiTokens.userId, tokens: count() })
+        .from(apiTokens)
+        .where(and(activeTokenFilter, inArray(apiTokens.userId, pageUserIds)))
+        .groupBy(apiTokens.userId),
+      db
+        .select({
+          userId: userBlocks.userId,
+          id: userBlocks.id,
+          reason: userBlocks.reason,
+        })
+        .from(userBlocks)
+        .where(inArray(userBlocks.userId, pageUserIds)),
+      getViewCountsByOwner(pageUserIds),
+    ]);
 
   const draftsByOwner = new Map(draftAgg.map((row) => [row.ownerId, row.drafts]));
   const bytesByOwner = new Map(storageAgg.map((row) => [row.ownerId, Number(row.bytes ?? 0)]));
@@ -187,6 +192,7 @@ export async function listUsersWithUsage({
     storageBytes: bytesByOwner.get(user.id) ?? 0,
     reservedBytes: reservedByOwner.get(user.id) ?? 0,
     tokenCount: tokensByUser.get(user.id) ?? 0,
+    views30d: viewsByOwner.get(user.id) ?? 0,
     blockId: blocksByUser.get(user.id)?.id ?? null,
     blockReason: blocksByUser.get(user.id)?.reason ?? null,
   }));

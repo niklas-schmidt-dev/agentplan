@@ -1,8 +1,10 @@
 import type { Metadata } from "next";
 import { headers } from "next/headers";
 import { notFound } from "next/navigation";
+import { after } from "next/server";
 import { DraftPasswordForm } from "@/components/draft-password-form";
 import { getDraftBySlug, getVersionById } from "@/db/queries/drafts";
+import { classifyViewer, recordDraftView, viewRequestContext } from "@/lib/analytics/views";
 import { readAccessCookie } from "@/lib/drafts/access";
 import {
   bundleVersionPath,
@@ -12,14 +14,17 @@ import {
 import { getOptionalSession, getOptionalUser } from "@/lib/auth/session";
 import { resolveDraftView, type ViewResolution } from "@/lib/drafts/view-access";
 
-async function resolveView(slug: string): Promise<ViewResolution> {
+async function resolveView(
+  slug: string,
+): Promise<{ resolution: ViewResolution; userId: string | null }> {
   const draft = await getDraftBySlug(slug);
   const user = await getOptionalUser();
   const cookieHeader = (await headers()).get("cookie");
-  return resolveDraftView(draft, {
+  const resolution = resolveDraftView(draft, {
     userId: user?.id ?? null,
     accessToken: draft ? readAccessCookie(cookieHeader, draft.id) : undefined,
   });
+  return { resolution, userId: user?.id ?? null };
 }
 
 export async function generateMetadata({
@@ -28,7 +33,7 @@ export async function generateMetadata({
   params: Promise<{ slug: string }>;
 }): Promise<Metadata> {
   const { slug } = await params;
-  const resolution = await resolveView(slug);
+  const { resolution } = await resolveView(slug);
   // Never leak a protected draft's title before access is granted.
   const title =
     resolution.state === "granted"
@@ -47,9 +52,20 @@ export default async function DraftViewerPage({
   searchParams: Promise<{ error?: string }>;
 }) {
   const { slug } = await params;
-  const resolution = await resolveView(slug);
+  const { resolution, userId } = await resolveView(slug);
 
   if (resolution.state === "not-found") notFound();
+
+  if (resolution.state === "granted") {
+    // Fire-and-forget after the response; a failed insert never blocks a view.
+    const context = viewRequestContext(await headers());
+    const event = {
+      draftId: resolution.draft.id,
+      viewer: classifyViewer(resolution.draft, userId),
+      context,
+    };
+    after(() => recordDraftView(event));
+  }
 
   if (resolution.state === "password") {
     const { error } = await searchParams;
