@@ -392,6 +392,31 @@ export const auditEvents = pgTable(
   (table) => [index("audit_events_draft_id_idx").on(table.draftId)],
 );
 
+export const draftViewerKind = pgEnum("draft_viewer_kind", ["owner", "user", "anonymous"]);
+
+// One row per successful draft-page view. Privacy: no raw IPs or user agents —
+// only a salted, daily-rotating visitor hash for unique-visitor counts, an ISO
+// country code, and the referrer host. Rows cascade away with their draft and
+// are purged after AP_VIEW_RETENTION_DAYS by the daily cron.
+export const draftViewEvents = pgTable(
+  "draft_view_events",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    draftId: uuid("draft_id")
+      .notNull()
+      .references(() => drafts.id, { onDelete: "cascade" }),
+    viewer: draftViewerKind("viewer").notNull(),
+    visitorHash: char("visitor_hash", { length: 64 }),
+    country: char("country", { length: 2 }),
+    referrerHost: varchar("referrer_host", { length: 255 }),
+    viewedAt: timestamp("viewed_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    index("draft_view_events_draft_viewed_idx").on(table.draftId, table.viewedAt.desc()),
+    index("draft_view_events_viewed_at_idx").on(table.viewedAt),
+  ],
+);
+
 // Admin-managed runtime settings (e.g. "signups_enabled"). A missing key means
 // the setting's default applies; see lib/settings/service.ts.
 export const appSettings = pgTable("app_settings", {
@@ -427,6 +452,8 @@ export type UploadIntent = typeof uploadIntents.$inferSelect;
 export type UploadIntentFile = typeof uploadIntentFiles.$inferSelect;
 export type DraftKind = (typeof draftKind.enumValues)[number];
 export type UserBlock = typeof userBlocks.$inferSelect;
+export type DraftViewEvent = typeof draftViewEvents.$inferSelect;
+export type DraftViewerKind = (typeof draftViewerKind.enumValues)[number];
 export type Visibility = (typeof draftVisibility.enumValues)[number];
 export type UserPlan = (typeof userPlan.enumValues)[number];
 export type UserRole = (typeof userRole.enumValues)[number];

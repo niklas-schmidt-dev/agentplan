@@ -4,6 +4,7 @@ import { CopyButton } from "@/components/dashboard/copy-button";
 import { DashboardHeader } from "@/components/dashboard/header";
 import { NewDraftForm, PendingUploads } from "@/components/dashboard/upload-form";
 import { UsageMeter } from "@/components/dashboard/usage-meter";
+import { getViewCountsForOwner } from "@/lib/analytics/queries";
 import { isAdmin, requireUser } from "@/lib/auth/session";
 import { formatBytes, formatRelativeTime } from "@/lib/format";
 import { getUserPlan, getUserStorageUsage } from "@/lib/limits/enforce";
@@ -24,7 +25,7 @@ export default async function DashboardPage({
   const visibility = visibilitySchema.safeParse(params.visibility);
   const search = params.q?.trim() || undefined;
 
-  const [drafts, usage, plan, intents] = await Promise.all([
+  const [drafts, usage, plan, intents, viewCounts] = await Promise.all([
     listDraftsForOwner(user.id, {
       search,
       visibility: visibility.success ? visibility.data : undefined,
@@ -33,6 +34,7 @@ export default async function DashboardPage({
     getUserStorageUsage(user.id),
     getUserPlan(user.id),
     listPendingUploadIntents(user.id),
+    getViewCountsForOwner(user.id),
   ]);
   const limits = limitsForPlan(plan);
 
@@ -145,6 +147,12 @@ export default async function DashboardPage({
                     : "no version"}
                   {" · updated "}
                   {formatRelativeTime(draft.updatedAt)}
+                  {" · "}
+                  {(() => {
+                    const views = viewCounts.get(draft.id);
+                    if (!views || views.total === 0) return "no views yet";
+                    return `${views.total} ${views.total === 1 ? "view" : "views"}${views.last7d > 0 ? ` (${views.last7d} this week)` : ""}`;
+                  })()}
                 </p>
               </div>
               <div className="flex items-center gap-2">

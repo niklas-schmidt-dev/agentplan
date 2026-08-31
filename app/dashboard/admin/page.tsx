@@ -3,8 +3,10 @@ import { redirect } from "next/navigation";
 import { AdminUserActions } from "@/components/dashboard/admin-user-actions";
 import { DashboardHeader } from "@/components/dashboard/header";
 import { SignupToggleForm } from "@/components/dashboard/signup-toggle-form";
+import { StatTile } from "@/components/dashboard/stat-tile";
 import { UsageMeter } from "@/components/dashboard/usage-meter";
 import { getAdminStats, listUsersWithUsage } from "@/lib/admin/service";
+import { getAdminViewStats, getTopDraftsByViews } from "@/lib/analytics/queries";
 import { isAdmin, requireAdmin } from "@/lib/auth/session";
 import { formatBytes, formatRelativeTime } from "@/lib/format";
 import { limitsForPlan } from "@/lib/limits/plans";
@@ -12,16 +14,6 @@ import { getSignupsEnabled } from "@/lib/settings/service";
 
 export const metadata = { title: "Admin" };
 const USERS_PER_PAGE = 50;
-
-function StatTile({ label, value, detail }: { label: string; value: string; detail?: string }) {
-  return (
-    <div className="flex flex-col gap-1 rounded-md border border-edge bg-surface p-4">
-      <span className="truncate font-mono text-xs text-ink-muted">{label}</span>
-      <span className="text-2xl font-semibold tabular-nums text-ink">{value}</span>
-      {detail ? <span className="truncate font-mono text-xs text-ink-faint">{detail}</span> : null}
-    </div>
-  );
-}
 
 export default async function AdminPage({
   searchParams,
@@ -32,13 +24,15 @@ export default async function AdminPage({
   const { page: pageParam } = await searchParams;
   const parsedPage = Number.parseInt(pageParam ?? "1", 10);
   const page = Number.isSafeInteger(parsedPage) && parsedPage > 0 ? parsedPage : 1;
-  const [stats, userRows, signupsEnabled] = await Promise.all([
+  const [stats, userRows, signupsEnabled, viewStats, topDrafts] = await Promise.all([
     getAdminStats(),
     listUsersWithUsage({
       limit: USERS_PER_PAGE,
       offset: (page - 1) * USERS_PER_PAGE,
     }),
     getSignupsEnabled(),
+    getAdminViewStats(),
+    getTopDraftsByViews({ days: 7, limit: 5 }),
   ]);
   const totalPages = Math.max(1, Math.ceil(stats.users / USERS_PER_PAGE));
   if (page > totalPages) {
@@ -67,7 +61,7 @@ export default async function AdminPage({
         </div>
       </div>
 
-      <section className="grid grid-cols-2 gap-3 sm:grid-cols-5">
+      <section className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
         <StatTile label="users" value={String(stats.users)} />
         <StatTile label="blocks" value={String(stats.blockedUsers)} />
         <StatTile label="drafts" value={String(stats.liveDrafts)} />
@@ -77,7 +71,37 @@ export default async function AdminPage({
           detail={formatBytes(stats.storageBytes)}
         />
         <StatTile label="active tokens" value={String(stats.activeTokens)} />
+        <StatTile
+          label="views (7d)"
+          value={String(viewStats.last7d)}
+          detail={`${viewStats.total} total`}
+        />
       </section>
+
+      {topDrafts.length > 0 ? (
+        <section className="flex flex-col gap-2 rounded-md border border-edge bg-surface p-4">
+          <h2 className="font-mono text-xs text-ink-muted">
+            most viewed drafts (7d, owner views excluded)
+          </h2>
+          <ul role="list" className="flex flex-col gap-1.5 font-mono text-xs">
+            {topDrafts.map((draft) => (
+              <li key={draft.draftId} className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                <span className="w-12 shrink-0 tabular-nums text-lime">{draft.views}</span>
+                <a
+                  href={`/p/${draft.slug}`}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="max-w-64 truncate text-ink hover:text-lime"
+                >
+                  {draft.title}
+                </a>
+                <span className="text-ink-faint">{draft.visibility}</span>
+                <span className="truncate text-ink-faint">{draft.ownerEmail}</span>
+              </li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
 
       <section className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-edge bg-surface p-4">
         <div>
@@ -138,6 +162,9 @@ export default async function AdminPage({
                   ) : null}
                   <span className="text-ink-faint">
                     joined {formatRelativeTime(user.createdAt)}
+                  </span>
+                  <span className="text-ink-faint">
+                    {user.views30d} {user.views30d === 1 ? "view" : "views"} (30d)
                   </span>
                 </div>
 

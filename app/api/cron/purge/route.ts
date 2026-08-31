@@ -1,5 +1,6 @@
 import { internalError, unauthorized } from "@/lib/api/responses";
 import { purgePendingUserDeletionObjects } from "@/lib/admin/service";
+import { purgeExpiredViewEvents } from "@/lib/analytics/views";
 import { purgeExpiredAuditEvents } from "@/lib/audit/events";
 import { purgeDeletedDrafts, purgeExpiredRateLimits } from "@/lib/drafts/purge";
 import { constantTimeEqual } from "@/lib/security/compare";
@@ -29,6 +30,7 @@ export async function GET(req: Request): Promise<Response> {
     ]);
     await purgeExpiredRateLimits();
     const auditEvents = await purgeExpiredAuditEvents();
+    const viewEvents = await purgeExpiredViewEvents();
     return Response.json({
       purged: drafts.purged,
       failed: drafts.failed,
@@ -39,6 +41,7 @@ export async function GET(req: Request): Promise<Response> {
       storageObjectsFailed: storage.failed,
       uploadIntentsExpired: uploadIntents,
       auditEventsPurged: auditEvents,
+      viewEventsPurged: viewEvents,
     });
   } catch (error) {
     console.error("GET /api/cron/purge failed", error);
