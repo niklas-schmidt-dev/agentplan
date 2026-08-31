@@ -205,6 +205,14 @@ with every AgentPlan origin that may create uploads:
 ]
 ```
 
+For this repository's production bucket, the equivalent Cloudflare API policy is
+tracked in `config/r2-cors.json`. Apply and verify it with:
+
+```bash
+npm run r2:cors:set
+npm run r2:cors:list
+```
+
 HTML, raster image, MP4, and HTML plan-folder uploads are always enabled. A plan
 folder contains one HTML entry and up to 50 image/MP4 assets (125 MiB total).
 Before production use, verify Range, immutable signed PUT, provider copy, and

@@ -25,6 +25,8 @@
     "test:e2e": "playwright test",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
+    "r2:cors:list": "wrangler r2 bucket cors list agentplan",
+    "r2:cors:set": "wrangler r2 bucket cors set agentplan --file config/r2-cors.json",
     "plan:set": "bun scripts/set-user-plan.ts",
     "check": "npm run lint && npm run typecheck && npm run test && npm run build"
   },
@@ -66,6 +68,7 @@
     "prettier": "^3.9.6",
     "tailwindcss": "^4.3.3",
     "typescript": "^5.9.3",
-    "vitest": "^4.1.10"
+    "vitest": "^4.1.10",
+    "wrangler": "^4.114.0"
   }
 }
