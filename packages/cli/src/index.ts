@@ -2,7 +2,7 @@
 
 import { spawn } from "node:child_process";
 import { createReadStream } from "node:fs";
-import { lstat, readFile, readdir, stat } from "node:fs/promises";
+import { lstat, readdir, stat } from "node:fs/promises";
 import path from "node:path";
 import { parseArgs } from "node:util";
 import {
@@ -141,9 +141,6 @@ async function inspectUploadFile(
   const spec = uploadSpecFor(filename, null);
   if (!spec) fail("Supported files are HTML, JPEG, PNG, WebP, GIF, AVIF, and MP4.", 2);
   if (sizeBytes === 0) fail("The file is empty.", 2);
-  if (sizeBytes > spec.maxBytes) {
-    fail(`The file exceeds the ${spec.maxBytes / (1024 * 1024)} MiB limit.`, 2);
-  }
   return { filename, sizeBytes, spec };
 }
 
@@ -399,51 +396,26 @@ async function commandUpload(file: string | undefined, flags: UploadFlags): Prom
   if (flags.entry) fail("--entry can only be used with a directory upload.", 2);
 
   const { filename, sizeBytes, spec } = await inspectUploadFile(file);
-  if (spec.kind === "html" && flags.draft) {
-    const bytes = new Uint8Array(await readFile(file));
-    const result = await api.addVersion(flags.draft, bytes, filename);
-    if (flags.json) {
-      process.stdout.write(`${JSON.stringify(result)}\n`);
-    } else {
-      printDraft(result.draft, "Uploaded new version of");
-    }
-    return;
-  }
-
+  const intent = await api.createUploadIntent({
+    filename,
+    contentType: spec.contentType,
+    sizeBytes,
+    target: flags.draft
+      ? { type: "draft", draftId: flags.draft }
+      : { type: "new", title: flags.title, visibility, password },
+  });
   let result: { draft: ApiDraft; version?: unknown };
-  if (spec.kind === "html") {
-    const bytes = new Uint8Array(await readFile(file));
-    result = await api.createDraft(bytes, filename, {
-      title: flags.title,
-      visibility,
-      password,
-    });
-  } else {
-    const intent = await api.createUploadIntent({
-      filename,
-      contentType: spec.contentType,
-      sizeBytes,
-      target: flags.draft
-        ? { type: "draft", draftId: flags.draft }
-        : {
-            type: "new",
-            title: flags.title,
-            visibility,
-            password,
-          },
-    });
-    try {
-      await uploadProviderFile(file, sizeBytes, intent.upload);
-      result = await api.completeUploadIntent(intent.intent.id);
-    } catch (error) {
-      await api.cancelUploadIntent(intent.intent.id).catch(() => undefined);
-      throw error;
-    }
+  try {
+    await uploadProviderFile(file, sizeBytes, intent.upload);
+    result = await api.completeUploadIntent(intent.intent.id);
+  } catch (error) {
+    await api.cancelUploadIntent(intent.intent.id).catch(() => undefined);
+    throw error;
   }
   if (flags.json) {
     process.stdout.write(`${JSON.stringify(result)}\n`);
   } else {
-    printDraft(result.draft, "Uploaded");
+    printDraft(result.draft, flags.draft ? "Uploaded new version of" : "Uploaded");
   }
 }
 

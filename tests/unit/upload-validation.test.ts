@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { MAX_UPLOAD_BYTES, titleFromFilename, validateUpload } from "@/lib/validation/upload";
+import { titleFromFilename, validateUpload } from "@/lib/validation/upload";
 
 describe("validateUpload", () => {
   const ok = { filename: "plan.html", contentType: "text/html", sizeBytes: 100 };
@@ -31,9 +31,9 @@ describe("validateUpload", () => {
     expect(validateUpload({ ...ok, sizeBytes: 0 })?.code).toBe("EMPTY_FILE");
   });
 
-  it("rejects oversized files", () => {
-    expect(validateUpload({ ...ok, sizeBytes: MAX_UPLOAD_BYTES + 1 })?.code).toBe("FILE_TOO_LARGE");
-    expect(validateUpload({ ...ok, sizeBytes: MAX_UPLOAD_BYTES })).toBeNull();
+  it("accepts HTML above the former per-file limit", () => {
+    expect(validateUpload({ ...ok, sizeBytes: 3 * 1024 * 1024 })).toBeNull();
+    expect(validateUpload({ ...ok, sizeBytes: 3 * 1024 ** 3 })).toBeNull();
   });
 });
 

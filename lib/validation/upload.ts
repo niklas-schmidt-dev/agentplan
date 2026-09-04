@@ -1,8 +1,6 @@
 import { extensionForFilename, uploadSpecFor } from "@agentplan/upload-contract";
 
-export const MAX_UPLOAD_BYTES = 2 * 1024 * 1024; // 2 MiB
-
-export type UploadErrorCode = "INVALID_FILE_TYPE" | "FILE_TOO_LARGE" | "EMPTY_FILE";
+export type UploadErrorCode = "INVALID_FILE_TYPE" | "EMPTY_FILE";
 
 export type UploadValidationError = { code: UploadErrorCode; message: string };
 
@@ -22,14 +20,8 @@ export function validateUpload(input: {
       return { code: "INVALID_FILE_TYPE", message: "Only HTML files are supported." };
     }
   }
-  if (input.sizeBytes <= 0) {
+  if (!Number.isSafeInteger(input.sizeBytes) || input.sizeBytes <= 0) {
     return { code: "EMPTY_FILE", message: "The file is empty." };
-  }
-  if (input.sizeBytes > MAX_UPLOAD_BYTES) {
-    return {
-      code: "FILE_TOO_LARGE",
-      message: `The file exceeds the ${MAX_UPLOAD_BYTES / (1024 * 1024)} MiB limit.`,
-    };
   }
   return null;
 }

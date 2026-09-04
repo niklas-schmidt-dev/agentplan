@@ -67,7 +67,10 @@ export async function listDraftsForOwner(
     .select({
       draft: drafts,
       versionNumber: draftVersions.versionNumber,
-      sizeBytes: sql<number>`coalesce(${draftVersions.totalSizeBytes}, ${draftVersions.sizeBytes})::int`,
+      sizeBytes:
+        sql<number>`coalesce(${draftVersions.totalSizeBytes}, ${draftVersions.sizeBytes})`.mapWith(
+          Number,
+        ),
       contentSha256: draftVersions.contentSha256,
       isBundle: draftVersions.isBundle,
     })

@@ -110,13 +110,13 @@ describe.skipIf(!hasDb)("media upload lifecycle (integration)", () => {
     expect(intent?.status).toBe("cancelled");
   });
 
-  it("rejects HTML from the direct-upload path", async () => {
+  it("rejects unsupported SVG from the direct-upload path", async () => {
     await expect(
       createUploadIntent({
         ownerId,
         source: "browser",
-        filename: "page.Html",
-        contentType: "text/html",
+        filename: "image.svg",
+        contentType: "image/svg+xml",
         sizeBytes: 10,
         target: { type: "new", title: "Page", visibility: "private" },
         baseUrl: "http://localhost:3000",

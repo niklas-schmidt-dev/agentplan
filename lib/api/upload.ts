@@ -1,10 +1,12 @@
 import { apiError, invalidRequest } from "@/lib/api/responses";
 import { draftFieldsSchema } from "@/lib/validation/api";
-import { MAX_UPLOAD_BYTES, titleFromFilename, validateUpload } from "@/lib/validation/upload";
+import { titleFromFilename, validateUpload } from "@/lib/validation/upload";
 import type { Visibility } from "@/db/schema";
 
-// Allowance for multipart framing and the small metadata fields.
-const MAX_REQUEST_BYTES = MAX_UPLOAD_BYTES + 64 * 1024;
+// Legacy multipart endpoints buffer their body. Larger files use upload intents.
+export const MAX_MULTIPART_REQUEST_BYTES = 2 * 1024 * 1024 + 64 * 1024;
+const multipartLimitMessage =
+  "This buffered multipart endpoint only supports small requests. Use /api/v1/uploads/intents for larger HTML files.";
 
 export type ParsedUpload = {
   bytes: Uint8Array;
@@ -25,13 +27,9 @@ async function boundedRequest(req: Request): Promise<Request | Response> {
       const { done, value } = await reader.read();
       if (done) break;
       total += value.byteLength;
-      if (total > MAX_REQUEST_BYTES) {
+      if (total > MAX_MULTIPART_REQUEST_BYTES) {
         await reader.cancel();
-        return apiError(
-          413,
-          "FILE_TOO_LARGE",
-          `The file exceeds the ${MAX_UPLOAD_BYTES / (1024 * 1024)} MiB limit.`,
-        );
+        return apiError(413, "FILE_TOO_LARGE", multipartLimitMessage);
       }
       chunks.push(value);
     }
@@ -56,12 +54,8 @@ async function boundedRequest(req: Request): Promise<Request | Response> {
 export async function readUpload(req: Request): Promise<ParsedUpload | Response> {
   // Reject declared-oversized bodies before buffering a single byte.
   const contentLength = Number(req.headers.get("content-length"));
-  if (Number.isFinite(contentLength) && contentLength > MAX_REQUEST_BYTES) {
-    return apiError(
-      413,
-      "FILE_TOO_LARGE",
-      `The file exceeds the ${MAX_UPLOAD_BYTES / (1024 * 1024)} MiB limit.`,
-    );
+  if (Number.isFinite(contentLength) && contentLength > MAX_MULTIPART_REQUEST_BYTES) {
+    return apiError(413, "FILE_TOO_LARGE", multipartLimitMessage);
   }
 
   const bounded = await boundedRequest(req);
@@ -85,8 +79,7 @@ export async function readUpload(req: Request): Promise<ParsedUpload | Response>
     sizeBytes: file.size,
   });
   if (validationError) {
-    const status = validationError.code === "FILE_TOO_LARGE" ? 413 : 400;
-    return apiError(status, validationError.code, validationError.message);
+    return apiError(400, validationError.code, validationError.message);
   }
 
   const titleField = form.get("title");

@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import {
-  MAX_BUNDLE_BYTES,
   normalizeBundlePath,
   selectBundleEntry,
   validateBundleManifest,
@@ -60,7 +59,7 @@ describe("HTML bundle contract", () => {
     ).toThrow(/Additional HTML/);
   });
 
-  it("enforces per-file, file-count, and aggregate limits", () => {
+  it("rejects empty files and excessive asset counts", () => {
     expect(() =>
       validateBundleManifest({
         entryPath: "index.html",
@@ -82,25 +81,29 @@ describe("HTML bundle contract", () => {
     expect(() => validateBundleManifest({ entryPath: "index.html", files })).toThrow(
       /up to 50 assets/,
     );
+  });
 
+  it("accepts files and bundles above the former byte limits", () => {
+    const manifest = validateBundleManifest({
+      entryPath: "index.html",
+      files: [
+        { path: "index.html", contentType: "text/html", sizeBytes: 3 * 1024 ** 2 },
+        { path: "hero.png", contentType: "image/png", sizeBytes: 11 * 1024 ** 2 },
+        { path: "demo.mp4", contentType: "video/mp4", sizeBytes: 3 * 1024 ** 3 },
+      ],
+    });
+    expect(manifest.totalBytes).toBe(14 * 1024 ** 2 + 3 * 1024 ** 3);
+  });
+
+  it("rejects an aggregate byte count outside safe integer precision", () => {
     expect(() =>
       validateBundleManifest({
         entryPath: "index.html",
         files: [
-          { path: "index.html", contentType: "text/html", sizeBytes: 1 },
-          {
-            path: "video/demo.mp4",
-            contentType: "video/mp4",
-            sizeBytes: 100 * 1024 * 1024,
-          },
-          ...Array.from({ length: 3 }, (_, index) => ({
-            path: `images/large-${index}.png`,
-            contentType: "image/png",
-            sizeBytes: 10 * 1024 * 1024,
-          })),
+          { path: "index.html", contentType: "text/html", sizeBytes: Number.MAX_SAFE_INTEGER },
+          { path: "hero.png", contentType: "image/png", sizeBytes: 1 },
         ],
       }),
-    ).toThrow(/complete bundle/);
-    expect(MAX_BUNDLE_BYTES).toBe(125 * 1024 * 1024);
+    ).toThrow(/numeric range/);
   });
 });

@@ -57,7 +57,7 @@ function specForIntent(intent: UploadIntent): UploadSpec {
     throw new MediaValidationError("INVALID_FILE_TYPE", "Expected a single-file upload intent.");
   }
   const spec = uploadSpecFor(intent.originalFilename, intent.contentType);
-  if (!spec || spec.kind !== intent.kind || spec.kind === "html") {
+  if (!spec || spec.kind !== intent.kind) {
     throw new MediaValidationError("INVALID_FILE_TYPE", "Upload metadata is invalid.");
   }
   return spec;

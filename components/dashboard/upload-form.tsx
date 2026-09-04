@@ -47,7 +47,7 @@ async function directUpload(
   onState: (state: UploadState) => void,
 ): Promise<{ draft: { id: string } }> {
   const spec = uploadSpecFor(file.name, file.type || null);
-  if (!spec || spec.kind === "html") throw new Error("That media file type is not supported.");
+  if (!spec) throw new Error("That file type is not supported.");
   const intentResponse = await fetch("/api/v1/uploads/intents", {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -310,7 +310,9 @@ function BundlePicker({
           onChange={(event) => onSelected(Array.from(event.currentTarget.files ?? []))}
           className={inputClass}
         />
-        <span className="text-ink-faint">one HTML entry · up to 50 images/MP4 · 125 MiB total</span>
+        <span className="text-ink-faint">
+          one HTML entry · up to 50 images/MP4 · uses your available storage
+        </span>
       </label>
       <label className="flex flex-col gap-1 font-mono text-xs text-ink-muted">
         entry path{" "}
@@ -383,27 +385,17 @@ export function NewDraftForm() {
         }
         const spec = uploadSpecFor(file.name, file.type);
         if (!spec) throw new Error("That file type is not supported.");
-        if (spec.kind === "html") {
-          const response = await fetch("/api/v1/drafts", {
-            method: "POST",
-            body: data,
-            redirect: "error",
-          });
-          if (!response.ok) throw new Error(await uploadError(response));
-          body = (await response.json()) as { draft: { id: string } };
-        } else {
-          body = await directUpload(
-            file,
-            {
-              type: "new",
-              title: typeof titleValue === "string" && titleValue ? titleValue : undefined,
-              visibility,
-              password:
-                typeof passwordValue === "string" && passwordValue ? passwordValue : undefined,
-            },
-            setState,
-          );
-        }
+        body = await directUpload(
+          file,
+          {
+            type: "new",
+            title: typeof titleValue === "string" && titleValue ? titleValue : undefined,
+            visibility,
+            password:
+              typeof passwordValue === "string" && passwordValue ? passwordValue : undefined,
+          },
+          setState,
+        );
       }
       router.push(`/dashboard/drafts/${body.draft.id}`);
       router.refresh();
@@ -439,7 +431,7 @@ export function NewDraftForm() {
             required
             className={inputClass}
           />
-          <span className="text-ink-faint">HTML 2 MiB · images 10 MiB · MP4 100 MiB</span>
+          <span className="text-ink-faint">HTML, images, MP4 · uses your available storage</span>
         </label>
       ) : (
         <BundlePicker selected={bundleFiles} onSelected={setBundleFiles} />
@@ -532,16 +524,7 @@ export function NewVersionForm({ draftId, kind }: { draftId: string; kind: Uploa
         if (!spec || spec.kind !== kind) {
           throw new Error(`Choose a ${kind} file matching this draft.`);
         }
-        if (kind === "html") {
-          const response = await fetch(`/api/v1/drafts/${encodeURIComponent(draftId)}/versions`, {
-            method: "POST",
-            body: data,
-            redirect: "error",
-          });
-          if (!response.ok) throw new Error(await uploadError(response));
-        } else {
-          await directUpload(file, { type: "draft", draftId }, setState);
-        }
+        await directUpload(file, { type: "draft", draftId }, setState);
       }
       form.reset();
       setState("idle");

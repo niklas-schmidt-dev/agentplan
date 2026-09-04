@@ -1,6 +1,5 @@
 export const uploadKinds = ["html", "image", "video"];
 export const MAX_BUNDLE_ASSETS = 50;
-export const MAX_BUNDLE_BYTES = 125 * 1024 * 1024;
 export const MAX_BUNDLE_PATH_BYTES = 512;
 
 export const uploadSpecs = [
@@ -9,49 +8,42 @@ export const uploadSpecs = [
     extensions: [".html", ".htm"],
     canonicalExtension: ".html",
     contentType: "text/html",
-    maxBytes: 2 * 1024 * 1024,
   },
   {
     kind: "image",
     extensions: [".jpg", ".jpeg"],
     canonicalExtension: ".jpg",
     contentType: "image/jpeg",
-    maxBytes: 10 * 1024 * 1024,
   },
   {
     kind: "image",
     extensions: [".png"],
     canonicalExtension: ".png",
     contentType: "image/png",
-    maxBytes: 10 * 1024 * 1024,
   },
   {
     kind: "image",
     extensions: [".webp"],
     canonicalExtension: ".webp",
     contentType: "image/webp",
-    maxBytes: 10 * 1024 * 1024,
   },
   {
     kind: "image",
     extensions: [".gif"],
     canonicalExtension: ".gif",
     contentType: "image/gif",
-    maxBytes: 10 * 1024 * 1024,
   },
   {
     kind: "image",
     extensions: [".avif"],
     canonicalExtension: ".avif",
     contentType: "image/avif",
-    maxBytes: 10 * 1024 * 1024,
   },
   {
     kind: "video",
     extensions: [".mp4"],
     canonicalExtension: ".mp4",
     contentType: "video/mp4",
-    maxBytes: 100 * 1024 * 1024,
   },
 ];
 
@@ -179,9 +171,6 @@ export function validateBundleManifest(input) {
     if (!Number.isSafeInteger(file.sizeBytes) || file.sizeBytes <= 0) {
       throw new Error(`Bundle files must not be empty: ${path}`);
     }
-    if (file.sizeBytes > spec.maxBytes) {
-      throw new Error(`${path} exceeds its ${spec.maxBytes / (1024 * 1024)} MiB limit.`);
-    }
     if (path === entryPath) {
       if (spec.kind !== "html") throw new Error("The bundle entry must be HTML.");
       entryCount += 1;
@@ -197,8 +186,8 @@ export function validateBundleManifest(input) {
     };
   });
   if (entryCount !== 1) throw new Error("The selected HTML entry is missing from the bundle.");
-  if (totalBytes > MAX_BUNDLE_BYTES) {
-    throw new Error(`The complete bundle exceeds ${MAX_BUNDLE_BYTES / (1024 * 1024)} MiB.`);
+  if (!Number.isSafeInteger(totalBytes)) {
+    throw new Error("The bundle byte count exceeds the supported numeric range.");
   }
   return { entryPath, files, totalBytes };
 }

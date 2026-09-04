@@ -289,7 +289,10 @@ export async function createBundleUpload(input: {
           id: draftVersions.id,
           versionNumber: draftVersions.versionNumber,
           isBundle: draftVersions.isBundle,
-          totalSizeBytes: sql<number>`coalesce(${draftVersions.totalSizeBytes}, ${draftVersions.sizeBytes})::int`,
+          totalSizeBytes:
+            sql<number>`coalesce(${draftVersions.totalSizeBytes}, ${draftVersions.sizeBytes})`.mapWith(
+              Number,
+            ),
         })
         .from(draftVersions)
         .where(eq(draftVersions.draftId, draft.id))
@@ -897,7 +900,10 @@ export async function restoreBundleVersion(input: {
         id: draftVersions.id,
         versionNumber: draftVersions.versionNumber,
         isBundle: draftVersions.isBundle,
-        totalSizeBytes: sql<number>`coalesce(${draftVersions.totalSizeBytes}, ${draftVersions.sizeBytes})::int`,
+        totalSizeBytes:
+          sql<number>`coalesce(${draftVersions.totalSizeBytes}, ${draftVersions.sizeBytes})`.mapWith(
+            Number,
+          ),
       })
       .from(draftVersions)
       .where(eq(draftVersions.draftId, draft.id))
