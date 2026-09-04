@@ -1,5 +1,6 @@
 import { sql } from "drizzle-orm";
 import {
+  bigint,
   boolean,
   char,
   check,
@@ -202,10 +203,10 @@ export const draftVersions = pgTable(
     contentSha256: char("content_sha256", { length: 64 }).notNull(),
     contentType: varchar("content_type", { length: 100 }).notNull(),
     originalFilename: varchar("original_filename", { length: 255 }),
-    sizeBytes: integer("size_bytes").notNull(),
+    sizeBytes: bigint("size_bytes", { mode: "number" }).notNull(),
     // Nullable for rolling deploys: older application instances do not write it.
     // Readers must fall back to sizeBytes until a later cleanup migration.
-    totalSizeBytes: integer("total_size_bytes"),
+    totalSizeBytes: bigint("total_size_bytes", { mode: "number" }),
     entryPath: varchar("entry_path", { length: 512 }),
     isBundle: boolean("is_bundle").notNull().default(false),
     source: versionSource("source").notNull(),
@@ -234,7 +235,7 @@ export const draftVersionAssets = pgTable(
     contentSha256: char("content_sha256", { length: 64 }).notNull(),
     contentType: varchar("content_type", { length: 100 }).notNull(),
     originalFilename: varchar("original_filename", { length: 255 }).notNull(),
-    sizeBytes: integer("size_bytes").notNull(),
+    sizeBytes: bigint("size_bytes", { mode: "number" }).notNull(),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   },
   (table) => [
@@ -262,7 +263,7 @@ export const uploadIntents = pgTable(
     kind: draftKind("kind").notNull(),
     originalFilename: varchar("original_filename", { length: 255 }).notNull(),
     contentType: varchar("content_type", { length: 100 }).notNull(),
-    expectedBytes: integer("expected_bytes").notNull(),
+    expectedBytes: bigint("expected_bytes", { mode: "number" }).notNull(),
     entryPath: varchar("entry_path", { length: 512 }),
     fileCount: integer("file_count").notNull().default(1),
     title: varchar("title", { length: 200 }),
@@ -305,7 +306,7 @@ export const uploadIntentFiles = pgTable(
     finalKey: text("final_key").notNull(),
     contentType: varchar("content_type", { length: 100 }).notNull(),
     originalFilename: varchar("original_filename", { length: 255 }).notNull(),
-    expectedBytes: integer("expected_bytes").notNull(),
+    expectedBytes: bigint("expected_bytes", { mode: "number" }).notNull(),
     sourceKey: text("source_key"),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   },
@@ -325,7 +326,7 @@ export const uploadIntentReclaims = pgTable(
     versionId: uuid("version_id")
       .notNull()
       .references(() => draftVersions.id, { onDelete: "restrict" }),
-    sizeBytes: integer("size_bytes").notNull(),
+    sizeBytes: bigint("size_bytes", { mode: "number" }).notNull(),
   },
   (table) => [
     primaryKey({ columns: [table.intentId, table.versionId] }),

@@ -1,25 +1,25 @@
 import { describe, expect, it } from "vitest";
-import { readUpload } from "@/lib/api/upload";
-import { MAX_UPLOAD_BYTES } from "@/lib/validation/upload";
+import { MAX_MULTIPART_REQUEST_BYTES, readUpload } from "@/lib/api/upload";
 
 function uploadRequest(headers: Record<string, string>, body?: FormData): Request {
   return new Request("http://localhost/api/v1/drafts", { method: "POST", headers, body });
 }
 
-describe("readUpload request-size precheck", () => {
+describe("legacy multipart transport bound", () => {
   it("rejects a declared-oversized body with 413 before parsing", async () => {
     const result = await readUpload(
       uploadRequest({
         "content-type": "multipart/form-data; boundary=x",
-        "content-length": String(MAX_UPLOAD_BYTES * 4),
+        "content-length": String(MAX_MULTIPART_REQUEST_BYTES * 4),
       }),
     );
 
     expect(result).toBeInstanceOf(Response);
     const response = result as Response;
     expect(response.status).toBe(413);
-    const body = (await response.json()) as { error: { code: string } };
+    const body = (await response.json()) as { error: { code: string; message: string } };
     expect(body.error.code).toBe("FILE_TOO_LARGE");
+    expect(body.error.message).toContain("/api/v1/uploads/intents");
   });
 
   it("accepts a small valid multipart upload", async () => {
@@ -41,7 +41,7 @@ describe("readUpload request-size precheck", () => {
       pull(controller) {
         if (emitted) return;
         emitted = true;
-        controller.enqueue(new Uint8Array(MAX_UPLOAD_BYTES + 128 * 1024));
+        controller.enqueue(new Uint8Array(MAX_MULTIPART_REQUEST_BYTES + 128 * 1024));
       },
       cancel() {
         cancelled = true;
@@ -59,8 +59,9 @@ describe("readUpload request-size precheck", () => {
     expect(result).toBeInstanceOf(Response);
     const response = result as Response;
     expect(response.status).toBe(413);
-    const body = (await response.json()) as { error: { code: string } };
+    const body = (await response.json()) as { error: { code: string; message: string } };
     expect(body.error.code).toBe("FILE_TOO_LARGE");
+    expect(body.error.message).toContain("/api/v1/uploads/intents");
     expect(cancelled).toBe(true);
   });
 });

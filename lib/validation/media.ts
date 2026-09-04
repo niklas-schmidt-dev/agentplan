@@ -6,7 +6,7 @@ import type { StorageOpenResult } from "@/lib/storage";
 
 export class MediaValidationError extends Error {
   constructor(
-    public readonly code: "INVALID_FILE_TYPE" | "FILE_TOO_LARGE" | "EMPTY_FILE" | "SIZE_MISMATCH",
+    public readonly code: "INVALID_FILE_TYPE" | "EMPTY_FILE" | "SIZE_MISMATCH",
     message: string,
   ) {
     super(message);
@@ -20,20 +20,14 @@ export function validateDirectUploadMetadata(input: {
   sizeBytes: number;
 }): UploadSpec {
   const spec = uploadSpecFor(input.filename, input.contentType);
-  if (!spec || spec.kind === "html") {
+  if (!spec) {
     throw new MediaValidationError(
       "INVALID_FILE_TYPE",
-      "Direct uploads support JPEG, PNG, WebP, GIF, AVIF, and MP4 files.",
+      "Direct uploads support HTML, JPEG, PNG, WebP, GIF, AVIF, and MP4 files.",
     );
   }
   if (!Number.isSafeInteger(input.sizeBytes) || input.sizeBytes <= 0) {
     throw new MediaValidationError("EMPTY_FILE", "The file is empty.");
-  }
-  if (input.sizeBytes > spec.maxBytes) {
-    throw new MediaValidationError(
-      "FILE_TOO_LARGE",
-      `The file exceeds the ${spec.maxBytes / (1024 * 1024)} MiB limit.`,
-    );
   }
   return spec;
 }
@@ -99,6 +93,11 @@ export async function validateStoredMedia(input: {
     input.expectedBytes,
     input.spec.kind === "image",
   );
+  // HTML is served in the same isolated viewer as legacy multipart uploads.
+  // Hash and verify its declared size without buffering the document.
+  if (input.spec.kind === "html") {
+    return { contentSha256: consumed.sha256, sizeBytes: consumed.size };
+  }
   const detected = await fileTypeFromBuffer(consumed.bytes ?? consumed.prefix);
   if (!detected || detected.mime !== input.spec.contentType) {
     throw new MediaValidationError(

@@ -214,7 +214,7 @@ npm run r2:cors:list
 ```
 
 HTML, raster image, MP4, and HTML plan-folder uploads are always enabled. A plan
-folder contains one HTML entry and up to 50 image/MP4 assets (125 MiB total).
+folder contains one HTML entry and up to 50 image/MP4 assets (within the available storage quota).
 Before production use, verify Range, immutable signed PUT, provider copy, and
 throttled playback recovery behavior for the deployment's storage provider.
 

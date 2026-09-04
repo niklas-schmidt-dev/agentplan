@@ -94,11 +94,11 @@ relative references in the HTML:
 
 Bundle rules:
 
-- exactly one selected `.html` or `.htm` entry, maximum 2 MiB;
+- exactly one selected `.html` or `.htm` entry;
 - up to 50 raster-image/MP4 assets;
-- JPEG, PNG, WebP, GIF, and AVIF, maximum 10 MiB each;
-- MP4, maximum 100 MiB each;
-- complete folder maximum 125 MiB;
+- JPEG, PNG, WebP, GIF, and AVIF;
+- MP4;
+- file and folder sizes must fit the account’s available storage quota; Unlimited has no storage quota;
 - inline CSS and JavaScript in the entry HTML;
 - no SVG, audio, PDF, external CSS/JS/font files, symlinks, or arbitrary
   binaries;

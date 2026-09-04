@@ -336,7 +336,10 @@ export async function listDraftsForAdmin({
         ownerEmail: users.email,
         ownerBlockedAt: users.blockedAt,
         versionNumber: draftVersions.versionNumber,
-        sizeBytes: sql<number>`coalesce(${draftVersions.totalSizeBytes}, ${draftVersions.sizeBytes})::int`,
+        sizeBytes:
+          sql<number>`coalesce(${draftVersions.totalSizeBytes}, ${draftVersions.sizeBytes})`.mapWith(
+            Number,
+          ),
         contentType: draftVersions.contentType,
         isBundle: draftVersions.isBundle,
         assetCount: sql<number>`(
@@ -511,7 +514,10 @@ export async function removeDraftAsAdmin(
     }
     const [currentVersion] = await tx
       .select({
-        totalSizeBytes: sql<number>`coalesce(${draftVersions.totalSizeBytes}, ${draftVersions.sizeBytes})::int`,
+        totalSizeBytes:
+          sql<number>`coalesce(${draftVersions.totalSizeBytes}, ${draftVersions.sizeBytes})`.mapWith(
+            Number,
+          ),
         isBundle: draftVersions.isBundle,
         assetCount: sql<number>`(
           select count(*)::int from ${draftVersionAssets}

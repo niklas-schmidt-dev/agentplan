@@ -35,7 +35,7 @@ export function uploadErrorResponse(error: unknown): Response {
     );
   }
   if (error instanceof MediaValidationError) {
-    return apiError(error.code === "FILE_TOO_LARGE" ? 413 : 400, error.code, error.message);
+    return apiError(400, error.code, error.message);
   }
   const limited = limitErrorResponse(error);
   if (limited) return limited;

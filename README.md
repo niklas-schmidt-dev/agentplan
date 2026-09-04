@@ -91,7 +91,7 @@ setup guide.
 - Raster images (JPEG, PNG, WebP, GIF, and AVIF) and MP4 files use short-lived
   direct-upload capabilities, signature/magic validation, immutable versions,
   and native media viewers. A bundled HTML plan can contain one HTML entry plus
-  up to 50 private raster-image/MP4 assets (125 MiB total).
+  up to 50 private raster-image/MP4 assets (within the available storage quota).
 
 ## Architecture
 
@@ -106,10 +106,10 @@ Agents         • /api/v1 (token auth)
 Request paths:
 
 - **Browser** → same-origin API routes and small server actions → draft/token services
-  → Postgres + private object storage. Upload rate reservations happen before
-  multipart parsing.
+  → Postgres + private object storage. Upload intents reserve storage before
+  issuing direct-upload capabilities.
   Authorization uses sessions and owner-scoped queries.
-- **Agent / CLI** → `POST /api/v1/drafts` with `Authorization: Bearer ap_live_…` →
+- **Agent / CLI** → `POST /api/v1/uploads/intents` with `Authorization: Bearer ap_live_…` →
   scope-checked → same services.
 - **Viewer** → `/p/{slug}` renders an iframe whose source is either the standalone
   content route or a version-pinned bundle route. Every HTML and media request is
@@ -232,18 +232,24 @@ Errors have a stable shape agents can match on:
 Free-plan limits (all server-enforced; tunable via `AP_*` env vars, defaults in
 `lib/limits/plans.ts`):
 
-| Limit                          | Default                               |
-| ------------------------------ | ------------------------------------- |
-| Upload size                    | HTML 2 MiB; image 10 MiB; MP4 100 MiB |
-| HTML bundle                    | 125 MiB total; up to 50 assets        |
-| Drafts per user                | 100                                   |
-| Versions kept per draft        | HTML 100; image 20; video 2           |
-| Bundled HTML versions          | 2                                     |
-| Total storage per user         | 300 MiB                               |
-| Active API tokens per user     | 25                                    |
-| Uploads per user               | 30 / 10 min and 300 / day             |
-| Token create/revoke operations | 60 / hour and 200 / day               |
-| Draft password attempts        | 10 / 15 min per draft + IP            |
+| Limit                          | Default                                       |
+| ------------------------------ | --------------------------------------------- |
+| Upload size                    | Available storage quota; no per-file size cap |
+| HTML bundle                    | Available storage quota; up to 50 assets      |
+| Drafts per user                | 100                                           |
+| Versions kept per draft        | HTML 100; image 20; video 2                   |
+| Bundled HTML versions          | 2                                             |
+| Total storage per user         | 300 MiB                                       |
+| Active API tokens per user     | 25                                            |
+| Uploads per user               | 30 / 10 min and 300 / day                     |
+| Token create/revoke operations | 60 / hour and 200 / day                       |
+| Draft password attempts        | 10 / 15 min per draft + IP                    |
+
+File and bundle sizes use the remaining storage quota; `unlimited` bypasses it.
+Dashboard and CLI uploads go directly to storage, including standalone HTML.
+The legacy buffered HTML multipart endpoints retain a small request-body bound
+and direct larger uploads to `/api/v1/uploads/intents`. Storage provider limits
+and image pixel checks still apply.
 
 Exceeded quotas return `403 QUOTA_EXCEEDED`; rate limits return `429 RATE_LIMITED`
 with a `Retry-After` header. Rate limiting is a fixed-window counter in Postgres, so

@@ -5,13 +5,11 @@ export type UploadSpec = {
   extensions: readonly string[];
   canonicalExtension: string;
   contentType: string;
-  maxBytes: number;
 };
 
 export declare const uploadKinds: readonly UploadKind[];
 export declare const uploadSpecs: readonly UploadSpec[];
 export declare const MAX_BUNDLE_ASSETS: 50;
-export declare const MAX_BUNDLE_BYTES: number;
 export declare const MAX_BUNDLE_PATH_BYTES: 512;
 export declare function uploadSpecFor(
   filename: string,

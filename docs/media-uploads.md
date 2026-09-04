@@ -1,7 +1,15 @@
 # Media upload operations
 
-HTML, raster image, and MP4 uploads are always enabled. HTML uses the existing
-bounded multipart endpoints; images and video use direct-to-storage uploads.
+HTML, raster image, and MP4 uploads are always enabled. The dashboard and CLI use
+direct-to-storage uploads for all file kinds. File and bundle sizes are governed
+by committed storage plus pending reservations and the new upload; `unlimited`
+bypasses this quota. There are no per-file or aggregate bundle byte caps.
+Apply the byte-counter migration (`0011_upload_byte_counts`) before deploying
+this version; it widens stored sizes to `bigint` while API byte counts stay JSON
+numbers.
+The legacy HTML multipart endpoints remain bounded to protect request memory;
+larger HTML uploads use `/api/v1/uploads/intents`. Provider transport limits,
+image pixel checks, and bundle asset-count limits still apply.
 Run the checks below before relying on media uploads in production.
 
 With one provider's credentials and `STORAGE_DRIVER` loaded, run its live
@@ -12,7 +20,7 @@ LIVE_STORAGE_CONTRACT=1 npx vitest run tests/integration/live-storage-contract.t
 ```
 
 HTML plan folders use immutable direct-to-final upload capabilities for one HTML
-entry plus up to 50 raster-image/MP4 assets (125 MiB total). The CLI accepts a
+entry plus up to 50 raster-image/MP4 assets (within the available storage quota). The CLI accepts a
 directory, and the dashboard provides an “HTML plan folder” picker. Relative
 element and CSS image URLs resolve through a version-pinned route, so a republish
 cannot mix files from two versions. Arbitrary `fetch()` from the opaque-origin
