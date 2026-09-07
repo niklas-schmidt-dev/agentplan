@@ -1,3 +1,4 @@
+import { drainBatches } from "@/lib/maintenance/drain";
 import { and, inArray, lte, ne, sql } from "drizzle-orm";
 import { getDb } from "@/db/client";
 import { auditEvents } from "@/db/schema";
@@ -47,7 +48,14 @@ export async function recordAuditEvent(event: {
 }
 
 /** Applies the documented finite audit-retention window in bounded cron runs. */
-export async function purgeExpiredAuditEvents(batchSize = 500): Promise<number> {
+export async function purgeExpiredAuditEvents(
+  batchSize = 500,
+  deadline = Date.now() + 30_000,
+): Promise<number> {
+  return drainBatches(() => purgeExpiredAuditEventsBatch(batchSize), deadline);
+}
+
+async function purgeExpiredAuditEventsBatch(batchSize: number): Promise<number> {
   const days = auditRetentionDays();
   const stale = await getDb()
     .select({ id: auditEvents.id })

@@ -75,3 +75,36 @@ test("browser registration verifies through the inbox and password recovery inva
     await recovery.close();
   }
 });
+
+for (const status of [429, 500, "network"] as const) {
+  test(`password recovery reports ${status} and allows retry`, async ({ page }) => {
+    await page.goto("/forgot-password");
+    await page.getByLabel("email", { exact: true }).fill("recovery@example.test");
+    await page.route(
+      "**/api/auth/request-password-reset",
+      async (route) => {
+        if (status === "network") await route.abort("failed");
+        else
+          await route.fulfill({
+            status,
+            contentType: "application/json",
+            body: JSON.stringify({ code: "FAILED", message: "Failure" }),
+          });
+      },
+      { times: 1 },
+    );
+    await page.getByRole("button", { name: "send reset link" }).click();
+    await expect(page.getByRole("alert")).toBeVisible();
+    await expect(page.getByRole("status")).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "send reset link" })).toBeEnabled();
+    await page.route("**/api/auth/request-password-reset", (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ status: true }),
+      }),
+    );
+    await page.getByRole("button", { name: "send reset link" }).click();
+    await expect(page.getByRole("status")).toContainText("password-reset link has been sent");
+  });
+}

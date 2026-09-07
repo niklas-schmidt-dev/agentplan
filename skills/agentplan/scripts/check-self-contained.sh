@@ -7,7 +7,7 @@ if [[ $# -ne 1 ]]; then
 fi
 
 input_file="$1"
-max_bytes="${AGENTPLAN_MAX_BYTES:-2097152}"
+max_bytes="${AGENTPLAN_MAX_BYTES:-}"
 
 if [[ ! -f "$input_file" ]]; then
   echo "FAIL: file does not exist: $input_file" >&2
@@ -23,8 +23,12 @@ case "$input_file" in
 esac
 
 size_bytes="$(wc -c < "$input_file" | tr -d '[:space:]')"
-if [[ "$size_bytes" -gt "$max_bytes" ]]; then
-  echo "FAIL: $size_bytes bytes exceeds the AgentPlan HTML limit of $max_bytes bytes." >&2
+if [[ -n "$max_bytes" && ! "$max_bytes" =~ ^[1-9][0-9]*$ ]]; then
+  echo "FAIL: AGENTPLAN_MAX_BYTES must be a positive integer when set." >&2
+  exit 2
+fi
+if [[ -n "$max_bytes" && "$size_bytes" -gt "$max_bytes" ]]; then
+  echo "FAIL: $size_bytes bytes exceeds the configured local limit of $max_bytes bytes." >&2
   exit 1
 fi
 

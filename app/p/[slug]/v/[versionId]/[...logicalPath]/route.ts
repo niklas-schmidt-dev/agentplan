@@ -18,6 +18,7 @@ import {
 import { resolveDraftView } from "@/lib/drafts/view-access";
 import { etagMatches, parseSingleByteRange } from "@/lib/http/range";
 import { getStorage } from "@/lib/storage";
+import { storageResponseMatches } from "@/lib/http/storage-metadata";
 import { normalizeBundlePath } from "@agentplan/upload-contract";
 
 export const runtime = "nodejs";
@@ -161,8 +162,6 @@ export async function GET(req: Request, { params }: Params): Promise<Response> {
   if (etagMatches(req.headers.get("if-none-match"), etag)) {
     return new Response(null, { status: 304, headers });
   }
-  if (!(await storageMatches(file))) return contentNotFound();
-
   let range: { start: number; end: number } | undefined;
   const rangeHeader = file.isVideo ? req.headers.get("range") : null;
   if (rangeHeader) {
@@ -179,6 +178,10 @@ export async function GET(req: Request, { params }: Params): Promise<Response> {
 
   const object = await getStorage().open(file.storageKey, range);
   if (!object) return contentNotFound();
+  if (!storageResponseMatches(object, file, range)) {
+    await object.body.cancel().catch(() => undefined);
+    return contentNotFound();
+  }
   if (range) {
     headers.set("Content-Range", `bytes ${range.start}-${range.end}/${file.sizeBytes}`);
     headers.set("Content-Length", String(range.end - range.start + 1));

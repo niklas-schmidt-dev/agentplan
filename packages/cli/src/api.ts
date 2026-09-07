@@ -32,6 +32,9 @@ export class ApiError extends Error {
     public status: number,
     public code: string,
     message: string,
+    public requestId?: string,
+    public retryAfter?: string,
+    public intentId?: string,
   ) {
     super(message);
   }
@@ -41,9 +44,15 @@ export class AgentPlanApi {
   constructor(
     private baseUrl: string,
     private token: string,
+    private timeoutMs = 30_000,
+    private completionTimeoutMs = 310_000,
   ) {}
 
-  private async request<T>(path: string, init: RequestInit = {}): Promise<T> {
+  private async request<T>(
+    path: string,
+    init: RequestInit = {},
+    timeoutMs = this.timeoutMs,
+  ): Promise<T> {
     let response: Response;
     try {
       response = await fetch(`${this.baseUrl}${path}`, {
@@ -51,13 +60,18 @@ export class AgentPlanApi {
         // API endpoints are canonical. Refuse redirects so a custom or
         // compromised endpoint cannot forward the bearer token elsewhere.
         redirect: "error",
+        signal: AbortSignal.timeout(timeoutMs),
         headers: {
           authorization: `Bearer ${this.token}`,
           ...(init.headers ?? {}),
         },
       });
-    } catch (error) {
-      throw new ApiError(0, "NETWORK_ERROR", `Could not reach ${this.baseUrl}: ${String(error)}`);
+    } catch {
+      throw new ApiError(
+        0,
+        "NETWORK_ERROR",
+        "Could not reach the AgentPlan API before the request deadline.",
+      );
     }
 
     if (response.status === 204) return undefined as T;
@@ -70,22 +84,72 @@ export class AgentPlanApi {
         response.status,
         "BAD_RESPONSE",
         `Unexpected response (${response.status}).`,
+        response.headers.get("x-request-id") ?? undefined,
+        response.headers.get("retry-after") ?? undefined,
       );
     }
 
     if (!response.ok) {
-      const error = (body as { error?: { code?: string; message?: string } }).error;
+      const candidate =
+        body && typeof body === "object" ? (body as { error?: unknown }).error : null;
+      const error =
+        candidate && typeof candidate === "object"
+          ? (candidate as { code?: unknown; message?: unknown })
+          : null;
       throw new ApiError(
         response.status,
-        error?.code ?? "UNKNOWN_ERROR",
-        error?.message ?? `Request failed (${response.status}).`,
+        typeof error?.code === "string" ? error.code : "UNKNOWN_ERROR",
+        typeof error?.message === "string" ? error.message : `Request failed (${response.status}).`,
+        response.headers.get("x-request-id") ?? undefined,
+        response.headers.get("retry-after") ?? undefined,
       );
     }
     return body as T;
   }
 
-  listDrafts(): Promise<{ drafts: ApiDraft[] }> {
-    return this.request("/api/v1/drafts");
+  identity(): Promise<{ userId: string; scopes: string[] }> {
+    return this.request("/api/v1/identity");
+  }
+
+  listDrafts(
+    options: { limit?: number; cursor?: string; search?: string; visibility?: string } = {},
+  ): Promise<{ drafts: ApiDraft[]; nextCursor?: string | null }> {
+    const query = new URLSearchParams();
+    for (const [key, value] of Object.entries(options)) {
+      if (value !== undefined) query.set(key, String(value));
+    }
+    return this.request(`/api/v1/drafts${query.size ? `?${query}` : ""}`);
+  }
+
+  listVersions(id: string): Promise<{ versions: ApiVersion[] }> {
+    return this.request(`/api/v1/drafts/${encodeURIComponent(id)}/versions`);
+  }
+
+  updateDraft(
+    id: string,
+    patch: { title?: string; visibility?: ApiDraft["visibility"]; password?: string },
+  ): Promise<{ draft: ApiDraft }> {
+    return this.request(`/api/v1/drafts/${encodeURIComponent(id)}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(patch),
+    });
+  }
+
+  restoreVersion(id: string, versionId: string): Promise<{ draft: ApiDraft; version: ApiVersion }> {
+    return this.request(
+      `/api/v1/drafts/${encodeURIComponent(id)}/versions/${encodeURIComponent(versionId)}/restore`,
+      { method: "POST" },
+      this.completionTimeoutMs,
+    );
+  }
+
+  deleteDraft(id: string): Promise<void> {
+    return this.request(`/api/v1/drafts/${encodeURIComponent(id)}`, { method: "DELETE" });
+  }
+
+  getUploadIntent(intentId: string): Promise<UploadStatus> {
+    return this.request(`/api/v1/uploads/intents/${encodeURIComponent(intentId)}`);
   }
 
   getDraft(id: string): Promise<{ draft: ApiDraft }> {
@@ -116,9 +180,11 @@ export class AgentPlanApi {
   }
 
   completeUploadIntent(intentId: string): Promise<{ draft: ApiDraft; version: ApiVersion }> {
-    return this.request(`/api/v1/uploads/intents/${encodeURIComponent(intentId)}/complete`, {
-      method: "POST",
-    });
+    return this.request(
+      `/api/v1/uploads/intents/${encodeURIComponent(intentId)}/complete`,
+      { method: "POST" },
+      this.completionTimeoutMs,
+    );
   }
 
   cancelUploadIntent(intentId: string): Promise<void> {
@@ -176,8 +242,16 @@ export class AgentPlanApi {
   }
 
   completeBundle(intentId: string): Promise<{ draft: ApiDraft; version: ApiVersion }> {
-    return this.request(`/api/v1/uploads/bundles/${encodeURIComponent(intentId)}/complete`, {
-      method: "POST",
-    });
+    return this.request(
+      `/api/v1/uploads/bundles/${encodeURIComponent(intentId)}/complete`,
+      { method: "POST" },
+      this.completionTimeoutMs,
+    );
   }
 }
+
+export type UploadStatus = {
+  intent: { id: string; status: string; failureCode?: string | null };
+  draft?: ApiDraft;
+  version?: ApiVersion;
+};

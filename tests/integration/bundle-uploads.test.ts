@@ -3,7 +3,7 @@ import { mkdtempSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import sharp from "sharp";
-import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
 process.env.STORAGE_DRIVER = "fs";
 process.env.STORAGE_FS_ROOT = mkdtempSync(path.join(os.tmpdir(), "agentplan-bundle-"));
@@ -50,6 +50,11 @@ describe.skipIf(!hasDb)("bundle upload lifecycle (integration)", () => {
         .png()
         .toBuffer(),
     );
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllEnvs();
   });
 
   afterAll(async () => {
@@ -122,6 +127,8 @@ describe.skipIf(!hasDb)("bundle upload lifecycle (integration)", () => {
     });
     expect(await entry.text()).toContain('src="images/hero.png"');
 
+    const headSpy = vi.spyOn(getStorage(), "head");
+    const openSpy = vi.spyOn(getStorage(), "open");
     const asset = await getVersionedContent(
       new Request(
         `http://localhost:3000/p/${first.draft.slug}/v/${first.version.id}/nested/images/hero.png`,
@@ -135,6 +142,11 @@ describe.skipIf(!hasDb)("bundle upload lifecycle (integration)", () => {
       },
     );
     expect(asset.status).toBe(200);
+    // The filesystem adapter stats once inside open(); the route adds no HEAD.
+    expect(headSpy).toHaveBeenCalledTimes(1);
+    expect(openSpy).toHaveBeenCalledTimes(1);
+    headSpy.mockRestore();
+    openSpy.mockRestore();
     expect(asset.headers.get("content-security-policy")).toBe("sandbox; frame-ancestors 'self'");
     expect(asset.headers.get("content-type")).toBe("image/png");
 
@@ -150,6 +162,87 @@ describe.skipIf(!hasDb)("bundle upload lifecycle (integration)", () => {
     expect(versions.some((version) => version.id === first.version.id)).toBe(true);
     expect(await getStorage().get(first.version.storageKey)).not.toBeNull();
     vi.unstubAllEnvs();
+  });
+
+  it("resumes verified immutable files after a transient storage failure", async () => {
+    const html = new TextEncoder().encode("<!doctype html><h1>Resume</h1>");
+    const created = await createBundleUpload({
+      ownerId,
+      source: "browser",
+      entryPath: "index.html",
+      files: [
+        { path: "index.html", contentType: "text/html", sizeBytes: html.length },
+        ...["a.png", "b.png", "c.png"].map((path) => ({
+          path,
+          contentType: "image/png",
+          sizeBytes: png.length,
+        })),
+      ],
+      target: { type: "new", title: "Resume validation", visibility: "public" },
+    });
+    const bundle = (await getBundleForOwner(ownerId, created.intent.id))!;
+    await getStorage().putIfAbsent(bundle.intent.finalKey, html, "text/html");
+    for (const file of bundle.files)
+      await getStorage().putIfAbsent(file.finalKey, png, "image/png");
+    const original = getStorage().open.bind(getStorage());
+    const missingKey = bundle.files[2]!.finalKey;
+    const read = vi.spyOn(getStorage(), "open").mockImplementation(async (key, options) => {
+      if (key === missingKey) throw new Error("temporary provider failure");
+      return original(key, options);
+    });
+    try {
+      await expect(completeBundleUpload(created.intent.id, ownerId)).rejects.toThrow(
+        "temporary provider failure",
+      );
+    } finally {
+      read.mockRestore();
+    }
+    const pending = (await getBundleForOwner(ownerId, created.intent.id))!;
+    expect(pending.intent.status).toBe("pending");
+    expect(pending.intent.verifiedSha256).toMatch(/^[a-f0-9]{64}$/);
+    expect(pending.files.slice(0, 2).every((file) => file.verifiedSha256)).toBe(true);
+    const retryRead = vi.spyOn(getStorage(), "open");
+    try {
+      const result = await completeBundleUpload(created.intent.id, ownerId);
+      expect(result.intent.status).toBe("completed");
+      expect(retryRead.mock.calls.map(([key]) => key)).toEqual([missingKey]);
+    } finally {
+      retryRead.mockRestore();
+    }
+  });
+
+  it("cancels a mismatched provider response before serving bundle bytes", async () => {
+    const completed = await uploadBundle({
+      type: "new",
+      title: "Bad provider metadata",
+      visibility: "public",
+    });
+    const cancel = vi.fn();
+    const read = vi.spyOn(getStorage(), "open").mockResolvedValue({
+      size: 999,
+      contentType: "text/html",
+      etag: null,
+      contentRange: null,
+      body: new ReadableStream({ cancel }),
+    });
+    try {
+      const response = await getVersionedContent(
+        new Request(
+          `http://localhost/p/${completed.draft.slug}/v/${completed.version.id}/nested/index.html`,
+        ),
+        {
+          params: Promise.resolve({
+            slug: completed.draft.slug,
+            versionId: completed.version.id,
+            logicalPath: ["nested", "index.html"],
+          }),
+        },
+      );
+      expect(response.status).toBe(404);
+      expect(cancel).toHaveBeenCalledTimes(1);
+    } finally {
+      read.mockRestore();
+    }
   });
 
   it("keeps three bundles and restores all assets into a fourth version", async () => {

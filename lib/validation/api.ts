@@ -37,10 +37,15 @@ export const patchDraftSchema = draftFieldsSchema.refine(
 export const listDraftsQuerySchema = z.object({
   search: z.string().trim().min(1).max(200).optional(),
   visibility: visibilitySchema.optional(),
+  limit: z.coerce.number().int().min(1).max(200).optional(),
+  cursor: z.string().min(1).max(1024).optional(),
 });
 
 export const createTokenSchema = z.object({
   name: z.string().trim().min(1).max(100),
-  scopes: z.array(z.enum(TOKEN_SCOPES)).min(1).default([...TOKEN_SCOPES]),
+  scopes: z
+    .array(z.enum(TOKEN_SCOPES))
+    .min(1)
+    .default([...TOKEN_SCOPES]),
   expiresInDays: z.number().int().min(1).max(365).optional(),
 });

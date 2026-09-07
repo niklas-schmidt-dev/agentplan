@@ -1,4 +1,5 @@
-import { listDraftsForOwner } from "@/db/queries/drafts";
+import { InvalidDraftCursorError } from "@/lib/api/draft-cursor";
+import { listDraftsPageForOwner } from "@/db/queries/drafts";
 import { authenticateApiRequest, isFailure } from "@/lib/api/auth";
 import {
   insufficientScope,
@@ -74,16 +75,25 @@ export async function GET(req: Request): Promise<Response> {
   const url = new URL(req.url);
   const query = listDraftsQuerySchema.safeParse({
     search: url.searchParams.get("search") ?? undefined,
+    limit: url.searchParams.get("limit") ?? undefined,
+    cursor: url.searchParams.get("cursor") ?? undefined,
     visibility: url.searchParams.get("visibility") ?? undefined,
   });
   if (!query.success) {
     return invalidRequest(query.error.issues[0]?.message ?? "Invalid query.");
   }
 
-  const drafts = await listDraftsForOwner(actor.userId, query.data);
-  return Response.json({
-    drafts: drafts.map((draft) =>
-      serializeDraft(draft, draft.currentVersion?.versionNumber ?? null),
-    ),
-  });
+  try {
+    const page = await listDraftsPageForOwner(actor.userId, query.data);
+    return Response.json({
+      nextCursor: page.nextCursor,
+      previousCursor: page.previousCursor,
+      drafts: page.drafts.map((draft) =>
+        serializeDraft(draft, draft.currentVersion?.versionNumber ?? null),
+      ),
+    });
+  } catch (error) {
+    if (error instanceof InvalidDraftCursorError) return invalidRequest(error.message);
+    throw error;
+  }
 }

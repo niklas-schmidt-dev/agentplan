@@ -21,16 +21,19 @@ export async function GET(req: Request): Promise<Response> {
   }
 
   try {
-    const [drafts, users, tokens, storage, uploadIntents] = await Promise.all([
-      purgeDeletedDrafts(),
-      purgePendingUserDeletionObjects(),
-      purgeRetiredTokens(),
-      purgeStorageDeletionJobs(),
-      purgeExpiredUploadIntents(),
-    ]);
+    const deadline = Date.now() + 270_000;
+    const [drafts, users, tokens, storage, uploadIntents, auditEvents, viewEvents] =
+      await Promise.all([
+        purgeDeletedDrafts(100, deadline),
+        purgePendingUserDeletionObjects(100, deadline),
+        purgeRetiredTokens(),
+        purgeStorageDeletionJobs(100, deadline),
+        purgeExpiredUploadIntents(deadline),
+        purgeExpiredAuditEvents(500, deadline),
+        purgeExpiredViewEvents(5_000, deadline),
+      ]);
     await purgeExpiredRateLimits();
-    const auditEvents = await purgeExpiredAuditEvents();
-    const viewEvents = await purgeExpiredViewEvents();
+
     return Response.json({
       purged: drafts.purged,
       failed: drafts.failed,
@@ -39,6 +42,9 @@ export async function GET(req: Request): Promise<Response> {
       retiredTokensPurged: tokens,
       storageObjectsPurged: storage.purged,
       storageObjectsFailed: storage.failed,
+      storageObjectsRemaining: storage.remaining,
+      storageOldestDueAt: storage.oldestDueAt,
+      deadlineReached: Date.now() >= deadline,
       uploadIntentsExpired: uploadIntents,
       auditEventsPurged: auditEvents,
       viewEventsPurged: viewEvents,

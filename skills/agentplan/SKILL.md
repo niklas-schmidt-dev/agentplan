@@ -52,13 +52,12 @@ types.
    agentplan --help
    ```
 
-   Its help must contain `upload <file|directory>` and `--entry <path>`. If it
-   does not, stop and tell the user the AgentPlan CLI must be updated to 0.2.0
-   or newer. Do not flatten a requested media bundle into a different
-   deliverable.
+   Its help must contain `upload <file|directory>`, `--entry <path>`, and
+   `validate <file|directory>`. If a command is missing, use a newer CLI build
+   that exposes it. Preserve the requested artifact shape.
 
-3. If no binary is installed, use `npx agentplan-cli@0.2.0` only when its help
-   exposes the same directory options. Do not install a global package unless
+3. If no binary is installed, use `npx agentplan-cli` only when its help
+   exposes the required commands. Do not install a global package unless
    the user asks.
 4. Authentication resolves in this order:
    `AGENTPLAN_TOKEN` → stored `agentplan login` credentials → interactive prompt.
@@ -77,7 +76,7 @@ bundle.
 Before publishing a single HTML file, run:
 
 ```bash
-scripts/check-self-contained.sh ./plan.html
+agentplan validate ./plan.html --json
 ```
 
 ### HTML plan folder
@@ -104,6 +103,12 @@ Bundle rules:
   binaries;
 - no absolute paths, `file://` URLs, traversal, query strings, or fragments in
   logical file paths.
+
+Run `agentplan validate ./plan-folder --json` before publishing. It checks the
+manifest and statically declared local references without authentication or
+network access. Read `issues` when `valid` is false. Quota, media content, and
+runtime JavaScript references still require server/browser verification. There
+is no default local HTML size cap; the account storage quota applies at upload.
 
 The CLI automatically chooses a root `index.html`, root `index.htm`, or the only
 HTML file. If multiple HTML candidates exist, select the intended entry with
@@ -190,11 +195,30 @@ agentplan upload <file|directory>
   --draft <id>
   --entry <path>
   --json
-agentplan list [--json]
+agentplan validate <file|directory> [--entry <path>] [--json]
+agentplan list [--search <text>] [--visibility public|private|password] [--json]
+agentplan list --limit <1-200> [--cursor <cursor>] [--json]
+agentplan get <id> [--json]
+agentplan versions <id> [--json]
+agentplan update <id> [--title <title>] [--public | --private | --password-stdin] [--json]
+agentplan restore <id> <version-id> [--json]
+agentplan delete <id> --yes [--json]
+agentplan upload-status <intent-id> [--bundle] [--complete] [--json]
 agentplan open <id>
 ```
 
-Use `--json` for agent operations. Parse stdout as JSON and return
+List retrieves every page by default; `--limit` or `--cursor` returns one page
+with `nextCursor`. `get` and `versions` require read scope; publishing, updates,
+restores, and deletion require write scope. Login works with either scope.
+Restore creates a new version. Delete requires the exact draft ID and `--yes`.
+Changing a public draft to protected access rotates its URL; return the updated
+URL after any audience change. Password updates use `--password-stdin`.
+
+Use `--json` for agent operations. Failures emit one JSON object to stderr with
+`error.code`, `message`, `status`, `requestId`, and `retryAfter`; uncertain upload
+completion also returns `intentId`. Exit 2 means local usage or validation failed;
+other command failures exit 1. Validation results use stdout with `valid` and
+`issues`, including on exit 2. Parse successful upload stdout as JSON and return
 `draft.url`. Keep the draft ID for possible versioning, but do not clutter the
 handoff with it unless useful.
 
@@ -206,9 +230,8 @@ Before uploading:
 
 1. Confirm the requested visibility.
 2. Confirm whether this is a new draft or a version of an existing draft.
-3. For a single HTML file, run the self-contained check.
-4. For a folder, inspect the file tree for unsupported files and symlinks.
-5. Let the CLI perform the authoritative path, type, count, and size validation.
+3. Run `agentplan validate <artifact> --json`; resolve reported issues.
+4. Server validation remains authoritative for uploaded content and quota.
 
 After uploading:
 
@@ -224,16 +247,22 @@ After uploading:
 
 ## Failure handling
 
-- `NETWORK_ERROR`: retry with the required network permission. Do not create a
-  different draft.
+- `NETWORK_ERROR`: restore connectivity before retrying. An upload intent that
+  may have completed needs reconciliation before any new upload.
 - Missing authentication: ask the user to run `agentplan login` or configure
   `AGENTPLAN_TOKEN` locally. Never request the token value in chat.
 - Old CLI help without directory support: stop and request a CLI update.
 - Unsupported bundle file: report every path identified by the CLI; do not
   silently omit user files.
 - Ambiguous entry: use `--entry` only when the intended HTML file is known.
-- Uncertain upload response: run `agentplan list --json` before retrying so a
-  successful first upload is not duplicated.
+- `UPLOAD_COMPLETION_UNCERTAIN`: retain `error.intentId`. The CLI already polled
+  the status endpoint, retried a transient completion at most once on the same
+  intent, and left the reservation intact. Run `agentplan upload-status
+<intent-id> --json` (add `--bundle` for directories) to recover the exact result.
+  Use `--complete` to retry completion on the same intent. A pending status does
+  not prove completion stopped. Do not create a replacement
+  while the outcome remains uncertain.
+- Rate limiting: honor `error.retryAfter` and preserve `error.requestId` for support.
 
 ## User-facing handoff
 

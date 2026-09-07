@@ -109,7 +109,9 @@ export type DraftViewCounts = { total: number; last7d: number };
 /** Per-draft view counts (excluding owner views) for one owner's live drafts. */
 export async function getViewCountsForOwner(
   ownerId: string,
+  draftIds?: string[],
 ): Promise<Map<string, DraftViewCounts>> {
+  if (draftIds?.length === 0) return new Map();
   const rows = await getDb()
     .select({
       draftId: draftViewEvents.draftId,
@@ -118,7 +120,14 @@ export async function getViewCountsForOwner(
     })
     .from(draftViewEvents)
     .innerJoin(drafts, eq(draftViewEvents.draftId, drafts.id))
-    .where(and(eq(drafts.ownerId, ownerId), isNull(drafts.deletedAt), visitorFilter))
+    .where(
+      and(
+        eq(drafts.ownerId, ownerId),
+        isNull(drafts.deletedAt),
+        visitorFilter,
+        draftIds ? inArray(drafts.id, draftIds) : undefined,
+      ),
+    )
     .groupBy(draftViewEvents.draftId);
   return new Map(rows.map((row) => [row.draftId, { total: row.total, last7d: row.last7d }]));
 }

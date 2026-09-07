@@ -30,11 +30,13 @@ export function uploadErrorResponse(error: unknown): Response {
     return apiError(410, "UPLOAD_INTENT_EXPIRED", "The upload reservation has expired.");
   }
   if (error instanceof UploadIntentConflictError) {
-    return apiError(
+    const response = apiError(
       409,
       "UPLOAD_INTENT_CONFLICT",
       error.message || "The upload cannot be changed in its current state.",
     );
+    if (error.retryAfter) response.headers.set("Retry-After", String(error.retryAfter));
+    return response;
   }
   if (error instanceof MediaValidationError) {
     return apiError(400, error.code, error.message);

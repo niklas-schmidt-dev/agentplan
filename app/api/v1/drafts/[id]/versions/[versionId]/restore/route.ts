@@ -15,6 +15,7 @@ import { restoreBundleVersion } from "@/lib/uploads/bundles";
 import { uuidSchema } from "@/lib/validation/api";
 
 export const runtime = "nodejs";
+export const maxDuration = 300;
 
 type Params = { params: Promise<{ id: string; versionId: string }> };
 

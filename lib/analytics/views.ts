@@ -1,3 +1,4 @@
+import { drainBatches } from "@/lib/maintenance/drain";
 import { createHmac } from "node:crypto";
 import { inArray, lte, sql } from "drizzle-orm";
 import { getDb } from "@/db/client";
@@ -100,7 +101,14 @@ export async function recordDraftView(event: {
 }
 
 /** Applies the finite view-event retention window in bounded cron runs. */
-export async function purgeExpiredViewEvents(batchSize = 5_000): Promise<number> {
+export async function purgeExpiredViewEvents(
+  batchSize = 5000,
+  deadline = Date.now() + 30_000,
+): Promise<number> {
+  return drainBatches(() => purgeExpiredViewEventsBatch(batchSize), deadline);
+}
+
+async function purgeExpiredViewEventsBatch(batchSize: number): Promise<number> {
   const days = viewRetentionDays();
   const stale = await getDb()
     .select({ id: draftViewEvents.id })

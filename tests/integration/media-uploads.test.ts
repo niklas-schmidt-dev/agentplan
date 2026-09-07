@@ -1,3 +1,4 @@
+import { purgeStorageDeletionJobs } from "@/lib/storage/cleanup";
 import { randomUUID } from "node:crypto";
 import { mkdtempSync } from "node:fs";
 import os from "node:os";
@@ -11,16 +12,19 @@ process.env.BETTER_AUTH_SECRET ??= "media-integration-test-secret-not-for-produc
 
 import { GET as getContent, HEAD as headContent } from "@/app/p/[slug]/content/route";
 import { closeDb, getDb } from "@/db/client";
-import { draftVersions, uploadIntents, users } from "@/db/schema";
+import { draftVersions, storageDeletionJobs, uploadIntents, users } from "@/db/schema";
 import { getUserStorageUsage } from "@/lib/limits/enforce";
 import { getStorage } from "@/lib/storage";
 import {
   cancelUploadIntent,
   completeUploadIntent,
   createUploadIntent,
+  failUploadIntent,
+  UploadIntentConflictError,
 } from "@/lib/uploads/service";
 import { MediaValidationError } from "@/lib/validation/media";
-import { eq } from "drizzle-orm";
+import { claimCompletion, releaseCompletion } from "@/lib/uploads/completion-lease";
+import { eq, sql } from "drizzle-orm";
 
 const hasDb = Boolean(process.env.DATABASE_URL);
 
@@ -93,6 +97,123 @@ describe.skipIf(!hasDb)("media upload lifecycle (integration)", () => {
       .from(draftVersions)
       .where(eq(draftVersions.draftId, first.draft.id));
     expect(versions).toHaveLength(1);
+  });
+
+  it("coordinates overlapping completions before storage work", async () => {
+    const created = await imageIntent({ type: "new", title: "Concurrent", visibility: "private" });
+    await getStorage().put(created.intent.stagingKey!, png, "image/png");
+    let entered!: () => void;
+    let resume!: () => void;
+    const started = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    const gate = new Promise<void>((resolve) => {
+      resume = resolve;
+    });
+    const original = getStorage().copy.bind(getStorage());
+    const copy = vi.spyOn(getStorage(), "copy").mockImplementation(async (...args) => {
+      entered();
+      await gate;
+      return original(...args);
+    });
+    const first = completeUploadIntent(created.intent.id, ownerId);
+    try {
+      await started;
+      await expect(completeUploadIntent(created.intent.id, ownerId)).rejects.toBeInstanceOf(
+        UploadIntentConflictError,
+      );
+      expect(copy).toHaveBeenCalledTimes(1);
+    } finally {
+      resume();
+      copy.mockRestore();
+    }
+    const result = await first;
+    expect((await completeUploadIntent(created.intent.id, ownerId)).version.id).toBe(
+      result.version.id,
+    );
+    expect(
+      await getDb().select().from(draftVersions).where(eq(draftVersions.draftId, result.draft.id)),
+    ).toHaveLength(1);
+  });
+
+  it("retains cleanup when an in-flight copy finishes after cancellation", async () => {
+    const created = await imageIntent({
+      type: "new",
+      title: "Cancel during copy",
+      visibility: "private",
+    });
+    await getStorage().put(created.intent.stagingKey!, png, "image/png");
+    let entered!: () => void;
+    let resume!: () => void;
+    const started = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    const gate = new Promise<void>((resolve) => {
+      resume = resolve;
+    });
+    const copy = vi
+      .spyOn(getStorage(), "copy")
+      .mockImplementation(async (_source, destination, type) => {
+        entered();
+        await gate;
+        await getStorage().putIfAbsent(destination, png, type);
+      });
+    const result = completeUploadIntent(created.intent.id, ownerId).catch((error) => error);
+    try {
+      await started;
+      await cancelUploadIntent(ownerId, created.intent.id);
+      resume();
+      expect(await result).toBeInstanceOf(UploadIntentConflictError);
+      expect(await getStorage().head(created.intent.finalKey)).not.toBeNull();
+      const [job] = await getDb()
+        .select()
+        .from(storageDeletionJobs)
+        .where(eq(storageDeletionJobs.storageKey, created.intent.finalKey));
+      expect(job!.notBefore.getTime()).toBeGreaterThan(created.intent.expiresAt.getTime());
+      await getDb()
+        .update(storageDeletionJobs)
+        .set({ notBefore: sql`now()`, nextAttemptAt: sql`now()` })
+        .where(eq(storageDeletionJobs.id, job!.id));
+      await purgeStorageDeletionJobs();
+      expect(await getStorage().head(created.intent.finalKey)).toBeNull();
+      expect(
+        await getDb()
+          .select()
+          .from(draftVersions)
+          .where(eq(draftVersions.id, created.intent.versionId)),
+      ).toHaveLength(0);
+    } finally {
+      resume();
+      copy.mockRestore();
+    }
+  });
+
+  it("recovers an expired lease and fences stale failure and release", async () => {
+    const created = await imageIntent({
+      type: "new",
+      title: "Crashed worker",
+      visibility: "private",
+    });
+    const oldToken = (await claimCompletion(created.intent.id))!;
+    expect(await claimCompletion(created.intent.id)).toBeNull();
+    await getDb()
+      .update(uploadIntents)
+      .set({ completionExpiresAt: sql`now() - interval '1 second'` })
+      .where(eq(uploadIntents.id, created.intent.id));
+    const token = (await claimCompletion(created.intent.id))!;
+    expect(token).not.toBe(oldToken);
+    await failUploadIntent(created.intent, "STALE_WORKER", oldToken);
+    await releaseCompletion(created.intent.id, oldToken);
+    const [pending] = await getDb()
+      .select()
+      .from(uploadIntents)
+      .where(eq(uploadIntents.id, created.intent.id));
+    expect(pending).toMatchObject({ status: "pending", completionToken: token });
+    await releaseCompletion(created.intent.id, token);
+    await getStorage().put(created.intent.stagingKey!, png, "image/png");
+    expect((await completeUploadIntent(created.intent.id, ownerId)).intent.status).toBe(
+      "completed",
+    );
   });
 
   it("pins older image bytes and preserves both images when the version cap is reached", async () => {

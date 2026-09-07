@@ -51,6 +51,9 @@ import {
 } from "./service";
 import { issueUploadIntentToken } from "./tokens";
 
+import { mapWithConcurrency } from "./concurrency";
+import { claimCompletion, ownsCompletion, releaseCompletion } from "./completion-lease";
+
 const INTENT_TTL_MS = 60 * 60 * 1000;
 const MAX_PENDING_BUNDLES = 10;
 const TARGET_BATCH_SIZE = 10;
@@ -88,25 +91,6 @@ function assertPendingBundle(intent: UploadIntent): void {
   if (intent.failureCode === "EXPIRED") throw new UploadIntentExpiredError();
   if (intent.status !== "pending") throw new UploadIntentConflictError();
   if (intent.expiresAt.getTime() <= Date.now()) throw new UploadIntentExpiredError();
-}
-
-async function mapWithConcurrency<T, R>(
-  values: readonly T[],
-  concurrency: number,
-  task: (value: T, index: number) => Promise<R>,
-): Promise<R[]> {
-  const result = new Array<R>(values.length);
-  let next = 0;
-  await Promise.all(
-    Array.from({ length: Math.min(concurrency, values.length) }, async () => {
-      while (true) {
-        const index = next++;
-        if (index >= values.length) return;
-        result[index] = await task(values[index]!, index);
-      }
-    }),
-  );
-  return result;
 }
 
 export async function getBundleForOwner(
@@ -468,6 +452,18 @@ export async function completeBundleUpload(
     throw error;
   }
 
+  const completionToken = await claimCompletion(bundle.intent.id);
+  if (!completionToken) {
+    const status = await getBundleStatus(ownerId, intentId);
+    if (status?.intent.status === "completed" && status.draft && status.version) {
+      return { intent: status.intent, draft: status.draft, version: status.version };
+    }
+    throw new UploadIntentConflictError(
+      "Completion is already in progress. Retry this upload shortly.",
+      2,
+    );
+  }
+
   const entryBytes =
     bundle.intent.expectedBytes -
     bundle.files.reduce((total, file) => total + file.expectedBytes, 0);
@@ -505,34 +501,48 @@ export async function completeBundleUpload(
     });
     void heads;
 
-    const entryObject = await getStorage().open(bundle.intent.finalKey);
-    if (!entryObject) throw new MediaValidationError("SIZE_MISMATCH", "HTML entry is missing.");
-    const entryValidation = await consumeStoredObject(entryObject, entryBytes, false);
-
-    const validatedAssets: Array<{
-      file: UploadIntentFile;
-      contentSha256: string;
-      sizeBytes: number;
-    }> = [];
-    for (const file of bundle.files) {
+    let entryHash = bundle.intent.verifiedSha256;
+    if (!entryHash) {
+      const entryObject = await getStorage().open(bundle.intent.finalKey);
+      if (!entryObject) throw new MediaValidationError("SIZE_MISMATCH", "HTML entry is missing.");
+      entryHash = (await consumeStoredObject(entryObject, entryBytes)).sha256;
+      await getDb()
+        .update(uploadIntents)
+        .set({ verifiedSha256: entryHash })
+        .where(ownsCompletion(bundle.intent.id, completionToken));
+    }
+    const entryValidation = { size: entryBytes, sha256: entryHash };
+    // Two simultaneous decoders bound temporary disk/decoder pressure while
+    // overlapping storage latency. Verified immutable objects survive retries.
+    const validatedAssets = await mapWithConcurrency(bundle.files, 2, async (file) => {
+      if (file.verifiedSha256)
+        return { file, contentSha256: file.verifiedSha256, sizeBytes: file.expectedBytes };
       const spec = uploadSpecFor(file.logicalPath, file.contentType);
       if (!spec || spec.kind === "html") {
         throw new MediaValidationError("INVALID_FILE_TYPE", "Bundle asset metadata is invalid.");
       }
       const object = await getStorage().open(file.finalKey);
-      if (!object) {
+      if (!object)
         throw new MediaValidationError(
           "SIZE_MISMATCH",
           `Bundle asset is missing: ${file.logicalPath}`,
         );
-      }
       const validation = await validateStoredMedia({
         object,
         expectedBytes: file.expectedBytes,
         spec,
       });
-      validatedAssets.push({ file, ...validation });
-    }
+      await getDb()
+        .update(uploadIntentFiles)
+        .set({ verifiedSha256: validation.contentSha256 })
+        .where(
+          and(
+            eq(uploadIntentFiles.id, file.id),
+            sql`exists (select 1 from ${uploadIntents} where ${ownsCompletion(bundle.intent.id, completionToken)})`,
+          ),
+        );
+      return { file, ...validation };
+    });
     const totalSizeBytes =
       entryValidation.size + validatedAssets.reduce((total, asset) => total + asset.sizeBytes, 0);
     if (totalSizeBytes !== bundle.intent.expectedBytes) {
@@ -556,6 +566,12 @@ export async function completeBundleUpload(
         return { state: "already_completed" as const, completed: lockedIntent };
       }
       assertPendingBundle(lockedIntent);
+      if (
+        lockedIntent.completionToken !== completionToken ||
+        !lockedIntent.completionExpiresAt ||
+        lockedIntent.completionExpiresAt.getTime() <= Date.now()
+      )
+        throw new UploadIntentConflictError();
       const [owner] = await tx
         .select({ id: users.id })
         .from(users)
@@ -695,9 +711,12 @@ export async function completeBundleUpload(
       await failUploadIntent(
         bundle.intent,
         error instanceof MediaValidationError ? error.code : error.name,
+        completionToken,
       );
     }
     throw error;
+  } finally {
+    await releaseCompletion(bundle.intent.id, completionToken);
   }
 }
 
@@ -865,7 +884,7 @@ export async function restoreBundleVersion(input: {
     for (const file of copiedFiles) {
       const object = await getStorage().open(file.finalKey);
       if (!object) throw new MediaValidationError("SIZE_MISMATCH", "Restored object is missing.");
-      const validated = await consumeStoredObject(object, file.sizeBytes, false);
+      const validated = await consumeStoredObject(object, file.sizeBytes);
       if (validated.sha256 !== file.contentSha256) {
         throw new MediaValidationError("INVALID_FILE_TYPE", "Restored object hash does not match.");
       }

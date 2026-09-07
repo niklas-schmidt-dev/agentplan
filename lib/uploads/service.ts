@@ -1,3 +1,5 @@
+import { finalObjectCleanupDeadline } from "./cleanup-deadline";
+import { drainBatches } from "@/lib/maintenance/drain";
 import { randomUUID } from "node:crypto";
 import { and, desc, eq, gt, inArray, isNull, max, sql } from "drizzle-orm";
 import { uploadSpecFor, type UploadSpec } from "@agentplan/upload-contract";
@@ -37,11 +39,20 @@ import {
 import { normalizeTitle, titleFromFilename } from "@/lib/validation/upload";
 import { issueUploadIntentToken } from "./tokens";
 
+import { claimCompletion, ownsCompletion, releaseCompletion } from "./completion-lease";
+
 const INTENT_TTL_MS = 60 * 60 * 1000;
 
 export class UploadIntentNotFoundError extends Error {}
 export class UploadIntentExpiredError extends Error {}
-export class UploadIntentConflictError extends Error {}
+export class UploadIntentConflictError extends Error {
+  constructor(
+    message?: string,
+    public readonly retryAfter?: number,
+  ) {
+    super(message);
+  }
+}
 
 export type UploadIntentResult = {
   intent: UploadIntent;
@@ -259,7 +270,7 @@ export async function cleanupKeysForIntent(
       ...(intent.stagingKey
         ? [{ storageKey: intent.stagingKey, notBefore: intent.expiresAt }]
         : []),
-      { storageKey: intent.finalKey },
+      { storageKey: intent.finalKey, notBefore: finalObjectCleanupDeadline(intent) },
     ];
   }
   const files = await db
@@ -268,19 +279,25 @@ export async function cleanupKeysForIntent(
     .where(eq(uploadIntentFiles.intentId, intent.id));
   return [intent.finalKey, ...files.map((file) => file.finalKey)].map((storageKey) => ({
     storageKey,
-    // Uploaded bundle keys were exposed by a capability. Restore destinations
-    // are server-created and can be removed immediately.
-    ...(intent.mode === "bundle" ? { notBefore: intent.expiresAt } : {}),
+    notBefore: finalObjectCleanupDeadline(intent),
   }));
 }
 
-export async function failUploadIntent(intent: UploadIntent, failureCode: string): Promise<void> {
+export async function failUploadIntent(
+  intent: UploadIntent,
+  failureCode: string,
+  completionToken?: string,
+): Promise<void> {
   const cleanup = await cleanupKeysForIntent(intent);
   const transitioned = await getDb().transaction(async (tx) => {
     const [failed] = await tx
       .update(uploadIntents)
       .set({ status: "failed", failureCode: failureCode.slice(0, 50), updatedAt: sql`now()` })
-      .where(and(eq(uploadIntents.id, intent.id), eq(uploadIntents.status, "pending")))
+      .where(
+        completionToken
+          ? ownsCompletion(intent.id, completionToken)
+          : and(eq(uploadIntents.id, intent.id), eq(uploadIntents.status, "pending")),
+      )
       .returning({ id: uploadIntents.id });
     if (!failed) return false;
     for (const key of cleanup) {
@@ -325,6 +342,16 @@ export async function completeUploadIntent(
     throw new UploadIntentExpiredError();
   }
 
+  const completionToken = await claimCompletion(intent.id);
+  if (!completionToken) {
+    const latest = await getUploadIntentForOwner(intent.ownerId, intent.id);
+    if (latest?.status === "completed") return completedResult(latest);
+    throw new UploadIntentConflictError(
+      "Completion is already in progress. Retry this upload shortly.",
+      2,
+    );
+  }
+
   try {
     if (!intent.stagingKey) throw new UploadIntentConflictError("Upload staging key is missing.");
     const stagingKey = intent.stagingKey;
@@ -355,7 +382,13 @@ export async function completeUploadIntent(
       if (lockedIntent.status === "completed") {
         return { state: "already_completed" as const, completed: lockedIntent };
       }
-      if (lockedIntent.status !== "pending") throw new UploadIntentConflictError();
+      if (
+        lockedIntent.status !== "pending" ||
+        lockedIntent.completionToken !== completionToken ||
+        !lockedIntent.completionExpiresAt ||
+        lockedIntent.completionExpiresAt.getTime() <= Date.now()
+      )
+        throw new UploadIntentConflictError();
       if (lockedIntent.expiresAt.getTime() <= Date.now()) throw new UploadIntentExpiredError();
       const [owner] = await tx
         .select({ id: users.id })
@@ -484,9 +517,12 @@ export async function completeUploadIntent(
       await failUploadIntent(
         intent,
         error instanceof MediaValidationError ? error.code : error.name,
+        completionToken,
       );
     }
     throw error;
+  } finally {
+    await releaseCompletion(intent.id, completionToken);
   }
 }
 
@@ -520,13 +556,23 @@ export async function cancelUploadIntent(ownerId: string, intentId: string): Pro
   }
 }
 
-export async function purgeExpiredUploadIntents(): Promise<number> {
+async function expireUploadIntentBatch(deadline: number): Promise<number> {
   const expired = await getDb()
     .select()
     .from(uploadIntents)
     .where(and(eq(uploadIntents.status, "pending"), sql`${uploadIntents.expiresAt} <= now()`))
     .limit(100);
-  for (const intent of expired) await failUploadIntent(intent, "EXPIRED");
+  let processed = 0;
+  for (const intent of expired) {
+    if (Date.now() >= deadline) break;
+    await failUploadIntent(intent, "EXPIRED");
+    processed++;
+  }
+  return processed;
+}
+
+export async function purgeExpiredUploadIntents(deadline = Date.now() + 30_000): Promise<number> {
+  const expired = await drainBatches(() => expireUploadIntentBatch(deadline), deadline);
   await getDb()
     .delete(uploadIntents)
     .where(
@@ -535,5 +581,5 @@ export async function purgeExpiredUploadIntents(): Promise<number> {
         sql`${uploadIntents.updatedAt} < now() - interval '7 days'`,
       ),
     );
-  return expired.length;
+  return expired;
 }

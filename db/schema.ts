@@ -188,7 +188,9 @@ export const drafts = pgTable(
       .notNull(),
     deletedAt: timestamp("deleted_at", { withTimezone: true }),
   },
-  (table) => [index("drafts_owner_updated_idx").on(table.ownerId, table.updatedAt.desc())],
+  (table) => [
+    index("drafts_owner_updated_idx").on(table.ownerId, table.updatedAt.desc(), table.id.desc()),
+  ],
 );
 
 export const draftVersions = pgTable(
@@ -275,6 +277,9 @@ export const uploadIntents = pgTable(
     }),
     status: uploadIntentStatus("status").notNull().default("pending"),
     failureCode: varchar("failure_code", { length: 50 }),
+    completionToken: uuid("completion_token"),
+    completionExpiresAt: timestamp("completion_expires_at", { withTimezone: true }),
+    verifiedSha256: varchar("verified_sha256", { length: 64 }),
     expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
     completedAt: timestamp("completed_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
@@ -308,6 +313,7 @@ export const uploadIntentFiles = pgTable(
     originalFilename: varchar("original_filename", { length: 255 }).notNull(),
     expectedBytes: bigint("expected_bytes", { mode: "number" }).notNull(),
     sourceKey: text("source_key"),
+    verifiedSha256: varchar("verified_sha256", { length: 64 }),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   },
   (table) => [
