@@ -133,6 +133,14 @@ packages/cli/    The `agentplan-cli` npm package (`agentplan` executable)
 tests/           unit / security / integration (Vitest) + e2e (Playwright)
 ```
 
+## Agent development and QA
+
+Run `npm run qa:up` for an isolated Postgres database, seeded accounts, local
+storage, and an email inbox. Run `npm run check:quick` for fast feedback or
+`npm run check:full` for database, browser, CLI, and build verification.
+See [the agent workflow guide](docs/agent-workflow.md) for setup, artifacts,
+debugging, and dedicated staging checks.
+
 ## Local setup
 
 Requirements: Node.js 24+, npm, and a Postgres instance.

@@ -1,3 +1,5 @@
+import { recordRequestError, recordUploadResource } from "@/lib/diagnostics/request";
+import { withUploadDiagnostics } from "@/lib/uploads/diagnostics";
 import { handleUploadPresigned, type HandleUploadPresignedBody } from "@vercel/blob/client";
 import { internalError } from "@/lib/api/responses";
 import { completeUploadIntent } from "@/lib/uploads/service";
@@ -6,7 +8,7 @@ import { verifyUploadIntentToken } from "@/lib/uploads/tokens";
 export const runtime = "nodejs";
 export const maxDuration = 300;
 
-export async function POST(req: Request): Promise<Response> {
+async function handlePOST(req: Request): Promise<Response> {
   try {
     const body = (await req.json()) as HandleUploadPresignedBody;
     const result = await handleUploadPresigned({
@@ -20,12 +22,15 @@ export async function POST(req: Request): Promise<Response> {
         if (!token || token.provider !== "vercel-blob") {
           throw new Error("Invalid upload callback token");
         }
+        recordUploadResource("uploadIntentId", token.intentId);
         await completeUploadIntent(token.intentId, token.ownerId);
       },
     });
     return Response.json(result);
   } catch (error) {
-    console.error("Vercel Blob upload callback failed", error);
+    recordRequestError(error);
     return internalError();
   }
 }
+
+export const POST = withUploadDiagnostics("/api/v1/uploads/vercel-callback", handlePOST);

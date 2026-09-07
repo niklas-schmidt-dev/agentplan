@@ -28,7 +28,18 @@
     "r2:cors:list": "wrangler r2 bucket cors list agentplan",
     "r2:cors:set": "wrangler r2 bucket cors set agentplan --file config/r2-cors.json",
     "plan:set": "bun scripts/set-user-plan.ts",
-    "check": "npm run lint && npm run typecheck && npm run test && npm run build"
+    "check": "npm run lint && npm run typecheck && npm run test && npm run build",
+    "check:quick": "node scripts/check-quick.mjs",
+    "check:full": "node scripts/qa.mjs test",
+    "qa:up": "node scripts/qa.mjs up",
+    "qa:setup": "node scripts/qa.mjs setup",
+    "qa:seed": "node scripts/qa.mjs seed",
+    "qa:doctor": "node scripts/qa.mjs doctor",
+    "qa:stop": "node scripts/qa.mjs stop",
+    "qa:reset": "node scripts/qa.mjs reset",
+    "qa:exec": "node scripts/qa.mjs exec",
+    "test:staging": "playwright test --config playwright.staging.config.ts",
+    "qa:e2e": "node scripts/qa.mjs e2e"
   },
   "dependencies": {
     "@agentplan/upload-contract": "*",

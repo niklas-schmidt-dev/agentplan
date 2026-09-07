@@ -11,6 +11,7 @@ import {
   PasswordVisibilityConflictError,
 } from "@/lib/drafts/service";
 import { MediaValidationError } from "@/lib/validation/media";
+import { recordRequestError } from "@/lib/diagnostics/request";
 import {
   UploadIntentConflictError,
   UploadIntentExpiredError,
@@ -18,6 +19,7 @@ import {
 } from "./service";
 
 export function uploadErrorResponse(error: unknown): Response {
+  recordRequestError(error);
   if (error instanceof UploadIntentNotFoundError || error instanceof DraftNotFoundError) {
     return notFound();
   }
@@ -39,6 +41,5 @@ export function uploadErrorResponse(error: unknown): Response {
   }
   const limited = limitErrorResponse(error);
   if (limited) return limited;
-  console.error("Media upload request failed", error);
   return internalError();
 }

@@ -1,3 +1,4 @@
+import { withUploadDiagnostics } from "@/lib/uploads/diagnostics";
 import { getDb } from "@/db/client";
 import { uploadIntents } from "@/db/schema";
 import { apiError, notFound } from "@/lib/api/responses";
@@ -10,7 +11,7 @@ export const maxDuration = 300;
 
 type Params = { params: Promise<{ id: string }> };
 
-export async function PUT(req: Request, { params }: Params): Promise<Response> {
+async function handlePUT(req: Request, { params }: Params): Promise<Response> {
   if (process.env.NODE_ENV === "production" || resolveStorageDriver() !== "fs") {
     return notFound();
   }
@@ -44,3 +45,5 @@ export async function PUT(req: Request, { params }: Params): Promise<Response> {
   await getStorage().put(intent.stagingKey, bytes, intent.contentType);
   return new Response(null, { status: 204 });
 }
+
+export const PUT = withUploadDiagnostics("/api/v1/uploads/intents/[id]/body", handlePUT);

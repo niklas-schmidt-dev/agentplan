@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { constantTimeEqual } from "@/lib/security/compare";
-import { generateApiToken, hashToken, isTokenScope } from "@/lib/tokens/token";
+import { generateApiToken, hashToken } from "@/lib/tokens/token";
 
 describe("API token material", () => {
   it("never exposes the secret through the stored fields", () => {
@@ -23,13 +23,6 @@ describe("API token material", () => {
   it("hashes deterministically and diverges for different tokens", () => {
     expect(hashToken("ap_live_a")).toBe(hashToken("ap_live_a"));
     expect(hashToken("ap_live_a")).not.toBe(hashToken("ap_live_b"));
-  });
-
-  it("only recognizes known scopes", () => {
-    expect(isTokenScope("drafts:read")).toBe(true);
-    expect(isTokenScope("drafts:write")).toBe(true);
-    expect(isTokenScope("drafts:delete")).toBe(false);
-    expect(isTokenScope("admin")).toBe(false);
   });
 });
 

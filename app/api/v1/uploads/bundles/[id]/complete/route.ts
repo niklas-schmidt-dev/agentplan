@@ -1,3 +1,4 @@
+import { withUploadDiagnostics } from "@/lib/uploads/diagnostics";
 import { authenticateApiRequest, isFailure } from "@/lib/api/auth";
 import { insufficientScope, notFound, unauthorized } from "@/lib/api/responses";
 import { serializeDraft, serializeVersion } from "@/lib/api/serialize";
@@ -10,7 +11,7 @@ export const maxDuration = 300;
 
 type Params = { params: Promise<{ id: string }> };
 
-export async function POST(req: Request, { params }: Params): Promise<Response> {
+async function handlePOST(req: Request, { params }: Params): Promise<Response> {
   const actor = await authenticateApiRequest(req, "drafts:write");
   if (isFailure(actor)) {
     return actor.failure === "scope" ? insufficientScope(actor.scope) : unauthorized();
@@ -32,3 +33,5 @@ export async function POST(req: Request, { params }: Params): Promise<Response> 
     return uploadErrorResponse(error);
   }
 }
+
+export const POST = withUploadDiagnostics("/api/v1/uploads/bundles/[id]/complete", handlePOST);

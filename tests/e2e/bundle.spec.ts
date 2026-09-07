@@ -34,6 +34,7 @@ test("uploads and renders a version-pinned HTML bundle", async ({ page, browser 
     intent: { id: string };
     files: Array<{ id: string; path: string }>;
   };
+  expect(created.files).toHaveLength(3);
   const targetResponse = await page.request.post(
     `/api/v1/uploads/bundles/${created.intent.id}/targets`,
     {
@@ -80,6 +81,10 @@ test("uploads and renders a version-pinned HTML bundle", async ({ page, browser 
 
   await page.goto(`/p/${completed.draft.slug}`);
   await expect(page.locator("iframe")).toHaveAttribute("src", /\/v\/.*\/__ap\//);
+  await expect(page.locator("iframe")).toHaveAttribute(
+    "sandbox",
+    "allow-scripts allow-forms allow-modals allow-popups",
+  );
   await expect
     .poll(() =>
       page

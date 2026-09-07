@@ -1,3 +1,9 @@
+import {
+  contentHeaders,
+  contentNotFound,
+  HTML_SANDBOX,
+  MEDIA_SANDBOX,
+} from "@/lib/http/content-response";
 import { uuidSchema } from "@/lib/validation/api";
 import { getDraftBySlug, getVersionById } from "@/db/queries/drafts";
 import { authenticateSession } from "@/lib/api/auth";
@@ -14,27 +20,6 @@ import { getStorage } from "@/lib/storage";
 export const runtime = "nodejs";
 export const maxDuration = 300;
 
-const HTML_SANDBOX = "sandbox allow-scripts allow-forms allow-modals allow-popups";
-const MEDIA_SANDBOX = "sandbox";
-
-function commonHeaders(contentSecurityPolicy: string): Headers {
-  return new Headers({
-    "X-Content-Type-Options": "nosniff",
-    "Referrer-Policy": "no-referrer",
-    "Strict-Transport-Security": "max-age=63072000; includeSubDomains",
-    "Permissions-Policy": "camera=(), microphone=(), geolocation=()",
-    "Content-Security-Policy": `${contentSecurityPolicy}; frame-ancestors 'self'`,
-    "X-Robots-Tag": "noindex",
-  });
-}
-
-function notFoundResponse(): Response {
-  const headers = commonHeaders(MEDIA_SANDBOX);
-  headers.set("Content-Type", "text/plain; charset=utf-8");
-  headers.set("Cache-Control", "private, no-store");
-  return new Response("Not found", { status: 404, headers });
-}
-
 async function resolveContent(
   req: Request,
   slug: string,
@@ -48,7 +33,7 @@ async function resolveContent(
   | Response
 > {
   const draft = await getDraftBySlug(slug);
-  if (!draft || !draft.currentVersionId) return notFoundResponse();
+  if (!draft || !draft.currentVersionId) return contentNotFound();
   let userId: string | null = null;
   let sessionId: string | null = null;
   let accessToken: string | undefined;
@@ -61,14 +46,14 @@ async function resolveContent(
     }
   }
   if (resolveDraftView(draft, { userId, accessToken }).state !== "granted") {
-    return notFoundResponse();
+    return contentNotFound();
   }
   const requestedVersion = new URL(req.url).searchParams.get("version");
   if (requestedVersion !== null && !uuidSchema.safeParse(requestedVersion).success) {
-    return notFoundResponse();
+    return contentNotFound();
   }
   const version = await getVersionById(draft.id, requestedVersion ?? draft.currentVersionId);
-  if (!version) return notFoundResponse();
+  if (!version) return contentNotFound();
   return { draft, version, sessionId, userId };
 }
 
@@ -76,7 +61,7 @@ function responseHeaders(
   draft: NonNullable<Awaited<ReturnType<typeof getDraftBySlug>>>,
   version: NonNullable<Awaited<ReturnType<typeof getVersionById>>>,
 ): Headers {
-  const headers = commonHeaders(draft.kind === "html" ? HTML_SANDBOX : MEDIA_SANDBOX);
+  const headers = contentHeaders(draft.kind === "html" ? HTML_SANDBOX : MEDIA_SANDBOX);
   headers.set(
     "Content-Type",
     draft.kind === "html" ? "text/html; charset=utf-8" : version.contentType,
@@ -129,7 +114,7 @@ export async function HEAD(req: Request, { params }: Params): Promise<Response> 
   const resolved = await resolveContent(req, slug);
   if (resolved instanceof Response) return resolved;
   if (resolved.version.isBundle) {
-    const headers = commonHeaders(HTML_SANDBOX);
+    const headers = contentHeaders(HTML_SANDBOX);
     headers.set(
       "Location",
       bundleEntryLocation(
@@ -154,7 +139,7 @@ export async function GET(req: Request, { params }: Params): Promise<Response> {
   if (resolved instanceof Response) return resolved;
   const { draft, version } = resolved;
   if (version.isBundle) {
-    const headers = commonHeaders(HTML_SANDBOX);
+    const headers = contentHeaders(HTML_SANDBOX);
     headers.set(
       "Location",
       bundleEntryLocation(slug, draft, version, resolved.sessionId, resolved.userId),
@@ -183,7 +168,7 @@ export async function GET(req: Request, { params }: Params): Promise<Response> {
   }
 
   const object = await getStorage().open(version.storageKey, range);
-  if (!object) return notFoundResponse();
+  if (!object) return contentNotFound();
   if (range) {
     headers.set("Content-Range", `bytes ${range.start}-${range.end}/${version.sizeBytes}`);
     headers.set("Content-Length", String(range.end - range.start + 1));

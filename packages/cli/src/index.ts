@@ -1,7 +1,6 @@
 #!/usr/bin/env node
 
 import { spawn } from "node:child_process";
-import { createReadStream } from "node:fs";
 import { lstat, readdir, stat } from "node:fs/promises";
 import path from "node:path";
 import { parseArgs } from "node:util";
@@ -13,6 +12,7 @@ import {
   type UploadSpec,
 } from "@agentplan/upload-contract";
 import { AgentPlanApi, ApiError, DEFAULT_API_URL, type ApiDraft } from "./api.js";
+import { uploadProviderFile } from "./upload.js";
 import { clearConfig, loadConfig, saveConfig } from "./config.js";
 import { hasNewDraftOnlyOptions, type UploadFlags } from "./upload-options.js";
 import { isSafeHttpUrl, normalizeApiBaseUrl } from "./url.js";
@@ -142,36 +142,6 @@ async function inspectUploadFile(
   if (!spec) fail("Supported files are HTML, JPEG, PNG, WebP, GIF, AVIF, and MP4.", 2);
   if (sizeBytes === 0) fail("The file is empty.", 2);
   return { filename, sizeBytes, spec };
-}
-
-async function uploadProviderFile(
-  filePath: string,
-  sizeBytes: number,
-  upload: { method: string; url: string; headers: Record<string, string> },
-): Promise<void> {
-  const headers = new Headers(upload.headers);
-  headers.set("content-length", String(sizeBytes));
-  let response: Response;
-  try {
-    response = await fetch(upload.url, {
-      method: upload.method,
-      headers,
-      body: createReadStream(filePath),
-      redirect: "error",
-      referrerPolicy: "no-referrer",
-      credentials: "omit",
-      duplex: "half",
-    } as RequestInit & { duplex: "half" });
-  } catch (error) {
-    throw new ApiError(0, "STORAGE_UPLOAD_FAILED", `Storage upload failed: ${String(error)}`);
-  }
-  if (!response.ok) {
-    throw new ApiError(
-      response.status,
-      "STORAGE_UPLOAD_FAILED",
-      `Storage upload failed (${response.status}).`,
-    );
-  }
 }
 
 type LocalBundleFile = {

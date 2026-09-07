@@ -24,7 +24,6 @@ import {
   drafts,
   sessions,
   uploadIntentFiles,
-  uploadIntentReclaims,
   uploadIntents,
   userBlocks,
   users,
@@ -488,7 +487,6 @@ export async function removeDraftAsAdmin(
           tx,
         );
       }
-      await tx.delete(uploadIntentReclaims).where(eq(uploadIntentReclaims.intentId, intent.id));
     }
     const [currentVersion] = await tx
       .select({
