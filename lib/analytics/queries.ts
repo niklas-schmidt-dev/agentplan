@@ -37,9 +37,15 @@ function utcDayWindow(days: number, now: Date = new Date()): string[] {
   return result;
 }
 
-export async function getDraftViewStats(draftId: string): Promise<DraftViewStats> {
+export async function getDraftViewStats(
+  draftId: string,
+  versionId?: string,
+): Promise<DraftViewStats> {
   const db = getDb();
-  const forDraft = eq(draftViewEvents.draftId, draftId);
+  const forDraft = and(
+    eq(draftViewEvents.draftId, draftId),
+    versionId ? eq(draftViewEvents.versionId, versionId) : undefined,
+  );
   const utcDay = sql<string>`to_char(${draftViewEvents.viewedAt} at time zone 'utc', 'YYYY-MM-DD')`;
 
   const [[totals], dayRows, breakdownRows, referrerRows, countryRows] = await Promise.all([

@@ -395,6 +395,8 @@ export const draftViewEvents = pgTable(
     draftId: uuid("draft_id")
       .notNull()
       .references(() => drafts.id, { onDelete: "cascade" }),
+    // Historical events have no version attribution.
+    versionId: uuid("version_id").references(() => draftVersions.id, { onDelete: "set null" }),
     viewer: draftViewerKind("viewer").notNull(),
     visitorHash: char("visitor_hash", { length: 64 }),
     country: char("country", { length: 2 }),
@@ -403,6 +405,11 @@ export const draftViewEvents = pgTable(
   },
   (table) => [
     index("draft_view_events_draft_viewed_idx").on(table.draftId, table.viewedAt.desc()),
+    index("draft_view_events_draft_version_viewed_idx").on(
+      table.draftId,
+      table.versionId,
+      table.viewedAt.desc(),
+    ),
     index("draft_view_events_viewed_at_idx").on(table.viewedAt),
   ],
 );

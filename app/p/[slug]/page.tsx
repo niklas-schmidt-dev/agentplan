@@ -79,6 +79,7 @@ export default async function DraftViewerPage({
   const context = viewRequestContext(await headers());
   const event = {
     draftId: resolution.draft.id,
+    versionId: version.id,
     viewer: classifyViewer(resolution.draft, userId),
     context,
   };

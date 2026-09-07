@@ -1,12 +1,15 @@
 import { randomUUID } from "node:crypto";
 import type { APIRequestContext, Page } from "@playwright/test";
 import { expect } from "@playwright/test";
-import { count, eq } from "drizzle-orm";
+import { count, eq, like } from "drizzle-orm";
 import { getDb } from "@/db/client";
-import { users } from "@/db/schema";
+import { rateLimits, users } from "@/db/schema";
 
 /** Signs up via the email/password endpoint (fails if sign-ups are disabled). */
 export async function signUp(request: APIRequestContext): Promise<{ email: string }> {
+  // Journeys share one loopback IP and run faster than the auth rate window.
+  // Reset only auth budgets in the managed E2E database when creating a fixture.
+  await getDb().delete(rateLimits).where(like(rateLimits.key, "auth:%"));
   const [row] = await getDb().select({ value: count() }).from(users);
   const email =
     (row?.value ?? 0) === 0
@@ -27,7 +30,11 @@ export async function signUp(request: APIRequestContext): Promise<{ email: strin
 export async function uploadDraft(
   request: APIRequestContext,
   html: string,
-  options: { title?: string; visibility?: "public" | "private" | "password"; password?: string } = {},
+  options: {
+    title?: string;
+    visibility?: "public" | "private" | "password";
+    password?: string;
+  } = {},
 ): Promise<{ id: string; slug: string; url: string; title: string }> {
   const response = await request.post("/api/v1/drafts", {
     headers: {

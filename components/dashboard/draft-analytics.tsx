@@ -1,8 +1,16 @@
 import { ViewSparkline } from "./view-sparkline";
 import { getDraftViewStats } from "@/lib/analytics/queries";
 
-export async function DraftAnalytics({ draftId }: { draftId: string }) {
-  const views = await getDraftViewStats(draftId).catch(() => null);
+export async function DraftAnalytics({
+  draftId,
+  versionId,
+  versionNumber,
+}: {
+  draftId: string;
+  versionId?: string;
+  versionNumber?: number;
+}) {
+  const views = await getDraftViewStats(draftId, versionId).catch(() => null);
   if (!views)
     return (
       <p role="status" className="font-mono text-xs text-ink-faint">
@@ -12,7 +20,9 @@ export async function DraftAnalytics({ draftId }: { draftId: string }) {
   return (
     <section className="flex flex-col gap-3" aria-label="View analytics">
       <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-        <h2 className="font-mono text-sm text-ink-muted">analytics</h2>
+        <h2 className="font-mono text-sm text-ink-muted">
+          analytics{versionNumber ? ` · v${versionNumber}` : ""}
+        </h2>
         <p className="font-mono text-xs text-ink-faint">excludes your views</p>
       </div>
 
