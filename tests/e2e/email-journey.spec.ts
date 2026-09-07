@@ -94,7 +94,7 @@ for (const status of [429, 500, "network"] as const) {
       { times: 1 },
     );
     await page.getByRole("button", { name: "send reset link" }).click();
-    await expect(page.getByRole("alert")).toBeVisible();
+    await expect(page.locator("form").getByRole("alert")).toBeVisible();
     await expect(page.getByRole("status")).toHaveCount(0);
     await expect(page.getByRole("button", { name: "send reset link" })).toBeEnabled();
     await page.route("**/api/auth/request-password-reset", (route) =>
