@@ -34,7 +34,7 @@ export async function GET(req: Request, { params }: Params): Promise<Response> {
     if (draft && version) {
       result = {
         draft: serializeDraft(draft, version.versionNumber),
-        version: serializeVersion(version),
+        version: serializeVersion(version, draft.slug),
       };
     }
   }

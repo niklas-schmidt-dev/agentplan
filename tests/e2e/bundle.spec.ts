@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 import { signUp } from "./helpers";
 
-test("uploads and renders a version-pinned HTML bundle", async ({ page }) => {
+test("uploads and renders a version-pinned HTML bundle", async ({ page, browser }) => {
   await signUp(page.request);
   const origin = process.env.PLAYWRIGHT_BASE_URL ?? "http://localhost:3000";
   const html = Buffer.from(
@@ -68,7 +68,7 @@ test("uploads and renders a version-pinned HTML bundle", async ({ page }) => {
   );
   expect(completedResponse.ok()).toBe(true);
   const completed = (await completedResponse.json()) as {
-    draft: { slug: string };
+    draft: { id: string; slug: string };
     version: { id: string };
   };
 
@@ -97,6 +97,36 @@ test("uploads and renders a version-pinned HTML bundle", async ({ page }) => {
       frame!.locator("#hero").evaluate((image) => (image as HTMLImageElement).naturalWidth),
     )
     .toBe(1);
+
+  // The shareable wrapper also grants access to all relative assets of an old bundle.
+  const update = await page.request.post(`/api/v1/drafts/${completed.draft.id}/versions`, {
+    headers: { origin },
+    multipart: {
+      file: {
+        name: "next.html",
+        mimeType: "text/html",
+        buffer: Buffer.from("<!doctype html><h1>New current</h1>"),
+      },
+    },
+  });
+  expect(update.status()).toBe(201);
+  const anonymous = await browser.newContext();
+  const versionPath = `/p/${completed.draft.slug}/v/${completed.version.id}`;
+  expect((await anonymous.request.get(versionPath)).status()).toBe(404);
+  expect((await anonymous.request.get(`${versionPath}/nested/images/pixel.gif`)).status()).toBe(
+    404,
+  );
+  await anonymous.close();
+  await page.goto(`/p/${completed.draft.slug}/v/${completed.version.id}`);
+  await expect(page.frameLocator("iframe").locator("#hero")).toHaveJSProperty("naturalWidth", 1);
+  await page.goto(`/dashboard/drafts/${completed.draft.id}`);
+  const oldRow = page.locator("li").filter({
+    has: page.locator(`a[href="/p/${completed.draft.slug}/v/${completed.version.id}"]`),
+  });
+  await oldRow.getByRole("button", { name: "restore as current" }).click();
+  await expect(page.getByText("v3 (current)", { exact: true })).toBeVisible();
+  await page.goto(`/p/${completed.draft.slug}`);
+  await expect(page.frameLocator("iframe").locator("#hero")).toHaveJSProperty("naturalWidth", 1);
 
   const range = await page.request.get(
     `/p/${completed.draft.slug}/v/${completed.version.id}/nested/video/demo.mp4`,

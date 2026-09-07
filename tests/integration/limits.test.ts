@@ -162,25 +162,25 @@ describe.skipIf(!hasDb)("abuse limits (integration)", () => {
     ).rejects.toBeInstanceOf(QuotaExceededError);
   });
 
-  it("prunes the oldest versions past the retention count instead of failing", async () => {
+  it("preserves old versions and refuses uploads at the version cap", async () => {
     process.env.AP_MAX_VERSIONS_PER_DRAFT = "2";
     const ownerId = await createUser();
 
     const { draft } = await createDraftWithFirstVersion({
       ownerId,
-      title: "Pruned",
+      title: "Preserved",
       visibility: "private",
       bytes: html,
       source: "browser",
     });
     await addVersionToDraft({ draft, bytes: html, source: "browser" });
-    const { version: v3 } = await addVersionToDraft({ draft, bytes: html, source: "browser" });
-
-    expect(v3.versionNumber).toBe(3);
+    await expect(addVersionToDraft({ draft, bytes: html, source: "browser" })).rejects.toThrow(
+      /Version limit reached.*preserved/,
+    );
     const versions = await listVersions(draft.id);
-    expect(versions.map((v) => v.versionNumber)).toEqual([3, 2]);
+    expect(versions.map((v) => v.versionNumber)).toEqual([2, 1]);
 
-    // The pruned version's object is gone from storage too.
+    // Both original objects remain available.
     const stored = await filesUnder(path.join(storageRoot, "drafts", ownerId, draft.id));
     expect(stored).toHaveLength(2);
   });
@@ -303,13 +303,10 @@ describe.skipIf(!hasDb)("abuse limits (integration)", () => {
 
     try {
       const response = await restoreRoute(
-        new Request(
-          `http://localhost/api/v1/drafts/${draft.id}/versions/${version.id}/restore`,
-          {
-            method: "POST",
-            headers: { authorization: `Bearer ${token}` },
-          },
-        ),
+        new Request(`http://localhost/api/v1/drafts/${draft.id}/versions/${version.id}/restore`, {
+          method: "POST",
+          headers: { authorization: `Bearer ${token}` },
+        }),
         { params: Promise.resolve({ id: draft.id, versionId: version.id }) },
       );
       expect(response.status).toBe(429);

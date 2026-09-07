@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { and, desc, eq, inArray, isNull, max, sql } from "drizzle-orm";
+import { and, eq, isNull, max, sql } from "drizzle-orm";
 import { getDb } from "@/db/client";
 import {
   draftVersions,
@@ -16,10 +16,8 @@ import { recordAuditEvent } from "@/lib/audit/events";
 import { hashPassword } from "@/lib/drafts/password";
 import { generateSlug } from "@/lib/drafts/slug";
 import { consumeUploadRateLimit, lockAndAssertUploadQuota } from "@/lib/limits/enforce";
-import { retentionForKind } from "@/lib/limits/plans";
 import { getStorage, storageKeyFor } from "@/lib/storage";
 import { queueStorageDeletion, tryDeleteStorageKey } from "@/lib/storage/cleanup";
-import { listVersionStorageKeys } from "@/lib/drafts/version-storage";
 
 export type UploadSource = "browser" | "api_token";
 
@@ -242,11 +240,12 @@ export async function addVersionToDraft(params: {
         )
         .limit(1);
       if (pending) throw new DraftWriteConflictError();
-      const limits = await lockAndAssertUploadQuota(
+      await lockAndAssertUploadQuota(
         {
           userId: params.draft.ownerId,
           sizeBytes: params.bytes.byteLength,
           newDraft: false,
+          targetDraftId: params.draft.id,
         },
         tx,
       );
@@ -294,46 +293,8 @@ export async function addVersionToDraft(params: {
         .returning();
       if (!updatedDraft) throw new DraftNotFoundError();
 
-      // Version retention: a stable link must keep accepting uploads, so old
-      // versions are pruned instead of hard-failing at a cap. The newest
-      // (current) version is always inside the keep window.
-      let pruned: { id: string }[] = [];
-      let prunedKeys: string[] = [];
-      const keepVersions = retentionForKind(limits, params.draft.kind);
-      if (keepVersions !== null) {
-        pruned = await tx
-          .select({ id: draftVersions.id })
-          .from(draftVersions)
-          .where(
-            and(
-              eq(draftVersions.draftId, params.draft.id),
-              params.draft.kind === "html" ? eq(draftVersions.isBundle, false) : undefined,
-            ),
-          )
-          .orderBy(desc(draftVersions.versionNumber))
-          .offset(keepVersions);
-        if (pruned.length) {
-          prunedKeys = await listVersionStorageKeys(
-            pruned.map((stale) => stale.id),
-            tx,
-          );
-          for (const storageKey of prunedKeys) {
-            await queueStorageDeletion({ storageKey, reason: "version_retention" }, tx);
-          }
-          await tx.delete(draftVersions).where(
-            inArray(
-              draftVersions.id,
-              pruned.map((p) => p.id),
-            ),
-          );
-        }
-      }
-      return { version, draft: updatedDraft, pruned, prunedKeys };
+      return { version, draft: updatedDraft };
     });
-
-    for (const storageKey of result.prunedKeys) {
-      await tryDeleteStorageKey(storageKey);
-    }
 
     await recordAuditEvent({
       type: params.auditType ?? "draft.version_created",
@@ -343,7 +304,6 @@ export async function addVersionToDraft(params: {
       metadata: {
         versionNumber: result.version.versionNumber,
         sizeBytes: params.bytes.byteLength,
-        ...(result.pruned.length ? { prunedVersions: result.pruned.length } : {}),
         ...params.auditMetadata,
       },
     });
@@ -396,11 +356,12 @@ export async function restoreVersion(params: {
         )
         .limit(1);
       if (pending) throw new DraftWriteConflictError();
-      const limits = await lockAndAssertUploadQuota(
+      await lockAndAssertUploadQuota(
         {
           userId: params.draft.ownerId,
           sizeBytes: params.version.sizeBytes,
           newDraft: false,
+          targetDraftId: params.draft.id,
         },
         tx,
       );
@@ -441,39 +402,8 @@ export async function restoreVersion(params: {
         .returning();
       if (!draft) throw new DraftNotFoundError();
 
-      const keepVersions = retentionForKind(limits, locked.kind);
-      const pruned =
-        keepVersions === null
-          ? []
-          : await tx
-              .select({ id: draftVersions.id })
-              .from(draftVersions)
-              .where(
-                and(
-                  eq(draftVersions.draftId, params.draft.id),
-                  locked.kind === "html" ? eq(draftVersions.isBundle, false) : undefined,
-                ),
-              )
-              .orderBy(desc(draftVersions.versionNumber))
-              .offset(keepVersions);
-      const prunedKeys = await listVersionStorageKeys(
-        pruned.map((stale) => stale.id),
-        tx,
-      );
-      for (const storageKey of prunedKeys) {
-        await queueStorageDeletion({ storageKey, reason: "version_retention" }, tx);
-      }
-      if (pruned.length) {
-        await tx.delete(draftVersions).where(
-          inArray(
-            draftVersions.id,
-            pruned.map((row) => row.id),
-          ),
-        );
-      }
-      return { version, draft, pruned, prunedKeys };
+      return { version, draft };
     });
-    for (const storageKey of result.prunedKeys) await tryDeleteStorageKey(storageKey);
     await recordAuditEvent({
       type: "draft.version_restored",
       userId: params.draft.ownerId,

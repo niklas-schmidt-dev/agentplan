@@ -1,15 +1,7 @@
 import { createHmac } from "node:crypto";
 import { and, eq, gt, isNull, ne, or, sql } from "drizzle-orm";
 import { getDb, type Database } from "@/db/client";
-import {
-  apiTokens,
-  draftVersions,
-  drafts,
-  uploadIntentReclaims,
-  uploadIntents,
-  users,
-  type UserPlan,
-} from "@/db/schema";
+import { apiTokens, draftVersions, drafts, uploadIntents, users, type UserPlan } from "@/db/schema";
 import { QuotaExceededError, RateLimitedError } from "./errors";
 import { limitsForPlan, passwordAttemptsPerWindow, type EffectiveLimits } from "./plans";
 import { consumeRateLimit, consumeRateLimits } from "./rate-limit";
@@ -45,8 +37,7 @@ export async function consumeUploadRateLimit(userId: string): Promise<void> {
 /**
  * Serializes a user's quota check with the subsequent draft/version writes.
  * Callers must pass their active transaction so the advisory lock is held
- * through the write. The storage sum intentionally ignores bytes that version
- * retention is about to free, preserving the conservative cap-boundary rule.
+ * through the write. Existing versions are never reclaimed for a new upload.
  */
 export async function lockAndAssertUploadQuota(
   params: {
@@ -54,7 +45,7 @@ export async function lockAndAssertUploadQuota(
     sizeBytes: number;
     newDraft: boolean;
     excludeIntentId?: string;
-    reclaimBytes?: number;
+    targetDraftId?: string | null;
   },
   db: Pick<Database, "execute" | "select">,
 ): Promise<EffectiveLimits> {
@@ -72,6 +63,27 @@ export async function lockAndAssertUploadQuota(
       throw new QuotaExceededError(
         `Draft limit reached (${limits.maxDrafts}). Delete drafts you no longer need.`,
       );
+    }
+  }
+
+  if (params.targetDraftId) {
+    const [draft] = await db
+      .select({ kind: drafts.kind })
+      .from(drafts)
+      .where(and(eq(drafts.id, params.targetDraftId), eq(drafts.ownerId, params.userId)));
+    if (draft) {
+      const cap = limits.keepVersionsByKind[draft.kind];
+      if (cap !== null) {
+        const [versions] = await db
+          .select({ count: sql<number>`count(*)::int` })
+          .from(draftVersions)
+          .where(eq(draftVersions.draftId, params.targetDraftId));
+        if ((versions?.count ?? 0) >= cap) {
+          throw new QuotaExceededError(
+            `Version limit reached (${cap}). Your saved versions and links are preserved. Create a new draft or upgrade your plan to upload more versions.`,
+          );
+        }
+      }
     }
   }
 
@@ -97,30 +109,16 @@ export async function lockAndAssertUploadQuota(
           params.excludeIntentId ? ne(uploadIntents.id, params.excludeIntentId) : undefined,
         ),
       );
-    const [reclaimRow] = await db
-      .select({ total: sql<string>`coalesce(sum(${uploadIntentReclaims.sizeBytes}), 0)` })
-      .from(uploadIntentReclaims)
-      .innerJoin(uploadIntents, eq(uploadIntentReclaims.intentId, uploadIntents.id))
-      .where(
-        and(
-          eq(uploadIntents.ownerId, params.userId),
-          eq(uploadIntents.status, "pending"),
-          gt(uploadIntents.expiresAt, sql`now()`),
-          params.excludeIntentId ? ne(uploadIntents.id, params.excludeIntentId) : undefined,
-        ),
-      );
     const committed = Number(row?.total ?? 0);
-    const grossReserved = Number(reservationRow?.total ?? 0);
-    const claimed = Number(reclaimRow?.total ?? 0);
-    const reserved = Math.max(0, grossReserved - claimed);
-    const requested = Math.max(0, params.sizeBytes - (params.reclaimBytes ?? 0));
+    const reserved = Number(reservationRow?.total ?? 0);
+    const requested = params.sizeBytes;
     if (committed + reserved + requested > limits.maxStorageBytes) {
       throw new QuotaExceededError(
         `Storage quota reached: ${Math.ceil(committed / (1024 * 1024))} MiB stored, ${Math.ceil(
           reserved / (1024 * 1024),
-        )} MiB net reserved, and ${Math.ceil(requested / (1024 * 1024))} MiB net requested (${Math.floor(
+        )} MiB reserved, and ${Math.ceil(requested / (1024 * 1024))} MiB requested (${Math.floor(
           limits.maxStorageBytes / (1024 * 1024),
-        )} MiB limit). Planned pruning is credited only after its versions are reserved for this upload; cancel or wait for pending uploads, or delete unrelated content.`,
+        )} MiB limit). Your saved versions and links are preserved. Cancel pending uploads, delete drafts you no longer need, or upgrade your plan.`,
       );
     }
   }
@@ -135,7 +133,7 @@ export async function getUserStorageUsage(userId: string): Promise<{
   plannedReclaimBytes: number;
 }> {
   const db = getDb();
-  const [[committed], [reserved], [reclaims]] = await Promise.all([
+  const [[committed], [reserved]] = await Promise.all([
     db
       .select({
         total: sql<string>`coalesce(sum(coalesce(${draftVersions.totalSizeBytes}, ${draftVersions.sizeBytes})), 0)`,
@@ -153,20 +151,9 @@ export async function getUserStorageUsage(userId: string): Promise<{
           gt(uploadIntents.expiresAt, sql`now()`),
         ),
       ),
-    db
-      .select({ total: sql<string>`coalesce(sum(${uploadIntentReclaims.sizeBytes}), 0)` })
-      .from(uploadIntentReclaims)
-      .innerJoin(uploadIntents, eq(uploadIntentReclaims.intentId, uploadIntents.id))
-      .where(
-        and(
-          eq(uploadIntents.ownerId, userId),
-          eq(uploadIntents.status, "pending"),
-          gt(uploadIntents.expiresAt, sql`now()`),
-        ),
-      ),
   ]);
   const grossReservedBytes = Number(reserved?.total ?? 0);
-  const plannedReclaimBytes = Number(reclaims?.total ?? 0);
+  const plannedReclaimBytes = 0;
   return {
     committedBytes: Number(committed?.total ?? 0),
     reservedBytes: Math.max(0, grossReservedBytes - plannedReclaimBytes),

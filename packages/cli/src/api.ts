@@ -13,6 +13,7 @@ export type ApiDraft = {
 };
 
 export type ApiVersion = {
+  url: string;
   id: string;
   version: number;
   contentSha256: string;

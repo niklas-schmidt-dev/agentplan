@@ -7,7 +7,8 @@ import { recordAuditEvent } from "@/lib/audit/events";
 import { accessCookieName, issueDraftAccess } from "@/lib/drafts/access";
 import { verifyPassword } from "@/lib/drafts/password";
 import { checkPasswordAttempt } from "@/lib/limits/enforce";
-import { draftPasswordSchema } from "@/lib/validation/api";
+import { draftVersionPath } from "@/lib/urls";
+import { draftPasswordSchema, uuidSchema } from "@/lib/validation/api";
 
 const ACCESS_TTL_SECONDS = 12 * 60 * 60;
 
@@ -31,13 +32,14 @@ async function clientIdentifier(): Promise<string | null> {
 export async function submitDraftPassword(formData: FormData): Promise<void> {
   const slug = String(formData.get("slug") ?? "");
   const password = draftPasswordSchema.safeParse(formData.get("password"));
-  const encodedSlug = encodeURIComponent(slug);
+  const versionId = uuidSchema.safeParse(formData.get("versionId"));
+  const returnPath = draftVersionPath(slug, versionId.success ? versionId.data : undefined);
 
   const draft = await getDraftBySlug(slug);
   // Only password-protected drafts have a gate; anything else just falls through
   // to the normal viewer, which renders or 404s as appropriate.
   if (!draft || draft.visibility !== "password" || !draft.passwordHash) {
-    redirect(`/p/${encodedSlug}`);
+    redirect(returnPath);
   }
 
   // Brute-force gate before any hash verification work.
@@ -48,7 +50,7 @@ export async function submitDraftPassword(formData: FormData): Promise<void> {
       draftId: draft.id,
       metadata: { event: "password_attempt_rate_limited" },
     });
-    redirect(`/p/${encodedSlug}?error=rate`);
+    redirect(`${returnPath}?error=rate`);
   }
 
   if (!password.success || !(await verifyPassword(password.data, draft.passwordHash))) {
@@ -57,7 +59,7 @@ export async function submitDraftPassword(formData: FormData): Promise<void> {
       draftId: draft.id,
       metadata: { event: "password_attempt_failed" },
     });
-    redirect(`/p/${encodedSlug}?error=1`);
+    redirect(`${returnPath}?error=1`);
   }
 
   const token = issueDraftAccess(draft.id, draft.passwordHash, ACCESS_TTL_SECONDS);
@@ -69,5 +71,5 @@ export async function submitDraftPassword(formData: FormData): Promise<void> {
     path: `/p/${slug}`,
     maxAge: ACCESS_TTL_SECONDS,
   });
-  redirect(`/p/${encodedSlug}`);
+  redirect(returnPath);
 }

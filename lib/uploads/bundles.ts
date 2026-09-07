@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import path from "node:path";
-import { and, asc, count, desc, eq, gt, inArray, isNull, max, sql } from "drizzle-orm";
+import { and, asc, count, eq, gt, isNull, max, sql } from "drizzle-orm";
 import {
   uploadSpecFor,
   validateBundleManifest,
@@ -23,14 +23,12 @@ import {
 import { recordAuditEvent } from "@/lib/audit/events";
 import { hashPassword } from "@/lib/drafts/password";
 import { generateSlug } from "@/lib/drafts/slug";
-import { listVersionStorageKeys } from "@/lib/drafts/version-storage";
 import {
   DraftNotFoundError,
   PasswordRequiredError,
   PasswordVisibilityConflictError,
   type UploadSource,
 } from "@/lib/drafts/service";
-import { QuotaExceededError } from "@/lib/limits/errors";
 import { lockAndAssertUploadQuota } from "@/lib/limits/enforce";
 import {
   bundleAssetKeyFor,
@@ -39,7 +37,6 @@ import {
   storageKeyFor,
   type DirectUploadTarget,
 } from "@/lib/storage";
-import { queueStorageDeletion, tryDeleteStorageKey } from "@/lib/storage/cleanup";
 import {
   consumeStoredObject,
   MediaValidationError,
@@ -56,7 +53,6 @@ import {
 import { issueUploadIntentToken } from "./tokens";
 
 const INTENT_TTL_MS = 60 * 60 * 1000;
-const BUNDLE_RETENTION = 2;
 const MAX_PENDING_BUNDLES = 10;
 const TARGET_BATCH_SIZE = 10;
 
@@ -248,12 +244,6 @@ export async function createBundleUpload(input: {
       );
     }
 
-    let existingVersions: Array<{
-      id: string;
-      versionNumber: number;
-      isBundle: boolean;
-      totalSizeBytes: number;
-    }> = [];
     if (input.target.type === "draft") {
       const [draft] = await tx
         .select({ id: drafts.id, kind: drafts.kind })
@@ -284,54 +274,16 @@ export async function createBundleUpload(input: {
       if (pending) {
         throw new UploadIntentConflictError("Another upload is already pending for this draft.");
       }
-      existingVersions = await tx
-        .select({
-          id: draftVersions.id,
-          versionNumber: draftVersions.versionNumber,
-          isBundle: draftVersions.isBundle,
-          totalSizeBytes:
-            sql<number>`coalesce(${draftVersions.totalSizeBytes}, ${draftVersions.sizeBytes})`.mapWith(
-              Number,
-            ),
-        })
-        .from(draftVersions)
-        .where(eq(draftVersions.draftId, draft.id))
-        .orderBy(desc(draftVersions.versionNumber));
     }
-
-    const selected = new Map<string, (typeof existingVersions)[number]>();
-    const bundleVersions = existingVersions.filter((version) => version.isBundle);
-    for (const version of bundleVersions.slice(BUNDLE_RETENTION - 1)) {
-      selected.set(version.id, version);
-    }
-    const oldestFirst = [...existingVersions].sort(
-      (left, right) => left.versionNumber - right.versionNumber,
+    await lockAndAssertUploadQuota(
+      {
+        userId: input.ownerId,
+        sizeBytes: manifest.totalBytes,
+        newDraft: input.target.type === "new",
+        targetDraftId: input.target.type === "draft" ? input.target.draftId : null,
+      },
+      tx,
     );
-    let cursor = 0;
-    while (true) {
-      const reclaimBytes = [...selected.values()].reduce(
-        (total, version) => total + version.totalSizeBytes,
-        0,
-      );
-      try {
-        await lockAndAssertUploadQuota(
-          {
-            userId: input.ownerId,
-            sizeBytes: manifest.totalBytes,
-            newDraft: input.target.type === "new",
-            reclaimBytes,
-          },
-          tx,
-        );
-        break;
-      } catch (error) {
-        if (!(error instanceof QuotaExceededError)) throw error;
-        while (cursor < oldestFirst.length && selected.has(oldestFirst[cursor]!.id)) cursor++;
-        const next = oldestFirst[cursor++];
-        if (!next) throw error;
-        selected.set(next.id, next);
-      }
-    }
 
     const [intent] = await tx
       .insert(uploadIntents)
@@ -373,17 +325,7 @@ export async function createBundleUpload(input: {
         })),
       );
     }
-    const claims = [...selected.values()];
-    if (claims.length) {
-      await tx.insert(uploadIntentReclaims).values(
-        claims.map((version) => ({
-          intentId: intent.id,
-          versionId: version.id,
-          sizeBytes: version.totalSizeBytes,
-        })),
-      );
-    }
-    return { intent, claims };
+    return { intent };
   });
 
   return {
@@ -404,16 +346,9 @@ export async function createBundleUpload(input: {
     ],
     quota: {
       grossReservedBytes: manifest.totalBytes,
-      plannedReclaimBytes: created.claims.reduce(
-        (total, version) => total + version.totalSizeBytes,
-        0,
-      ),
-      netGrowthBytes: Math.max(
-        0,
-        manifest.totalBytes -
-          created.claims.reduce((total, version) => total + version.totalSizeBytes, 0),
-      ),
-      willPruneVersions: created.claims.map((version) => version.versionNumber),
+      plannedReclaimBytes: 0,
+      netGrowthBytes: manifest.totalBytes,
+      willPruneVersions: [],
     },
   };
 }
@@ -639,18 +574,13 @@ export async function completeBundleUpload(
         .from(users)
         .where(and(eq(users.id, lockedIntent.ownerId), isNull(users.blockedAt)));
       if (!owner) throw new DraftNotFoundError();
-      const claims = await tx
-        .select()
-        .from(uploadIntentReclaims)
-        .where(eq(uploadIntentReclaims.intentId, lockedIntent.id));
-      const reclaimBytes = claims.reduce((total, claim) => total + claim.sizeBytes, 0);
       await lockAndAssertUploadQuota(
         {
           userId: lockedIntent.ownerId,
           sizeBytes: totalSizeBytes,
           newDraft: lockedIntent.targetDraftId === null,
           excludeIntentId: lockedIntent.id,
-          reclaimBytes,
+          targetDraftId: lockedIntent.targetDraftId,
         },
         tx,
       );
@@ -735,39 +665,9 @@ export async function completeBundleUpload(
         .returning();
       if (!updatedDraft) throw new DraftNotFoundError();
 
-      const retainedBundles = await tx
-        .select({ id: draftVersions.id })
-        .from(draftVersions)
-        .where(and(eq(draftVersions.draftId, draft.id), eq(draftVersions.isBundle, true)))
-        .orderBy(desc(draftVersions.versionNumber))
-        .offset(BUNDLE_RETENTION);
-      const pruneIds = Array.from(
-        new Set([
-          ...claims.map((claim) => claim.versionId),
-          ...retainedBundles.map((row) => row.id),
-        ]),
-      ).filter((id) => id !== version.id);
-      let prunedKeys: string[] = [];
-      if (pruneIds.length) {
-        const entryKeys = await tx
-          .select({ storageKey: draftVersions.storageKey })
-          .from(draftVersions)
-          .where(inArray(draftVersions.id, pruneIds));
-        const assetKeys = await tx
-          .select({ storageKey: draftVersionAssets.storageKey })
-          .from(draftVersionAssets)
-          .where(inArray(draftVersionAssets.versionId, pruneIds));
-        prunedKeys = [...entryKeys, ...assetKeys].map((row) => row.storageKey);
-        for (const storageKey of prunedKeys) {
-          await queueStorageDeletion({ storageKey, reason: "version_retention" }, tx);
-        }
-      }
       await tx
         .delete(uploadIntentReclaims)
         .where(eq(uploadIntentReclaims.intentId, lockedIntent.id));
-      if (pruneIds.length) {
-        await tx.delete(draftVersions).where(inArray(draftVersions.id, pruneIds));
-      }
       const [completed] = await tx
         .update(uploadIntents)
         .set({ status: "completed", completedAt: sql`now()`, updatedAt: sql`now()` })
@@ -779,8 +679,6 @@ export async function completeBundleUpload(
         completed,
         draft: updatedDraft,
         version,
-        prunedKeys,
-        prunedVersions: pruneIds.length,
       };
     });
 
@@ -790,7 +688,6 @@ export async function completeBundleUpload(
         throw new Error("Completed bundle metadata is missing");
       return { intent: status.intent, draft: status.draft, version: status.version };
     }
-    await Promise.all(result.prunedKeys.map((key) => tryDeleteStorageKey(key)));
     await recordAuditEvent({
       type: bundle.intent.targetDraftId ? "draft.version_created" : "draft.created",
       userId: bundle.intent.ownerId,
@@ -802,7 +699,6 @@ export async function completeBundleUpload(
         sizeBytes: totalSizeBytes,
         assetCount: validatedAssets.length,
         versionNumber: result.version.versionNumber,
-        prunedVersions: result.prunedVersions,
       },
     });
     return { intent: result.completed, draft: result.draft, version: result.version };
@@ -895,57 +791,20 @@ export async function restoreBundleVersion(input: {
       )
       .limit(1);
     if (pending) throw new UploadIntentConflictError("Another upload is already pending.");
-    const existingVersions = await tx
-      .select({
-        id: draftVersions.id,
-        versionNumber: draftVersions.versionNumber,
-        isBundle: draftVersions.isBundle,
-        totalSizeBytes:
-          sql<number>`coalesce(${draftVersions.totalSizeBytes}, ${draftVersions.sizeBytes})`.mapWith(
-            Number,
-          ),
-      })
+    const [retainedSource] = await tx
+      .select({ id: draftVersions.id })
       .from(draftVersions)
-      .where(eq(draftVersions.draftId, draft.id))
-      .orderBy(desc(draftVersions.versionNumber));
-    if (!existingVersions.some((version) => version.id === sourceVersion.id)) {
-      throw new DraftNotFoundError();
-    }
-
-    const selected = new Map<string, (typeof existingVersions)[number]>();
-    for (const version of existingVersions
-      .filter((candidate) => candidate.isBundle)
-      .slice(BUNDLE_RETENTION - 1)) {
-      selected.set(version.id, version);
-    }
-    const oldestFirst = [...existingVersions].sort(
-      (left, right) => left.versionNumber - right.versionNumber,
+      .where(and(eq(draftVersions.id, sourceVersion.id), eq(draftVersions.draftId, draft.id)));
+    if (!retainedSource) throw new DraftNotFoundError();
+    await lockAndAssertUploadQuota(
+      {
+        userId: input.ownerId,
+        sizeBytes: totalSizeBytes,
+        newDraft: false,
+        targetDraftId: draft.id,
+      },
+      tx,
     );
-    let cursor = 0;
-    while (true) {
-      const reclaimBytes = [...selected.values()].reduce(
-        (total, version) => total + version.totalSizeBytes,
-        0,
-      );
-      try {
-        await lockAndAssertUploadQuota(
-          {
-            userId: input.ownerId,
-            sizeBytes: totalSizeBytes,
-            newDraft: false,
-            reclaimBytes,
-          },
-          tx,
-        );
-        break;
-      } catch (error) {
-        if (!(error instanceof QuotaExceededError)) throw error;
-        while (cursor < oldestFirst.length && selected.has(oldestFirst[cursor]!.id)) cursor++;
-        const next = oldestFirst[cursor++];
-        if (!next) throw error;
-        selected.set(next.id, next);
-      }
-    }
 
     const [created] = await tx
       .insert(uploadIntents)
@@ -981,16 +840,6 @@ export async function restoreBundleVersion(input: {
           originalFilename: source.originalFilename,
           expectedBytes: source.sizeBytes,
           sourceKey: source.storageKey,
-        })),
-      );
-    }
-    const claims = [...selected.values()];
-    if (claims.length) {
-      await tx.insert(uploadIntentReclaims).values(
-        claims.map((version) => ({
-          intentId: created.id,
-          versionId: version.id,
-          sizeBytes: version.totalSizeBytes,
         })),
       );
     }
@@ -1061,18 +910,13 @@ export async function restoreBundleVersion(input: {
         )
         .for("update");
       if (!lockedDraft) throw new DraftNotFoundError();
-      const claims = await tx
-        .select()
-        .from(uploadIntentReclaims)
-        .where(eq(uploadIntentReclaims.intentId, lockedIntent.id));
-      const reclaimBytes = claims.reduce((sum, claim) => sum + claim.sizeBytes, 0);
       await lockAndAssertUploadQuota(
         {
           userId: input.ownerId,
           sizeBytes: totalSizeBytes,
           newDraft: false,
           excludeIntentId: lockedIntent.id,
-          reclaimBytes,
+          targetDraftId: lockedIntent.targetDraftId,
         },
         tx,
       );
@@ -1126,35 +970,15 @@ export async function restoreBundleVersion(input: {
         .where(eq(drafts.id, lockedDraft.id))
         .returning();
       if (!updatedDraft) throw new DraftNotFoundError();
-      const retainedBundles = await tx
-        .select({ id: draftVersions.id })
-        .from(draftVersions)
-        .where(and(eq(draftVersions.draftId, lockedDraft.id), eq(draftVersions.isBundle, true)))
-        .orderBy(desc(draftVersions.versionNumber))
-        .offset(BUNDLE_RETENTION);
-      const pruneIds = Array.from(
-        new Set([
-          ...claims.map((claim) => claim.versionId),
-          ...retainedBundles.map((row) => row.id),
-        ]),
-      ).filter((id) => id !== version.id);
-      const prunedKeys = await listVersionStorageKeys(pruneIds, tx);
-      for (const storageKey of prunedKeys) {
-        await queueStorageDeletion({ storageKey, reason: "version_retention" }, tx);
-      }
       await tx
         .delete(uploadIntentReclaims)
         .where(eq(uploadIntentReclaims.intentId, lockedIntent.id));
-      if (pruneIds.length) {
-        await tx.delete(draftVersions).where(inArray(draftVersions.id, pruneIds));
-      }
       await tx
         .update(uploadIntents)
         .set({ status: "completed", completedAt: sql`now()`, updatedAt: sql`now()` })
         .where(eq(uploadIntents.id, lockedIntent.id));
-      return { draft: updatedDraft, version, prunedKeys };
+      return { draft: updatedDraft, version };
     });
-    await Promise.all(result.prunedKeys.map(tryDeleteStorageKey));
     await recordAuditEvent({
       type: "draft.version_restored",
       userId: input.ownerId,

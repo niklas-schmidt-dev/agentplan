@@ -56,7 +56,8 @@ describe.skipIf(!hasDb)("media upload lifecycle (integration)", () => {
 
   async function imageIntent(
     target:
-      { type: "new"; title: string; visibility: "private" } | { type: "draft"; draftId: string },
+      | { type: "new"; title: string; visibility: "private" | "public" }
+      | { type: "draft"; draftId: string },
   ) {
     return createUploadIntent({
       ownerId,
@@ -92,6 +93,54 @@ describe.skipIf(!hasDb)("media upload lifecycle (integration)", () => {
       .from(draftVersions)
       .where(eq(draftVersions.draftId, first.draft.id));
     expect(versions).toHaveLength(1);
+  });
+
+  it("pins older image bytes and preserves both images when the version cap is reached", async () => {
+    vi.stubEnv("AP_MAX_IMAGE_VERSIONS_PER_DRAFT", "2");
+    try {
+      const firstIntent = await imageIntent({
+        type: "new",
+        title: "Image history",
+        visibility: "public",
+      });
+      await getStorage().put(firstIntent.intent.stagingKey!, png, "image/png");
+      const first = await completeUploadIntent(firstIntent.intent.id, ownerId);
+      const updatedPng = new Uint8Array(
+        await sharp({ create: { width: 8, height: 8, channels: 3, background: "#ff0000" } })
+          .png()
+          .toBuffer(),
+      );
+      const secondIntent = await createUploadIntent({
+        ownerId,
+        source: "browser",
+        filename: "new.png",
+        contentType: "image/png",
+        sizeBytes: updatedPng.byteLength,
+        target: { type: "draft", draftId: first.draft.id },
+        baseUrl: "http://localhost:3000",
+      });
+      await getStorage().put(secondIntent.intent.stagingKey!, updatedPng, "image/png");
+      await completeUploadIntent(secondIntent.intent.id, ownerId);
+      await expect(imageIntent({ type: "draft", draftId: first.draft.id })).rejects.toThrow(
+        /Version limit reached.*preserved/,
+      );
+      const params = { params: Promise.resolve({ slug: first.draft.slug }) };
+      const pinned = await getContent(
+        new Request(`http://localhost/p/${first.draft.slug}/content?version=${first.version.id}`),
+        params,
+      );
+      expect(pinned.status).toBe(200);
+      expect(pinned.headers.get("content-type")).toBe("image/png");
+      expect(new Uint8Array(await pinned.arrayBuffer())).toEqual(png);
+      const versions = await getDb()
+        .select()
+        .from(draftVersions)
+        .where(eq(draftVersions.draftId, first.draft.id));
+      expect(versions.map((version) => version.id)).toContain(first.version.id);
+      expect(versions).toHaveLength(2);
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 
   it("cancellation releases reservation and leaves durable cleanup metadata", async () => {
