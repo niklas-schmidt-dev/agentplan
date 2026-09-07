@@ -1,3 +1,6 @@
+import { mkdtemp, readdir, rm } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import { Readable } from "node:stream";
 import sharp from "sharp";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -116,6 +119,46 @@ describe("media validation", () => {
         spec,
       }),
     ).rejects.toMatchObject({ code: "INVALID_FILE_TYPE" });
+  });
+
+  it("removes private temporary image files after success, bad magic, and interrupted input", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "agentplan-image-test-"));
+    const tmpdir = vi.spyOn(os, "tmpdir").mockReturnValue(root);
+    try {
+      const bytes = new Uint8Array(
+        await sharp({ create: { width: 8, height: 8, channels: 3, background: "#82ff77" } })
+          .png()
+          .toBuffer(),
+      );
+      const spec = uploadSpecFor("pixel.png", "image/png")!;
+      await validateStoredMedia({
+        object: objectFor(bytes, "image/png"),
+        expectedBytes: bytes.length,
+        spec,
+      });
+      expect(await readdir(root)).toEqual([]);
+      await expect(
+        validateStoredMedia({
+          object: objectFor(new Uint8Array(10), "image/png"),
+          expectedBytes: 10,
+          spec,
+        }),
+      ).rejects.toThrow();
+      expect(await readdir(root)).toEqual([]);
+      const object = objectFor(bytes, "image/png");
+      object.body = new ReadableStream({
+        pull(controller) {
+          controller.error(new Error("connection lost"));
+        },
+      });
+      await expect(
+        validateStoredMedia({ object, expectedBytes: bytes.length, spec }),
+      ).rejects.toThrow("connection lost");
+      expect(await readdir(root)).toEqual([]);
+    } finally {
+      tmpdir.mockRestore();
+      await rm(root, { recursive: true, force: true });
+    }
   });
 
   it("hashes a streamed MP4 without buffering the complete video", async () => {

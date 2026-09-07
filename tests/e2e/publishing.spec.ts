@@ -33,6 +33,9 @@ test("browser sign-in, publishing, version restore, and privacy apply to anonymo
     await page.getByLabel("upload new version").setInputFiles(publishingFixture("revised.html"));
     await page.getByRole("button", { name: "upload version", exact: true }).click();
     await expect(page.getByText("v2 (current)", { exact: true })).toBeVisible();
+    await expect(
+      page.frameLocator("iframe").getByRole("heading", { name: "Revised browser plan" }),
+    ).toBeVisible();
     await viewer.reload();
     await expect(
       viewer.frameLocator("iframe").getByRole("heading", { name: "Revised browser plan" }),
@@ -48,6 +51,9 @@ test("browser sign-in, publishing, version restore, and privacy apply to anonymo
     ).toBeVisible();
     await page.getByRole("button", { name: "restore as current", exact: true }).click();
     await expect(page.getByText("v3 (current)", { exact: true })).toBeVisible();
+    await expect(
+      page.frameLocator("iframe").getByRole("heading", { name: "Browser published plan" }),
+    ).toBeVisible();
     await viewer.goto(draft.url);
     await expect(
       viewer.frameLocator("iframe").getByRole("heading", { name: "Browser published plan" }),
@@ -56,6 +62,19 @@ test("browser sign-in, publishing, version restore, and privacy apply to anonymo
     await expect(
       viewer.frameLocator("iframe").getByRole("heading", { name: "Revised browser plan" }),
     ).toBeVisible();
+    await page.setViewportSize({ width: 375, height: 812 });
+    await page.getByLabel("Link version").selectOption("1");
+    await expect(page.getByRole("link", { name: "open ↗", exact: true })).toHaveAttribute(
+      "href",
+      new URL(firstUrl!, draft.url).href,
+    );
+    await expect(
+      page.getByText("Anyone with the link can open this draft.", { exact: true }),
+    ).toBeVisible();
+    expect(
+      await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
+    ).toBe(true);
+    await page.getByLabel("Link version").selectOption("current");
     await page.getByRole("button", { name: "private", exact: true }).click();
     await expect.poll(async () => (await anonymous.request.get(draft.url)).status()).toBe(404);
     expect((await anonymous.request.get(new URL(firstUrl!, draft.url).href)).status()).toBe(404);
@@ -203,5 +222,52 @@ test("quota rejection preserves saved content and cancelling a reservation allow
     expect((await getUserStorageUsage(user!.id)).reservedBytes).toBe(0);
   } finally {
     await page.request.delete(`/api/v1/uploads/intents/${intent.id}`, { headers: { origin } });
+  }
+});
+
+for (const bundle of [false, true]) {
+  test(`lost ${bundle ? "bundle" : "file"} completion response recovers the original draft`, async ({
+    page,
+  }) => {
+    const { email } = await signUp(page.request);
+    const [owner] = await getDb().select().from(users).where(eq(users.email, email));
+    await page.route(
+      /\/api\/v1\/uploads\/(?:intents|bundles)\/[^/]+\/complete$/,
+      async (route) => {
+        const committed = await route.fetch();
+        expect(committed.ok()).toBe(true);
+        await route.abort("failed");
+      },
+      { times: 1 },
+    );
+    await publishBrowser(
+      page,
+      publishingFixture(bundle ? "folder" : "plan.html"),
+      "Recovered completion",
+      bundle,
+    );
+    const intents = await getDb()
+      .select()
+      .from(uploadIntents)
+      .where(eq(uploadIntents.ownerId, owner!.id));
+    expect(intents).toHaveLength(1);
+    expect(intents[0]!.status).toBe("completed");
+    await expect(page.getByText("v1 (current)", { exact: true })).toBeVisible();
+  });
+}
+
+test("tokens can be created consecutively without redisplaying an acknowledged secret", async ({
+  page,
+}) => {
+  await signUp(page.request);
+  await page.goto("/dashboard/settings/tokens");
+  for (const name of ["first-agent", "second-agent"]) {
+    await page.getByLabel("token name").fill(name);
+    await page.getByRole("button", { name: "create token", exact: true }).click();
+    await expect(page.getByRole("button", { name: "copy token", exact: true })).toBeVisible();
+    await page.getByRole("button", { name: "I have copied the token" }).click();
+    await page.getByLabel("token name").focus();
+    await expect(page.getByRole("button", { name: "copy token", exact: true })).toHaveCount(0);
+    await expect(page.getByLabel("token name")).toBeVisible();
   }
 });

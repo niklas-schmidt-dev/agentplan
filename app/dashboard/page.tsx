@@ -1,5 +1,9 @@
+import { Suspense } from "react";
+import { redirect } from "next/navigation";
+import { InvalidDraftCursorError } from "@/lib/api/draft-cursor";
+import { DraftViewCount } from "@/components/dashboard/draft-view-count";
 import Link from "next/link";
-import { listDraftsForOwner } from "@/db/queries/drafts";
+import { listDraftsPageForOwner } from "@/db/queries/drafts";
 import { CopyButton } from "@/components/dashboard/copy-button";
 import { DashboardHeader } from "@/components/dashboard/header";
 import { NewDraftForm, PendingUploads } from "@/components/dashboard/upload-form";
@@ -18,24 +22,41 @@ export const metadata = { title: "Dashboard" };
 export default async function DashboardPage({
   searchParams,
 }: {
-  searchParams: Promise<{ q?: string; visibility?: string; recent?: string }>;
+  searchParams: Promise<{ q?: string; visibility?: string; recent?: string; cursor?: string }>;
 }) {
   const user = await requireUser();
   const params = await searchParams;
   const visibility = visibilitySchema.safeParse(params.visibility);
   const search = params.q?.trim() || undefined;
 
-  const [drafts, usage, plan, intents, viewCounts] = await Promise.all([
-    listDraftsForOwner(user.id, {
+  const [page, usage, plan, intents] = await Promise.all([
+    listDraftsPageForOwner(user.id, {
       search,
+      limit: 50,
+      cursor: params.cursor,
       visibility: visibility.success ? visibility.data : undefined,
       updatedWithinDays: params.recent === "1" ? 7 : undefined,
     }),
     getUserStorageUsage(user.id),
     getUserPlan(user.id),
     listPendingUploadIntents(user.id),
-    getViewCountsForOwner(user.id),
-  ]);
+  ]).catch((error: unknown) => {
+    if (error instanceof InvalidDraftCursorError) redirect("/dashboard");
+    throw error;
+  });
+  const drafts = page.drafts;
+  const viewCounts = getViewCountsForOwner(
+    user.id,
+    drafts.map((draft) => draft.id),
+  ).catch(() => null);
+  const pageUrl = (cursor: string | null) => {
+    const query = new URLSearchParams();
+    if (search) query.set("q", search);
+    if (visibility.success) query.set("visibility", visibility.data);
+    if (params.recent === "1") query.set("recent", "1");
+    if (cursor) query.set("cursor", cursor);
+    return `/dashboard?${query.toString()}`;
+  };
   const limits = limitsForPlan(plan);
 
   return (
@@ -137,7 +158,11 @@ export default async function DashboardPage({
                 </Link>
                 <p className="font-mono text-xs text-ink-faint">
                   <span className={draft.visibility === "public" ? "text-lime" : ""}>
-                    {draft.visibility}
+                    {draft.visibility === "private"
+                      ? "Only you"
+                      : draft.visibility === "public"
+                        ? "Anyone with the link"
+                        : "Link + password"}
                   </span>
                   {" · "}
                   {draft.kind}
@@ -148,11 +173,9 @@ export default async function DashboardPage({
                   {" · updated "}
                   {formatRelativeTime(draft.updatedAt)}
                   {" · "}
-                  {(() => {
-                    const views = viewCounts.get(draft.id);
-                    if (!views || views.total === 0) return "no views yet";
-                    return `${views.total} ${views.total === 1 ? "view" : "views"}${views.last7d > 0 ? ` (${views.last7d} this week)` : ""}`;
-                  })()}
+                  <Suspense fallback={<span>loading views…</span>}>
+                    <DraftViewCount counts={viewCounts} draftId={draft.id} />
+                  </Suspense>
                 </p>
               </div>
               <div className="flex items-center gap-2">
@@ -176,6 +199,16 @@ export default async function DashboardPage({
           ))}
         </ul>
       )}
+      {page.previousCursor || page.nextCursor || params.cursor ? (
+        <nav
+          aria-label="Draft pages"
+          className="flex items-center gap-4 font-mono text-sm text-lime"
+        >
+          {params.cursor ? <Link href={pageUrl(null)}>first page</Link> : null}
+          {page.previousCursor ? <Link href={pageUrl(page.previousCursor)}>← previous</Link> : null}
+          {page.nextCursor ? <Link href={pageUrl(page.nextCursor)}>next →</Link> : null}
+        </nav>
+      ) : null}
     </main>
   );
 }

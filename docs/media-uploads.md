@@ -49,7 +49,7 @@ browser-generated Content-Length satisfies the presigned request.
 Replay the issued PUT after completion and confirm final version bytes do not
 change. Delete staging immediately, upload late through the still-live
 capability, and confirm the post-expiry cleanup removes it. Wait through one
-daily purge cycle; an abandoned object can remain for just under 25 hours.
+daily purge cycle. With no backlog or provider failures, cleanup normally completes within about 25 hours; delayed jobs remain durable and retry on later runs. The purge response reports remaining due storage jobs and their oldest due time.
 
 ## Video delivery validation
 
@@ -71,3 +71,16 @@ Bundle upload keys are never served until completion commits their manifest.
 Failed and cancelled uploads are deleted immediately and again after the
 60-minute upload capability expires, preventing a late PUT from resurrecting an
 untracked object.
+
+Completion uses a six-minute database lease, longer than the route's five-minute
+execution budget. Concurrent callers receive `UPLOAD_INTENT_CONFLICT` and can
+reconcile the same intent through its status endpoint. Crashed workers become
+retryable after lease expiry; fencing prevents an old worker from finalizing or
+failing a replacement worker's intent. Bundle completion checkpoints verified
+hashes only for immutable object keys and runs two asset validators concurrently.
+Image validation streams into private temporary files and removes them in a
+`finally` block. Deployments need temporary disk space for concurrent images;
+provider staging remains necessary to measure large-file and streaming behavior.
+
+Cleanup jobs for server-created copy destinations remain durable for six minutes
+past intent expiry, so cancellation or deletion cannot lose track of a late copy.

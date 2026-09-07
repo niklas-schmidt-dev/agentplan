@@ -10,18 +10,34 @@ const inputClass =
 export function ForgotPasswordForm() {
   const [pending, setPending] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setPending(true);
+    setNotice(null);
+    setError(null);
     const form = new FormData(event.currentTarget);
     const email = String(form.get("email") ?? "").trim();
-    await authClient.requestPasswordReset({
-      email,
-      redirectTo: "/reset-password",
-    });
-    setPending(false);
-    setNotice("If the address exists, a password-reset link has been sent.");
+    try {
+      const result = await authClient.requestPasswordReset({
+        email,
+        redirectTo: "/reset-password",
+      });
+      if (result.error) {
+        setError(
+          result.error.status === 429
+            ? "Too many requests. Please wait before requesting another reset link."
+            : "Could not request a reset link. Please try again.",
+        );
+      } else {
+        setNotice("If the address exists, a password-reset link has been sent.");
+      }
+    } catch {
+      setError("Could not request a reset link. Check your connection and try again.");
+    } finally {
+      setPending(false);
+    }
   }
 
   return (
@@ -38,6 +54,11 @@ export function ForgotPasswordForm() {
         placeholder="email"
         className={inputClass}
       />
+      {error ? (
+        <p role="alert" className="font-mono text-xs text-danger">
+          {error}
+        </p>
+      ) : null}
       {notice ? (
         <p role="status" className="font-mono text-xs text-lime">
           {notice}
@@ -54,13 +75,7 @@ export function ForgotPasswordForm() {
   );
 }
 
-export function ResetPasswordForm({
-  token,
-  invalid,
-}: {
-  token: string | null;
-  invalid: boolean;
-}) {
+export function ResetPasswordForm({ token, invalid }: { token: string | null; invalid: boolean }) {
   const router = useRouter();
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(

@@ -11,6 +11,8 @@ const BASE_SECURITY_HEADERS = [
 
 const nextConfig: NextConfig = {
   poweredByHeader: false,
+  // fileTypeFromFile loads Node tokenizers dynamically; keep native resolution.
+  serverExternalPackages: ["file-type"],
   async headers() {
     return [
       {

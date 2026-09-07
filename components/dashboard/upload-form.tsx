@@ -1,5 +1,7 @@
 "use client";
 
+import { completeBrowserUpload, UncertainCompletionError } from "@/lib/uploads/browser-completion";
+import { mapWithConcurrency } from "@/lib/uploads/concurrency";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import {
@@ -83,12 +85,7 @@ async function directUpload(
   }
 
   onState("validating");
-  const completeResponse = await fetch(
-    `/api/v1/uploads/intents/${encodeURIComponent(intent.intent.id)}/complete`,
-    { method: "POST", redirect: "error" },
-  );
-  if (!completeResponse.ok) throw new Error(await uploadError(completeResponse));
-  return completeResponse.json() as Promise<{ draft: { id: string } }>;
+  return completeBrowserUpload(`/api/v1/uploads/intents/${encodeURIComponent(intent.intent.id)}`);
 }
 
 type BrowserBundleFile = {
@@ -159,23 +156,6 @@ function inspectBrowserBundle(
     })),
   });
   return { entryPath: manifest.entryPath, files };
-}
-
-async function mapWithConcurrency<T>(
-  values: readonly T[],
-  concurrency: number,
-  task: (value: T) => Promise<void>,
-): Promise<void> {
-  let cursor = 0;
-  await Promise.all(
-    Array.from({ length: Math.min(concurrency, values.length) }, async () => {
-      while (true) {
-        const index = cursor++;
-        if (index >= values.length) return;
-        await task(values[index]!);
-      }
-    }),
-  );
 }
 
 async function bundleUpload(
@@ -273,13 +253,6 @@ async function bundleUpload(
         onProgress(uploadedFiles, created.files.length);
       });
     }
-    onState("validating");
-    const completion = await fetch(
-      `/api/v1/uploads/bundles/${encodeURIComponent(created.intent.id)}/complete`,
-      { method: "POST", redirect: "error" },
-    );
-    if (!completion.ok) throw new Error(await uploadError(completion));
-    return completion.json() as Promise<{ draft: { id: string } }>;
   } catch (error) {
     await fetch(`/api/v1/uploads/intents/${encodeURIComponent(created.intent.id)}`, {
       method: "DELETE",
@@ -287,6 +260,49 @@ async function bundleUpload(
     }).catch(() => null);
     throw error;
   }
+  onState("validating");
+  return completeBrowserUpload(`/api/v1/uploads/bundles/${encodeURIComponent(created.intent.id)}`);
+}
+
+function CompletionRecovery({
+  path,
+  onComplete,
+  onTerminal,
+}: {
+  path: string;
+  onComplete: (result: { draft: { id: string } }) => void;
+  onTerminal: () => void;
+}) {
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  return (
+    <div className="flex flex-col gap-2">
+      <button
+        type="button"
+        disabled={pending}
+        className="rounded border border-lime px-3 py-2 font-mono text-xs text-lime disabled:opacity-50"
+        onClick={async () => {
+          setPending(true);
+          setError(null);
+          try {
+            onComplete(await completeBrowserUpload(path));
+          } catch (error) {
+            setError(error instanceof Error ? error.message : "Could not check the upload.");
+            if (!(error instanceof UncertainCompletionError)) onTerminal();
+          } finally {
+            setPending(false);
+          }
+        }}
+      >
+        {pending ? "checking upload…" : "check upload status"}
+      </button>
+      {error ? (
+        <p role="alert" className="font-mono text-xs text-danger">
+          {error}
+        </p>
+      ) : null}
+    </div>
+  );
 }
 
 function BundlePicker({
@@ -347,6 +363,7 @@ export function NewDraftForm() {
   const router = useRouter();
   const [error, setError] = useState<string | null>(null);
   const [state, setState] = useState<UploadState>("idle");
+  const [recoveryPath, setRecoveryPath] = useState<string | null>(null);
   const [visibility, setVisibility] = useState<"private" | "public" | "password">("private");
   const [mode, setMode] = useState<UploadMode>("single");
   const [bundleFiles, setBundleFiles] = useState<File[]>([]);
@@ -354,6 +371,7 @@ export function NewDraftForm() {
 
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (recoveryPath) return;
     const form = event.currentTarget;
     setState("uploading");
     setError(null);
@@ -400,6 +418,7 @@ export function NewDraftForm() {
       router.push(`/dashboard/drafts/${body.draft.id}`);
       router.refresh();
     } catch (uploadFailure) {
+      if (uploadFailure instanceof UncertainCompletionError) setRecoveryPath(uploadFailure.path);
       setState("idle");
       setError(uploadFailure instanceof Error ? uploadFailure.message : "Upload failed.");
     }
@@ -469,6 +488,18 @@ export function NewDraftForm() {
           />
         </label>
       ) : null}
+      {recoveryPath ? (
+        <CompletionRecovery
+          path={recoveryPath}
+          onTerminal={() => setRecoveryPath(null)}
+          onComplete={(result) => {
+            setRecoveryPath(null);
+            setError(null);
+            router.push(`/dashboard/drafts/${result.draft.id}`);
+            router.refresh();
+          }}
+        />
+      ) : null}
       {error ? (
         <p role="alert" className="font-mono text-xs text-danger">
           {error}
@@ -481,7 +512,7 @@ export function NewDraftForm() {
       ) : null}
       <button
         type="submit"
-        disabled={state !== "idle"}
+        disabled={state !== "idle" || recoveryPath !== null}
         className="w-fit rounded-md bg-lime px-4 py-2 font-mono text-sm font-medium text-canvas transition-colors hover:bg-lime-dim disabled:opacity-50"
       >
         {state === "validating" ? "validating…" : state === "uploading" ? "uploading…" : "upload"}
@@ -494,12 +525,14 @@ export function NewVersionForm({ draftId, kind }: { draftId: string; kind: Uploa
   const router = useRouter();
   const [error, setError] = useState<string | null>(null);
   const [state, setState] = useState<UploadState>("idle");
+  const [recoveryPath, setRecoveryPath] = useState<string | null>(null);
   const [mode, setMode] = useState<UploadMode>("single");
   const [bundleFiles, setBundleFiles] = useState<File[]>([]);
   const [progress, setProgress] = useState<{ uploaded: number; total: number } | null>(null);
 
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (recoveryPath) return;
     const form = event.currentTarget;
     setState("uploading");
     setError(null);
@@ -530,6 +563,7 @@ export function NewVersionForm({ draftId, kind }: { draftId: string; kind: Uploa
       setState("idle");
       router.refresh();
     } catch (uploadFailure) {
+      if (uploadFailure instanceof UncertainCompletionError) setRecoveryPath(uploadFailure.path);
       setState("idle");
       setError(uploadFailure instanceof Error ? uploadFailure.message : "Upload failed.");
     }
@@ -569,7 +603,7 @@ export function NewVersionForm({ draftId, kind }: { draftId: string; kind: Uploa
       )}
       <button
         type="submit"
-        disabled={state !== "idle"}
+        disabled={state !== "idle" || recoveryPath !== null}
         className="rounded-md border border-lime px-3 py-2 font-mono text-xs text-lime transition-colors hover:bg-lime hover:text-canvas disabled:opacity-50"
       >
         {state === "validating"
@@ -578,6 +612,18 @@ export function NewVersionForm({ draftId, kind }: { draftId: string; kind: Uploa
             ? "uploading…"
             : "upload version"}
       </button>
+      {recoveryPath ? (
+        <CompletionRecovery
+          path={recoveryPath}
+          onTerminal={() => setRecoveryPath(null)}
+          onComplete={(result) => {
+            setRecoveryPath(null);
+            setError(null);
+            router.push(`/dashboard/drafts/${result.draft.id}`);
+            router.refresh();
+          }}
+        />
+      ) : null}
       {error ? (
         <p role="alert" className="w-full font-mono text-xs text-danger">
           {error}

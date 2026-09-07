@@ -1,3 +1,4 @@
+import { finalObjectCleanupDeadline } from "@/lib/uploads/cleanup-deadline";
 import { createHash, randomUUID } from "node:crypto";
 import { and, eq, isNull, max, sql } from "drizzle-orm";
 import { getDb } from "@/db/client";
@@ -596,7 +597,7 @@ export async function softDeleteDraft(
         if (intent.stagingKey) {
           keys.push({ storageKey: intent.stagingKey, notBefore: intent.expiresAt });
         }
-        keys.push({ storageKey: intent.finalKey });
+        keys.push({ storageKey: intent.finalKey, notBefore: finalObjectCleanupDeadline(intent) });
       } else {
         const files = await tx
           .select({ finalKey: uploadIntentFiles.finalKey })
@@ -605,7 +606,7 @@ export async function softDeleteDraft(
         keys.push(
           ...[intent.finalKey, ...files.map((file) => file.finalKey)].map((storageKey) => ({
             storageKey,
-            ...(intent.mode === "bundle" ? { notBefore: intent.expiresAt } : {}),
+            notBefore: finalObjectCleanupDeadline(intent),
           })),
         );
       }

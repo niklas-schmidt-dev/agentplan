@@ -1,4 +1,4 @@
-import { and, asc, eq, lte, sql } from "drizzle-orm";
+import { and, asc, count, eq, lte, min, sql } from "drizzle-orm";
 import { getDb, type Database } from "@/db/client";
 import { storageDeletionJobs } from "@/db/schema";
 import { getStorage } from "@/lib/storage";
@@ -58,7 +58,10 @@ export async function tryDeleteStorageKey(storageKey: string): Promise<boolean> 
   }
 }
 
-export async function purgeStorageDeletionJobs(limit = 100): Promise<{
+async function purgeStorageDeletionBatch(
+  limit: number,
+  deadline: number,
+): Promise<{
   purged: number;
   failed: number;
 }> {
@@ -76,8 +79,33 @@ export async function purgeStorageDeletionJobs(limit = 100): Promise<{
   let purged = 0;
   let failed = 0;
   for (const job of jobs) {
+    if (Date.now() >= deadline) break;
     if (await tryDeleteStorageKey(job.storageKey)) purged++;
     else failed++;
   }
   return { purged, failed };
+}
+
+export async function purgeStorageDeletionJobs(limit = 100, deadline = Date.now() + 30_000) {
+  let purged = 0;
+  let failed = 0;
+  while (Date.now() < deadline) {
+    const result = await purgeStorageDeletionBatch(
+      Math.min(Math.max(1, Math.trunc(limit)), 1000),
+      deadline,
+    );
+    purged += result.purged;
+    failed += result.failed;
+    if (!result.purged && !result.failed) break;
+  }
+  const [backlog] = await getDb()
+    .select({ remaining: count(), oldestDueAt: min(storageDeletionJobs.notBefore) })
+    .from(storageDeletionJobs)
+    .where(lte(storageDeletionJobs.notBefore, sql`now()`));
+  return {
+    purged,
+    failed,
+    remaining: backlog?.remaining ?? 0,
+    oldestDueAt: backlog?.oldestDueAt ?? null,
+  };
 }

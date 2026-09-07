@@ -14,12 +14,15 @@ const script = path.join(
 );
 const temporaryDirectories: string[] = [];
 
-function checkHtml(body: string) {
+function checkHtml(body: string, maxBytes?: string) {
   const directory = mkdtempSync(path.join(tmpdir(), "agentplan-skill-check-"));
   temporaryDirectories.push(directory);
   const file = path.join(directory, "plan.html");
   writeFileSync(file, body);
-  return spawnSync("bash", [script, file], { encoding: "utf8" });
+  return spawnSync("bash", [script, file], {
+    encoding: "utf8",
+    env: { ...process.env, AGENTPLAN_MAX_BYTES: maxBytes ?? "" },
+  });
 }
 
 function document(content: string, meta = '<meta charset="utf-8">') {
@@ -33,6 +36,17 @@ afterEach(() => {
 });
 
 describe("AgentPlan self-contained HTML checker", () => {
+  it("accepts HTML above the obsolete 2 MiB cap", () => {
+    const result = checkHtml(document("x".repeat(2 * 1024 * 1024)));
+    expect(result.status, result.stderr).toBe(0);
+  });
+
+  it("honors an explicitly configured local cap and rejects invalid caps", () => {
+    expect(checkHtml(document("x".repeat(1024)), "100").status).toBe(1);
+    expect(checkHtml(document(""), "0").status).toBe(2);
+    expect(checkHtml(document(""), "no").status).toBe(2);
+  });
+
   it("allows remote URLs containing local-directory words", () => {
     const result = checkHtml(document('<img src="https://example.com/home/overview.png">'));
     expect(result.status, result.stderr).toBe(0);

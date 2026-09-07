@@ -1,17 +1,12 @@
 #!/usr/bin/env node
 
 import { spawn } from "node:child_process";
-import { lstat, readdir, stat } from "node:fs/promises";
-import path from "node:path";
+import { lstat } from "node:fs/promises";
 import { parseArgs } from "node:util";
-import {
-  normalizeBundlePath,
-  selectBundleEntry,
-  uploadSpecFor,
-  validateBundleManifest,
-  type UploadSpec,
-} from "@agentplan/upload-contract";
 import { AgentPlanApi, ApiError, DEFAULT_API_URL, type ApiDraft } from "./api.js";
+import { inspectUploadFile, inspectBundleDirectory, validateArtifact } from "./inspect.js";
+import { CliError, writeError } from "./errors.js";
+import { completeWithRecovery } from "./reconcile.js";
 import { uploadProviderFile } from "./upload.js";
 import { clearConfig, loadConfig, saveConfig } from "./config.js";
 import { hasNewDraftOnlyOptions, type UploadFlags } from "./upload-options.js";
@@ -30,7 +25,17 @@ Usage:
     --draft <id>                        add a version to an existing draft
     --entry <path>                      choose the bundle entry HTML
     --json                              machine-readable output on stdout
-  agentplan list [--json]               list your drafts
+  agentplan validate <file|directory>   check an artifact offline [--entry <path>] [--json]
+  agentplan list [--json]               list all your drafts
+    --limit <1-200> | --cursor <cursor>  return one page with nextCursor
+    --search <text> --visibility <mode> filter drafts
+  agentplan get <id> [--json]           inspect a draft
+  agentplan versions <id> [--json]      list immutable versions
+  agentplan update <id>                 change title or audience
+    --title <title> --public | --private | --password-stdin
+  agentplan restore <id> <version-id>   restore as a new version
+  agentplan delete <id> --yes           delete a draft
+  agentplan upload-status <intent-id>   inspect/retry completion [--bundle] [--complete] [--json]
   agentplan open <id>                   open a draft in the browser
 
 Environment:
@@ -39,8 +44,7 @@ Environment:
 `;
 
 function fail(message: string, exitCode = 1): never {
-  process.stderr.write(`agentplan: ${message}\n`);
-  process.exit(exitCode);
+  throw new CliError(message, exitCode);
 }
 
 function apiUrl(config: { apiUrl?: string }): string {
@@ -105,18 +109,20 @@ async function resolveApi(): Promise<AgentPlanApi> {
   if (process.env.AGENTPLAN_TOKEN) return new AgentPlanApi(base, process.env.AGENTPLAN_TOKEN);
   if (config.token) return new AgentPlanApi(base, config.token);
   const token = await promptForToken();
+  const api = new AgentPlanApi(base, token);
+  await verifyToken(api);
   await saveConfig({ ...config, token });
   process.stderr.write("Token saved.\n");
-  return new AgentPlanApi(base, token);
+  return api;
 }
 
 async function verifyToken(api: AgentPlanApi): Promise<void> {
-  await api.listDrafts();
+  await api.identity();
 }
 
 async function commandLogin(): Promise<void> {
   const config = await loadConfig();
-  const token = await promptForToken();
+  const token = process.env.AGENTPLAN_TOKEN || (await promptForToken());
   const api = new AgentPlanApi(apiUrl(config), token);
   await verifyToken(api);
   await saveConfig({ ...config, token });
@@ -128,122 +134,29 @@ async function commandLogout(): Promise<void> {
   process.stderr.write("Logged out. Stored token removed.\n");
 }
 
-async function inspectUploadFile(
-  filePath: string,
-): Promise<{ filename: string; sizeBytes: number; spec: UploadSpec }> {
-  const filename = path.basename(filePath);
-  let sizeBytes: number;
-  try {
-    sizeBytes = (await stat(filePath)).size;
-  } catch {
-    fail(`Cannot read ${filePath}.`, 2);
-  }
-  const spec = uploadSpecFor(filename, null);
-  if (!spec) fail("Supported files are HTML, JPEG, PNG, WebP, GIF, AVIF, and MP4.", 2);
-  if (sizeBytes === 0) fail("The file is empty.", 2);
-  return { filename, sizeBytes, spec };
-}
-
-type LocalBundleFile = {
-  absolutePath: string;
-  path: string;
-  contentType: string;
-  sizeBytes: number;
-};
-
-const IGNORED_DIRECTORIES = new Set([".git", ".svn", ".hg", "node_modules"]);
-const IGNORED_FILES = new Set([".DS_Store", "Thumbs.db"]);
-
-async function inspectBundleDirectory(
-  root: string,
-  explicitEntry?: string,
-): Promise<{ entryPath: string; files: LocalBundleFile[] }> {
-  const files: LocalBundleFile[] = [];
-  const unsupported: string[] = [];
-
-  async function walk(directory: string, relativeDirectory: string): Promise<void> {
-    let entries;
-    try {
-      entries = await readdir(directory, { withFileTypes: true });
-    } catch {
-      fail(`Cannot read directory ${directory}.`, 2);
-    }
-    entries.sort((left, right) => left.name.localeCompare(right.name));
-    for (const entry of entries) {
-      if (
-        (entry.isDirectory() && IGNORED_DIRECTORIES.has(entry.name)) ||
-        (entry.isFile() && IGNORED_FILES.has(entry.name))
-      ) {
-        continue;
-      }
-      const relativePath = relativeDirectory ? `${relativeDirectory}/${entry.name}` : entry.name;
-      const absolutePath = path.join(directory, entry.name);
-      if (entry.isSymbolicLink()) {
-        fail(`Symlinks are not supported in bundles: ${relativePath}`, 2);
-      }
-      if (entry.isDirectory()) {
-        await walk(absolutePath, relativePath);
-        continue;
-      }
-      if (!entry.isFile()) {
-        unsupported.push(relativePath);
-        continue;
-      }
-      const spec = uploadSpecFor(relativePath, null);
-      if (!spec) {
-        unsupported.push(relativePath);
-        continue;
-      }
-      const metadata = await stat(absolutePath);
-      files.push({
-        absolutePath,
-        path: normalizeBundlePath(relativePath),
-        contentType: spec.contentType,
-        sizeBytes: metadata.size,
-      });
-    }
-  }
-
-  await walk(root, "");
-  if (unsupported.length) {
-    fail(`Unsupported bundle files: ${unsupported.join(", ")}`, 2);
-  }
-  let entryPath: string;
-  try {
-    entryPath = selectBundleEntry(
-      files.map((file) => file.path),
-      explicitEntry,
-    );
-    const manifest = validateBundleManifest({
-      entryPath,
-      files: files.map((file) => ({
-        path: file.path,
-        contentType: file.contentType,
-        sizeBytes: file.sizeBytes,
-      })),
-    });
-    entryPath = manifest.entryPath;
-  } catch (error) {
-    fail(error instanceof Error ? error.message : "Invalid HTML bundle.", 2);
-  }
-  return { entryPath, files };
-}
-
 async function mapWithConcurrency<T>(
   values: readonly T[],
   concurrency: number,
   task: (value: T) => Promise<void>,
 ): Promise<void> {
   let cursor = 0;
+  let failed = false;
+  let failure: unknown;
   await Promise.all(
     Array.from({ length: Math.min(concurrency, values.length) }, async () => {
-      while (true) {
+      while (!failed) {
         const index = cursor++;
         if (index >= values.length) return;
-        await task(values[index]!);
+        try {
+          await task(values[index]!);
+        } catch (error) {
+          failed = true;
+          failure ??= error;
+        }
       }
     }),
   );
+  if (failed) throw failure;
 }
 
 async function uploadBundle(
@@ -271,6 +184,7 @@ async function uploadBundle(
         },
   });
   const localByPath = new Map(local.files.map((file) => [file.path, file]));
+  let completionStarted = false;
   try {
     for (let offset = 0; offset < created.files.length; offset += 10) {
       const batch = created.files.slice(offset, offset + 10);
@@ -298,9 +212,14 @@ async function uploadBundle(
         }
       });
     }
-    return await api.completeBundle(created.intent.id);
+    completionStarted = true;
+    return await completeWithRecovery(
+      created.intent.id,
+      () => api.completeBundle(created.intent.id),
+      () => api.getBundle(created.intent.id),
+    );
   } catch (error) {
-    await api.cancelUploadIntent(created.intent.id).catch(() => undefined);
+    if (!completionStarted) await api.cancelUploadIntent(created.intent.id).catch(() => undefined);
     throw error;
   }
 }
@@ -375,11 +294,17 @@ async function commandUpload(file: string | undefined, flags: UploadFlags): Prom
       : { type: "new", title: flags.title, visibility, password },
   });
   let result: { draft: ApiDraft; version?: unknown };
+  let completionStarted = false;
   try {
     await uploadProviderFile(file, sizeBytes, intent.upload);
-    result = await api.completeUploadIntent(intent.intent.id);
+    completionStarted = true;
+    result = await completeWithRecovery(
+      intent.intent.id,
+      () => api.completeUploadIntent(intent.intent.id),
+      () => api.getUploadIntent(intent.intent.id),
+    );
   } catch (error) {
-    await api.cancelUploadIntent(intent.intent.id).catch(() => undefined);
+    if (!completionStarted) await api.cancelUploadIntent(intent.intent.id).catch(() => undefined);
     throw error;
   }
   if (flags.json) {
@@ -389,9 +314,35 @@ async function commandUpload(file: string | undefined, flags: UploadFlags): Prom
   }
 }
 
-async function commandList(flags: { json?: boolean }): Promise<void> {
+async function commandList(flags: {
+  json?: boolean;
+  limit?: string;
+  cursor?: string;
+  search?: string;
+  visibility?: string;
+}): Promise<void> {
+  const limit = flags.limit === undefined ? undefined : Number(flags.limit);
+  if (limit !== undefined && (!Number.isInteger(limit) || limit < 1 || limit > 200))
+    fail("--limit must be an integer from 1 to 200.", 2);
+  if (flags.visibility && !["public", "private", "password"].includes(flags.visibility))
+    fail("--visibility must be public, private, or password.", 2);
   const api = await resolveApi();
-  const result = await api.listDrafts();
+  const options = {
+    limit,
+    cursor: flags.cursor,
+    search: flags.search,
+    visibility: flags.visibility,
+  };
+  const result = await api.listDrafts(options);
+  const seen = new Set<string>();
+  while (result.nextCursor && flags.limit === undefined && flags.cursor === undefined) {
+    if (seen.has(result.nextCursor))
+      throw new ApiError(200, "BAD_RESPONSE", "The API repeated a pagination cursor.");
+    seen.add(result.nextCursor);
+    const next = await api.listDrafts({ ...options, cursor: result.nextCursor });
+    result.drafts.push(...next.drafts);
+    result.nextCursor = next.nextCursor;
+  }
   if (flags.json) {
     process.stdout.write(`${JSON.stringify(result)}\n`);
     return;
@@ -428,6 +379,101 @@ async function commandOpen(id: string | undefined): Promise<void> {
   process.stderr.write(`Opening ${url}\n`);
 }
 
+async function commandValidate(
+  target: string | undefined,
+  flags: { json?: boolean; entry?: string },
+): Promise<void> {
+  if (!target) fail("Usage: agentplan validate <file|directory> [--entry <path>] [--json]", 2);
+  const result = await validateArtifact(target, flags.entry);
+  if (flags.json) process.stdout.write(`${JSON.stringify(result)}\n`);
+  else {
+    process.stdout.write(
+      `${result.valid ? "PASS" : "FAIL"}: ${result.files.length} file(s), ${result.totalSizeBytes} bytes.\n${result.limitations}\n`,
+    );
+    for (const issue of result.issues)
+      process.stdout.write(`${issue.path}: ${issue.code}: ${issue.message}\n`);
+  }
+  if (!result.valid) process.exitCode = 2;
+}
+
+async function commandLifecycle(
+  command: string,
+  id: string | undefined,
+  versionId: string | undefined,
+  flags: UploadFlags & { yes?: boolean; bundle?: boolean; complete?: boolean },
+): Promise<void> {
+  if (!id) fail(`Usage: agentplan ${command} <id>`, 2);
+  if (command === "restore" && !versionId)
+    fail("Usage: agentplan restore <draft-id> <version-id>", 2);
+  if (command === "delete" && !flags.yes)
+    fail("Deletion requires --yes: agentplan delete <id> --yes", 2);
+  let patch: { title?: string; visibility?: ApiDraft["visibility"]; password?: string } = {};
+  if (command === "update") {
+    if (flags.password !== undefined)
+      fail(
+        "Use --password-stdin to change a password without exposing it in process arguments.",
+        2,
+      );
+    if ([flags.public, flags.private, flags["password-stdin"]].filter(Boolean).length > 1)
+      fail("Use only one visibility or password option.", 2);
+    patch = {
+      ...(flags.title !== undefined ? { title: flags.title } : {}),
+      ...(flags.public ? { visibility: "public" } : flags.private ? { visibility: "private" } : {}),
+      ...(flags["password-stdin"] ? { password: await readPasswordFromStdin() } : {}),
+    };
+    if (!Object.keys(patch).length)
+      fail("Provide --title, --public, --private, or --password-stdin.", 2);
+  }
+  const api = await resolveApi();
+  if (command === "versions") {
+    const result = await api.listVersions(id);
+    if (flags.json) process.stdout.write(`${JSON.stringify(result)}\n`);
+    else
+      for (const version of result.versions)
+        process.stdout.write(`v${version.version} ${version.id} ${version.url}\n`);
+    return;
+  }
+  if (command === "upload-status") {
+    const readStatus = () => (flags.bundle ? api.getBundle(id) : api.getUploadIntent(id));
+    const status = await readStatus();
+    const result =
+      flags.complete && status.intent.status !== "completed"
+        ? {
+            ...status,
+            ...(await completeWithRecovery(
+              id,
+              () => (flags.bundle ? api.completeBundle(id) : api.completeUploadIntent(id)),
+              readStatus,
+            )),
+            intent: { ...status.intent, status: "completed" },
+          }
+        : status;
+    if (flags.json) process.stdout.write(`${JSON.stringify(result)}\n`);
+    else if (result.draft) printDraft(result.draft, "Uploaded");
+    else process.stdout.write(`${result.intent.id}: ${result.intent.status}\n`);
+    return;
+  }
+  if (command === "delete") {
+    await api.deleteDraft(id);
+    process.stdout.write(
+      flags.json ? `${JSON.stringify({ deleted: true, id })}\n` : `Deleted ${id}\n`,
+    );
+    return;
+  }
+  const result =
+    command === "get"
+      ? await api.getDraft(id)
+      : command === "restore"
+        ? await api.restoreVersion(id, versionId!)
+        : await api.updateDraft(id, patch);
+  if (flags.json) process.stdout.write(`${JSON.stringify(result)}\n`);
+  else
+    printDraft(
+      result.draft,
+      command === "restore" ? "Restored" : command === "update" ? "Updated" : "Draft",
+    );
+}
+
 async function main(): Promise<void> {
   const { values, positionals } = parseArgs({
     args: process.argv.slice(2),
@@ -441,16 +487,45 @@ async function main(): Promise<void> {
       entry: { type: "string" },
       json: { type: "boolean" },
       help: { type: "boolean", short: "h" },
+      limit: { type: "string" },
+      cursor: { type: "string" },
+      search: { type: "string" },
+      visibility: { type: "string" },
+      yes: { type: "boolean" },
+      bundle: { type: "boolean" },
+      complete: { type: "boolean" },
     },
     allowPositionals: true,
   });
 
-  const [command, argument] = positionals;
+  const [command, argument, versionId] = positionals;
   if (values.help || !command) {
     process.stderr.write(USAGE);
     process.exit(values.help ? 0 : 2);
   }
 
+  const allowed: Record<string, string[]> = {
+    login: [],
+    logout: [],
+    upload: ["public", "private", "password", "password-stdin", "title", "draft", "entry"],
+    list: ["limit", "cursor", "search", "visibility"],
+    open: [],
+    validate: ["entry"],
+    get: [],
+    versions: [],
+    update: ["title", "public", "private", "password", "password-stdin"],
+    restore: [],
+    delete: ["yes"],
+    "upload-status": ["bundle", "complete"],
+  };
+  if (!allowed[command]) fail(`Unknown command: ${command}`, 2);
+  for (const key of Object.keys(values)) {
+    if (!["json", "help", ...allowed[command]].includes(key))
+      fail(`--${key} is not supported for ${command}.`, 2);
+  }
+  const maxArguments =
+    command === "restore" ? 3 : ["login", "logout", "list"].includes(command) ? 1 : 2;
+  if (positionals.length > maxArguments) fail(`Too many arguments for ${command}.`, 2);
   switch (command) {
     case "login":
       return commandLogin();
@@ -460,6 +535,15 @@ async function main(): Promise<void> {
       return commandUpload(argument, values);
     case "list":
       return commandList(values);
+    case "validate":
+      return commandValidate(argument, values);
+    case "get":
+    case "versions":
+    case "update":
+    case "restore":
+    case "delete":
+    case "upload-status":
+      return commandLifecycle(command, argument, versionId, values);
     case "open":
       return commandOpen(argument);
     default:
@@ -469,11 +553,5 @@ async function main(): Promise<void> {
 }
 
 main().catch((error: unknown) => {
-  if (error instanceof ApiError) {
-    if (error.status === 401) {
-      fail(`${error.message} Run \`agentplan login\` with a valid token.`);
-    }
-    fail(`${error.code}: ${error.message}`);
-  }
-  fail(error instanceof Error ? error.message : String(error));
+  process.exitCode = writeError(error, process.argv.includes("--json"));
 });

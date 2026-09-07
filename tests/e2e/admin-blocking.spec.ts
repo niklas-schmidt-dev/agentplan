@@ -25,6 +25,12 @@ test("admin can block, restore, then delete while retaining the identity block",
 
   await page.goto("/dashboard/admin");
   const userRow = page.getByRole("listitem").filter({ hasText: victim.email });
+  // QA databases persist between runs; a new fixture may be on a later page.
+  while ((await userRow.count()) === 0) {
+    const next = page.getByRole("link", { name: "next →", exact: true });
+    await expect(next).toBeVisible();
+    await page.goto((await next.getAttribute("href"))!);
+  }
   await userRow.getByRole("button", { name: "block", exact: true }).click();
   await userRow.getByPlaceholder("internal reason").fill("E2E moderation test");
   await userRow.getByRole("button", { name: "confirm block" }).click();

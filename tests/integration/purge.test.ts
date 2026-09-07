@@ -1,9 +1,11 @@
+import { purgeStorageDeletionJobs, queueStorageDeletion } from "@/lib/storage/cleanup";
+import { getStorage } from "@/lib/storage";
 import { randomUUID } from "node:crypto";
 import { mkdtempSync } from "node:fs";
 import { readdir } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { afterAll, describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it, vi } from "vitest";
 
 // Must be configured before the lazy storage/db singletons are first used.
 const storageRoot = mkdtempSync(path.join(os.tmpdir(), "agentplan-purge-"));
@@ -12,10 +14,21 @@ process.env.STORAGE_FS_ROOT = storageRoot;
 
 import { and, eq, inArray, lte, sql } from "drizzle-orm";
 import { closeDb, getDb } from "@/db/client";
-import { apiTokens, auditEvents, drafts, rateLimits, users } from "@/db/schema";
+import {
+  apiTokens,
+  auditEvents,
+  drafts,
+  rateLimits,
+  storageDeletionJobs,
+  users,
+} from "@/db/schema";
 import { purgeExpiredAuditEvents } from "@/lib/audit/events";
 import { purgeDeletedDrafts, purgeExpiredRateLimits } from "@/lib/drafts/purge";
-import { addVersionToDraft, createDraftWithFirstVersion, softDeleteDraft } from "@/lib/drafts/service";
+import {
+  addVersionToDraft,
+  createDraftWithFirstVersion,
+  softDeleteDraft,
+} from "@/lib/drafts/service";
 import { createToken, purgeRetiredTokens } from "@/lib/tokens/service";
 
 const hasDb = Boolean(process.env.DATABASE_URL);
@@ -79,20 +92,62 @@ describe.skipIf(!hasDb)("deleted-draft purge (integration)", () => {
     expect(recentRow?.deletedAt).not.toBeNull();
 
     // The purged draft's objects are gone; the recent one's remain.
-    expect(await filesUnder(path.join(storageRoot, "drafts", ownerId, old.draft.id))).toHaveLength(0);
+    expect(await filesUnder(path.join(storageRoot, "drafts", ownerId, old.draft.id))).toHaveLength(
+      0,
+    );
     expect(
       await filesUnder(path.join(storageRoot, "drafts", ownerId, recent.draft.id)),
     ).toHaveLength(1);
   });
 
+  it("drains storage batches despite a failed oldest job and preserves future cleanup", async () => {
+    const prefix = `maintenance-${randomUUID()}`;
+    const bad = `${prefix}/bad`;
+    const future = `${prefix}/future`;
+    await queueStorageDeletion({ storageKey: bad, reason: "test" });
+    for (let index = 0; index < 5; index++)
+      await queueStorageDeletion({ storageKey: `${prefix}/${index}`, reason: "test" });
+    await queueStorageDeletion({
+      storageKey: future,
+      reason: "test",
+      notBefore: new Date(Date.now() + 60_000),
+    });
+    const original = getStorage().delete.bind(getStorage());
+    const deletion = vi.spyOn(getStorage(), "delete").mockImplementation(async (key) => {
+      if (key === bad) throw new Error("provider unavailable");
+      await original(key);
+    });
+    try {
+      const result = await purgeStorageDeletionJobs(2);
+      expect(result.purged).toBeGreaterThanOrEqual(5);
+      expect(result.failed).toBe(1);
+      const rows = await getDb()
+        .select()
+        .from(storageDeletionJobs)
+        .where(sql`${storageDeletionJobs.storageKey} like ${prefix + "/%"}`);
+      expect(rows.map((row) => row.storageKey).sort()).toEqual([bad, future].sort());
+      expect(rows.find((row) => row.storageKey === bad)!.nextAttemptAt.getTime()).toBeGreaterThan(
+        Date.now(),
+      );
+      expect(deletion.mock.calls.some(([key]) => key === future)).toBe(false);
+    } finally {
+      deletion.mockRestore();
+      await getDb()
+        .delete(storageDeletionJobs)
+        .where(sql`${storageDeletionJobs.storageKey} like ${prefix + "/%"}`);
+    }
+  });
+
   it("sweeps expired rate-limit windows", async () => {
     const key = `purge-test:${randomUUID()}`;
-    await getDb().insert(rateLimits).values({
-      key,
-      windowStart: sql`now() - interval '2 hours'`,
-      count: 5,
-      expiresAt: sql`now() - interval '1 hour'`,
-    });
+    await getDb()
+      .insert(rateLimits)
+      .values({
+        key,
+        windowStart: sql`now() - interval '2 hours'`,
+        count: 5,
+        expiresAt: sql`now() - interval '1 hour'`,
+      });
 
     await purgeExpiredRateLimits();
 
@@ -106,13 +161,15 @@ describe.skipIf(!hasDb)("deleted-draft purge (integration)", () => {
   it("removes retired tokens after retention while preserving active tokens", async () => {
     process.env.AP_RETIRED_TOKEN_RETENTION_DAYS = "30";
     const ownerId = `purge-token-user-${randomUUID()}`;
-    await getDb().insert(users).values({
-      id: ownerId,
-      name: "Token Purge User",
-      email: `${ownerId}@example.test`,
-      emailVerified: true,
-      role: "admin",
-    });
+    await getDb()
+      .insert(users)
+      .values({
+        id: ownerId,
+        name: "Token Purge User",
+        email: `${ownerId}@example.test`,
+        emailVerified: true,
+        role: "admin",
+      });
     try {
       const revoked = await createToken({
         userId: ownerId,
@@ -139,13 +196,7 @@ describe.skipIf(!hasDb)("deleted-draft purge (integration)", () => {
       const remaining = await getDb()
         .select({ id: apiTokens.id })
         .from(apiTokens)
-        .where(
-          inArray(apiTokens.id, [
-            revoked.record.id,
-            expired.record.id,
-            active.record.id,
-          ]),
-        );
+        .where(inArray(apiTokens.id, [revoked.record.id, expired.record.id, active.record.id]));
       expect(remaining.map(({ id }) => id)).toEqual([active.record.id]);
     } finally {
       delete process.env.AP_RETIRED_TOKEN_RETENTION_DAYS;
@@ -179,11 +230,16 @@ describe.skipIf(!hasDb)("deleted-draft purge (integration)", () => {
         ])
         .returning({ id: auditEvents.id, eventType: auditEvents.eventType });
 
-      expect(await purgeExpiredAuditEvents()).toBeGreaterThanOrEqual(1);
+      expect(await purgeExpiredAuditEvents(1)).toBeGreaterThanOrEqual(1);
       const remaining = await getDb()
         .select({ id: auditEvents.id })
         .from(auditEvents)
-        .where(inArray(auditEvents.id, inserted.map(({ id }) => id)));
+        .where(
+          inArray(
+            auditEvents.id,
+            inserted.map(({ id }) => id),
+          ),
+        );
       expect(remaining.map(({ id }) => id).sort()).toEqual(
         [inserted[1]!.id, inserted[2]!.id].sort(),
       );

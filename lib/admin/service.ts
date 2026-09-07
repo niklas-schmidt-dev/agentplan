@@ -1,3 +1,4 @@
+import { finalObjectCleanupDeadline } from "@/lib/uploads/cleanup-deadline";
 import {
   and,
   asc,
@@ -725,25 +726,31 @@ export type UserDeletionPurgeResult = { purged: number; failed: number };
 /** Retries durable storage-cleanup jobs left by completed account deletions. */
 export async function purgePendingUserDeletionObjects(
   batchSize = 100,
+  deadline = Date.now() + 30_000,
 ): Promise<UserDeletionPurgeResult> {
-  const pending = await getDb()
-    .select({ id: auditEvents.id, metadata: auditEvents.metadata })
-    .from(auditEvents)
-    .where(eq(auditEvents.eventType, "user.deletion_pending"))
-    .orderBy(asc(auditEvents.createdAt), asc(auditEvents.id))
-    .limit(Math.min(Math.max(Math.trunc(batchSize), 1), 100));
-
   let purged = 0;
   let failed = 0;
-  for (const event of pending) {
-    const metadata = parsePendingDeletionMetadata(event.metadata);
-    if (!metadata) {
-      console.error("Invalid pending user deletion audit metadata", event.id);
-      failed++;
-      continue;
+  while (Date.now() < deadline) {
+    const pending = await getDb()
+      .select({ id: auditEvents.id, metadata: auditEvents.metadata })
+      .from(auditEvents)
+      .where(eq(auditEvents.eventType, "user.deletion_pending"))
+      .orderBy(asc(auditEvents.createdAt), asc(auditEvents.id))
+      .offset(failed)
+      .limit(Math.min(Math.max(Math.trunc(batchSize), 1), 100));
+
+    if (!pending.length) break;
+    for (const event of pending) {
+      if (Date.now() >= deadline) break;
+      const metadata = parsePendingDeletionMetadata(event.metadata);
+      if (!metadata) {
+        console.error("Invalid pending user deletion audit metadata", event.id);
+        failed++;
+        continue;
+      }
+      if (await purgeUserDeletionObjects(event.id, metadata)) purged++;
+      else failed++;
     }
-    if (await purgeUserDeletionObjects(event.id, metadata)) purged++;
-    else failed++;
   }
   return { purged, failed };
 }
@@ -853,6 +860,7 @@ async function deleteUser(
         stagingKey: uploadIntents.stagingKey,
         finalKey: uploadIntents.finalKey,
         expiresAt: uploadIntents.expiresAt,
+        mode: uploadIntents.mode,
       })
       .from(uploadIntents)
       .where(and(eq(uploadIntents.ownerId, targetUserId), ne(uploadIntents.status, "completed")));
@@ -886,11 +894,10 @@ async function deleteUser(
         ...intentFiles.map((file) => file.finalKey),
       ]),
     ).filter((key): key is string => key !== null);
-    const latestExpiry = intents.reduce<Date | null>(
-      (latest, intent) =>
-        latest === null || intent.expiresAt > latest ? intent.expiresAt : latest,
-      null,
-    );
+    const latestExpiry = intents.reduce<Date | null>((latest, intent) => {
+      const deadline = finalObjectCleanupDeadline(intent);
+      return latest === null || deadline > latest ? deadline : latest;
+    }, null);
 
     const metadata: UserDeletionMetadata = {
       targetUserId,

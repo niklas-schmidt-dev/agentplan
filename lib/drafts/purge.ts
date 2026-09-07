@@ -15,7 +15,10 @@ export type PurgeResult = { purged: number; failed: number };
  * (which only counts live drafts). A draft's row is only removed once every
  * one of its objects is gone, so a storage hiccup retries on the next run.
  */
-export async function purgeDeletedDrafts(batchSize = 100): Promise<PurgeResult> {
+export async function purgeDeletedDrafts(
+  batchSize = 100,
+  deadline = Date.now() + 30_000,
+): Promise<PurgeResult> {
   const db = getDb();
   const retentionDays = deletedDraftRetentionDays();
 
@@ -24,7 +27,7 @@ export async function purgeDeletedDrafts(batchSize = 100): Promise<PurgeResult> 
   // Drain the whole backlog in batches; the offset skips rows whose object
   // deletion keeps failing so they can't starve the rest of a run. Each
   // iteration either purges rows or grows the offset, so this terminates.
-  while (true) {
+  while (Date.now() < deadline) {
     const stale = await db
       .select({ id: drafts.id, slug: drafts.slug, ownerId: drafts.ownerId })
       .from(drafts)
@@ -40,6 +43,7 @@ export async function purgeDeletedDrafts(batchSize = 100): Promise<PurgeResult> 
     if (stale.length === 0) break;
 
     for (const draft of stale) {
+      if (Date.now() >= deadline) break;
       const versions = await db
         .select({ id: draftVersions.id })
         .from(draftVersions)

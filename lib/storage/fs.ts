@@ -67,6 +67,7 @@ export class FsStorage implements ObjectStorage {
     const nodeStream = createReadStream(this.pathFor(key), range);
     return {
       ...metadata,
+      size: range ? range.end - range.start + 1 : metadata.size,
       body: Readable.toWeb(nodeStream) as ReadableStream<Uint8Array>,
       contentRange: range ? `bytes ${range.start}-${range.end}/${metadata.size}` : null,
     };
