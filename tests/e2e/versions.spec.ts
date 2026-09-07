@@ -115,3 +115,91 @@ test("password unlock and wrong-password retry preserve the selected version", a
   );
   await context.close();
 });
+
+test("dashboard version selection updates preview, analytics, links, and browser history", async ({
+  page,
+  browser,
+}) => {
+  await signUp(page.request);
+  const draft = await uploadDraft(page.request, "<!doctype html><h1>Selected original</h1>", {
+    visibility: "public",
+  });
+  const versionsUrl = `/api/v1/drafts/${draft.id}/versions`;
+  const first = (await (await page.request.get(versionsUrl)).json()).versions[0];
+  const update = await page.request.post(versionsUrl, {
+    headers: { origin },
+    multipart: {
+      file: {
+        name: "second.html",
+        mimeType: "text/html",
+        buffer: Buffer.from("<!doctype html><h1>Selected latest</h1>"),
+      },
+    },
+  });
+  expect(update.status()).toBe(201);
+  const second = (await update.json()).version;
+  const anonymous = await browser.newContext();
+  try {
+    // Both immutable and stable URLs must attribute views to the rendered version.
+    expect((await anonymous.request.get(first.url)).status()).toBe(200);
+    expect((await anonymous.request.get(second.url)).status()).toBe(200);
+    expect((await anonymous.request.get(draft.url)).status()).toBe(200);
+
+    const dashboardUrl = `/dashboard/drafts/${draft.id}`;
+    await page.goto(dashboardUrl);
+    const selector = page.getByLabel("Draft version");
+    const analytics = page.getByRole("region", { name: "View analytics" });
+    const total = analytics.locator("dl > div").filter({ hasText: "views · total" }).locator("dd");
+    const preview = page.frameLocator("iframe");
+    const open = page.getByRole("link", { name: "open ↗", exact: true });
+    await expect(preview.getByRole("heading", { name: "Selected latest" })).toBeVisible();
+    await expect(
+      analytics.getByRole("heading", { name: "analytics · v2", exact: true }),
+    ).toBeVisible();
+    await expect(total).toHaveText("2");
+    await expect(open).toHaveAttribute("href", draft.url);
+
+    await selector.selectOption(first.id);
+    await expect(page).toHaveURL(`${origin}${dashboardUrl}?version=${first.id}`);
+    await expect(preview.getByRole("heading", { name: "Selected original" })).toBeVisible();
+    await expect(
+      analytics.getByRole("heading", { name: "analytics · v1", exact: true }),
+    ).toBeVisible();
+    await expect(total).toHaveText("1");
+    await expect(open).toHaveAttribute("href", first.url);
+    await expect(page.locator('li[aria-current="true"]')).toContainText("v1");
+
+    await page.reload();
+    await expect(selector).toHaveValue(first.id);
+    await expect(preview.getByRole("heading", { name: "Selected original" })).toBeVisible();
+    await expect(total).toHaveText("1");
+
+    await selector.selectOption(second.id);
+    await expect(preview.getByRole("heading", { name: "Selected latest" })).toBeVisible();
+    await expect(total).toHaveText("2");
+    await expect(open).toHaveAttribute("href", second.url);
+    await page.goBack();
+    await expect(selector).toHaveValue(first.id);
+    await expect(preview.getByRole("heading", { name: "Selected original" })).toBeVisible();
+    await expect(total).toHaveText("1");
+    await page.goForward();
+    await expect(selector).toHaveValue(second.id);
+    await expect(preview.getByRole("heading", { name: "Selected latest" })).toBeVisible();
+    await expect(total).toHaveText("2");
+
+    await selector.selectOption("current");
+    await expect(page).toHaveURL(`${origin}${dashboardUrl}`);
+    await expect(open).toHaveAttribute("href", draft.url);
+    await expect(page.locator('li[aria-current="true"]')).toContainText("v2 (current)");
+    const versions = (await (await page.request.get(versionsUrl)).json()).versions;
+    expect(versions).toHaveLength(2);
+
+    const other = await uploadDraft(page.request, "<!doctype html><h1>Other draft</h1>");
+    await page.goto(`/dashboard/drafts/${other.id}?version=${first.id}`);
+    await expect(page.getByRole("heading", { name: "404" })).toBeVisible();
+    await page.goto(`${dashboardUrl}?version=invalid`);
+    await expect(page.getByRole("heading", { name: "404" })).toBeVisible();
+  } finally {
+    await anonymous.close();
+  }
+});

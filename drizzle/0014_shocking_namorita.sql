@@ -1,0 +1,3 @@
+ALTER TABLE "draft_view_events" ADD COLUMN "version_id" uuid;--> statement-breakpoint
+ALTER TABLE "draft_view_events" ADD CONSTRAINT "draft_view_events_version_id_draft_versions_id_fk" FOREIGN KEY ("version_id") REFERENCES "public"."draft_versions"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
+CREATE INDEX "draft_view_events_draft_version_viewed_idx" ON "draft_view_events" USING btree ("draft_id","version_id","viewed_at" DESC NULLS LAST);

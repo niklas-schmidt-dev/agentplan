@@ -22,7 +22,7 @@ import {
   getViewCountsForOwner,
 } from "@/lib/analytics/queries";
 import { purgeExpiredViewEvents, recordDraftView } from "@/lib/analytics/views";
-import { createDraftWithFirstVersion } from "@/lib/drafts/service";
+import { addVersionToDraft, createDraftWithFirstVersion } from "@/lib/drafts/service";
 
 const hasDb = Boolean(process.env.DATABASE_URL);
 const html = new TextEncoder().encode("<!doctype html><h1>analytics</h1>");
@@ -114,6 +114,59 @@ describe.skipIf(!hasDb)("view analytics (integration)", () => {
     const entry = top.find((row) => row.draftId === draft.id);
     expect(entry?.views).toBe(3);
     expect(entry?.ownerEmail).toBe(`${ownerId}@example.test`);
+  });
+
+  it("scopes every metric to the rendered version while retaining unattributed history in draft totals", async () => {
+    const ownerId = await createUser();
+    const { draft } = await createDraftWithFirstVersion({
+      ownerId,
+      title: "Version analytics",
+      visibility: "public",
+      bytes: html,
+      source: "browser",
+    });
+    const firstId = draft.currentVersionId!;
+    const { version: second } = await addVersionToDraft({ draft, bytes: html, source: "browser" });
+    await recordDraftView({ draftId: draft.id, viewer: "anonymous", context: anonymousContext });
+    await recordDraftView({
+      draftId: draft.id,
+      versionId: firstId,
+      viewer: "anonymous",
+      context: anonymousContext,
+    });
+    await recordDraftView({
+      draftId: draft.id,
+      versionId: firstId,
+      viewer: "owner",
+      context: anonymousContext,
+    });
+    await recordDraftView({
+      draftId: draft.id,
+      versionId: second.id,
+      viewer: "user",
+      context: {
+        ip: "198.51.100.9",
+        userAgent: "other",
+        referer: "https://example.com",
+        country: "US",
+      },
+    });
+
+    const stats = await getDraftViewStats(draft.id, firstId);
+    expect([stats.total, stats.last24h, stats.last7d, stats.last30d, stats.visitors30d]).toEqual([
+      1, 1, 1, 1, 1,
+    ]);
+    expect(stats.viewerBreakdown30d).toEqual({ owner: 1, user: 0, anonymous: 1 });
+    expect(stats.topReferrers30d).toEqual([{ host: "news.ycombinator.com", views: 1 }]);
+    expect(stats.topCountries30d).toEqual([{ country: "DE", views: 1 }]);
+    expect(stats.byDay.reduce((sum, day) => sum + day.views, 0)).toBe(1);
+    expect(stats.byDay.at(-1)?.visitors).toBe(1);
+    const latest = await getDraftViewStats(draft.id, second.id);
+    expect(latest.total).toBe(1);
+    expect(latest.viewerBreakdown30d).toEqual({ owner: 0, user: 1, anonymous: 0 });
+    expect(latest.topCountries30d).toEqual([{ country: "US", views: 1 }]);
+    expect((await getDraftViewStats(draft.id)).total).toBe(3);
+    expect((await getDraftViewStats(randomUUID(), firstId)).total).toBe(0);
   });
 
   it("purges only events older than the retention window", async () => {

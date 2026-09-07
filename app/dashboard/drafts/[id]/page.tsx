@@ -17,15 +17,26 @@ import { uuidSchema } from "@/lib/validation/api";
 
 export const metadata = { title: "Draft" };
 
-export default async function DraftDetailPage({ params }: { params: Promise<{ id: string }> }) {
+export default async function DraftDetailPage({
+  params,
+  searchParams,
+}: {
+  params: Promise<{ id: string }>;
+  searchParams: Promise<{ version?: string }>;
+}) {
   const user = await requireUser();
   const rawId = uuidSchema.safeParse((await params).id);
   if (!rawId.success) notFound();
   const draft = await getDraftForOwner(rawId.data, user.id);
   if (!draft) notFound();
   const versions = await listVersions(draft.id);
+  const { version: requestedVersion } = await searchParams;
+  const selectedVersion = versions.find(
+    (version) => version.id === (requestedVersion ?? draft.currentVersionId),
+  );
+  if (requestedVersion !== undefined && !selectedVersion) notFound();
   const url = draftUrl(draft.slug);
-  const previewUrl = `/p/${encodeURIComponent(draft.slug)}/content?version=${encodeURIComponent(draft.currentVersionId ?? "")}`;
+  const previewUrl = `/p/${encodeURIComponent(draft.slug)}/content?version=${encodeURIComponent(selectedVersion?.id ?? "")}`;
 
   return (
     <main className="mx-auto flex min-h-dvh w-full max-w-5xl flex-col gap-6 px-6 py-8">
@@ -54,7 +65,9 @@ export default async function DraftDetailPage({ params }: { params: Promise<{ id
           <ShareLink
             key={draft.slug}
             currentUrl={url}
+            selected={requestedVersion ?? "current"}
             versions={versions.map((version) => ({
+              id: version.id,
               number: version.versionNumber,
               url: draftVersionUrl(draft.slug, version.id),
             }))}
@@ -69,13 +82,14 @@ export default async function DraftDetailPage({ params }: { params: Promise<{ id
       </section>
 
       <section
-        aria-label="Current version preview"
+        aria-label="Selected version preview"
         className="flex min-h-96 items-center justify-center rounded-md border border-edge bg-surface"
       >
-        {!draft.currentVersionId ? (
+        {!selectedVersion ? (
           <p className="text-ink-muted">No published version yet.</p>
         ) : draft.kind === "html" ? (
           <iframe
+            key={selectedVersion.id}
             src={previewUrl}
             sandbox="allow-scripts allow-forms allow-modals allow-popups"
             title={`Preview of ${draft.title}`}
@@ -90,7 +104,7 @@ export default async function DraftDetailPage({ params }: { params: Promise<{ id
           />
         ) : (
           <video
-            key={draft.currentVersionId}
+            key={selectedVersion.id}
             src={previewUrl}
             controls
             playsInline
@@ -101,13 +115,18 @@ export default async function DraftDetailPage({ params }: { params: Promise<{ id
       </section>
 
       <Suspense
+        key={selectedVersion?.id ?? "empty"}
         fallback={
           <p role="status" className="font-mono text-xs text-ink-faint">
             Loading analytics…
           </p>
         }
       >
-        <DraftAnalytics draftId={draft.id} />
+        <DraftAnalytics
+          draftId={draft.id}
+          versionId={selectedVersion?.id}
+          versionNumber={selectedVersion?.versionNumber}
+        />
       </Suspense>
 
       <section className="flex flex-col gap-3">
@@ -118,7 +137,8 @@ export default async function DraftDetailPage({ params }: { params: Promise<{ id
           {versions.map((version) => (
             <li
               key={version.id}
-              className="flex flex-wrap items-center gap-x-4 gap-y-1 px-4 py-3 font-mono text-xs"
+              aria-current={version.id === selectedVersion?.id ? "true" : undefined}
+              className={`flex flex-wrap items-center gap-x-4 gap-y-1 px-4 py-3 font-mono text-xs ${version.id === selectedVersion?.id ? "bg-lime/5" : ""}`}
             >
               <span className={version.id === draft.currentVersionId ? "text-lime" : "text-ink"}>
                 v{version.versionNumber}

@@ -1,29 +1,45 @@
 "use client";
 
-import { useState } from "react";
+import { useTransition } from "react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { CopyButton } from "./copy-button";
 
 export function ShareLink({
   currentUrl,
+  selected,
   versions,
 }: {
   currentUrl: string;
-  versions: Array<{ number: number; url: string }>;
+  selected: string;
+  versions: Array<{ id: string; number: number; url: string }>;
 }) {
-  const [selected, setSelected] = useState("current");
-  const url = versions.find((version) => String(version.number) === selected)?.url ?? currentUrl;
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const [pending, startTransition] = useTransition();
+  const url = versions.find((version) => version.id === selected)?.url ?? currentUrl;
   return (
     <div className="flex min-w-0 flex-wrap items-center gap-2">
       <select
-        aria-label="Link version"
+        aria-label="Draft version"
         title={selected === "current" ? "Follows future updates" : "Always opens this version"}
         value={selected}
-        onChange={(event) => setSelected(event.target.value)}
-        className="rounded border border-edge bg-surface px-2 py-1 text-ink-muted"
+        disabled={pending}
+        aria-busy={pending}
+        onChange={(event) => {
+          const params = new URLSearchParams(searchParams);
+          if (event.target.value === "current") params.delete("version");
+          else params.set("version", event.target.value);
+          const query = params.toString();
+          startTransition(() => {
+            router.push(query ? `${pathname}?${query}` : pathname, { scroll: false });
+          });
+        }}
+        className="rounded border border-edge bg-surface px-2 py-1 text-ink-muted disabled:opacity-50"
       >
         <option value="current">Latest version</option>
         {versions.map((version) => (
-          <option key={version.number} value={version.number}>
+          <option key={version.id} value={version.id}>
             Version {version.number} · fixed
           </option>
         ))}

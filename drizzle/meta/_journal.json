@@ -99,6 +99,13 @@
       "when": 1788789519831,
       "tag": "0013_clammy_deathbird",
       "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1788794636491,
+      "tag": "0014_shocking_namorita",
+      "breakpoints": true
     }
   ]
 }

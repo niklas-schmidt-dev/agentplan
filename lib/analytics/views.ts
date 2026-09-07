@@ -82,6 +82,7 @@ export function viewRequestContext(requestHeaders: Headers): ViewRequestContext 
 /** Best-effort: an analytics failure must never fail the user-facing view. */
 export async function recordDraftView(event: {
   draftId: string;
+  versionId?: string;
   viewer: DraftViewerKind;
   context: ViewRequestContext;
 }): Promise<void> {
@@ -90,6 +91,7 @@ export async function recordDraftView(event: {
       .insert(draftViewEvents)
       .values({
         draftId: event.draftId,
+        versionId: event.versionId,
         viewer: event.viewer,
         visitorHash: visitorHash(event.context),
         country: normalizeCountry(event.context.country),

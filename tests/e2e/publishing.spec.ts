@@ -68,7 +68,7 @@ test("browser sign-in, publishing, version restore, and privacy apply to anonymo
     });
     await page.setViewportSize({ width: 375, height: 812 });
     await page.screenshot({ path: ".data/qa/artifacts/draft-controls-mobile.png", fullPage: true });
-    await page.getByLabel("Link version").selectOption("1");
+    await page.getByLabel("Draft version").selectOption(firstUrl!.split("/").at(-1)!);
     await expect(page.getByRole("link", { name: "open ↗", exact: true })).toHaveAttribute(
       "href",
       new URL(firstUrl!, draft.url).href,
@@ -79,7 +79,7 @@ test("browser sign-in, publishing, version restore, and privacy apply to anonymo
     expect(
       await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
     ).toBe(true);
-    await page.getByLabel("Link version").selectOption("current");
+    await page.getByLabel("Draft version").selectOption("current");
     await page.getByRole("button", { name: "private", exact: true }).click();
     await expect.poll(async () => (await anonymous.request.get(draft.url)).status()).toBe(404);
     expect((await anonymous.request.get(new URL(firstUrl!, draft.url).href)).status()).toBe(404);
