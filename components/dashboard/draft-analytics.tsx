@@ -1,4 +1,3 @@
-import { StatTile } from "./stat-tile";
 import { ViewSparkline } from "./view-sparkline";
 import { getDraftViewStats } from "@/lib/analytics/queries";
 
@@ -14,30 +13,32 @@ export async function DraftAnalytics({ draftId }: { draftId: string }) {
     <section className="flex flex-col gap-3" aria-label="View analytics">
       <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
         <h2 className="font-mono text-sm text-ink-muted">analytics</h2>
-        <p className="font-mono text-xs text-ink-faint">
-          your own views are excluded
-          {views.viewerBreakdown30d.owner > 0
-            ? ` (${views.viewerBreakdown30d.owner} in the last 30 days)`
-            : ""}
-        </p>
+        <p className="font-mono text-xs text-ink-faint">excludes your views</p>
       </div>
 
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
-        <StatTile label="views (24h)" value={String(views.last24h)} />
-        <StatTile label="views (7d)" value={String(views.last7d)} />
-        <StatTile label="views (30d)" value={String(views.last30d)} />
-        <StatTile label="views (total)" value={String(views.total)} />
-        <StatTile label="visitors (30d)" value={String(views.visitors30d)} detail="daily uniques" />
-      </div>
+      <dl className="grid grid-cols-2 gap-4 rounded-md border border-edge bg-surface p-4 sm:grid-cols-5">
+        {[
+          ["views · 24h", views.last24h],
+          ["views · 7d", views.last7d],
+          ["views · 30d", views.last30d],
+          ["views · total", views.total],
+          ["daily uniques · 30d", views.visitors30d],
+        ].map(([label, value]) => (
+          <div key={label} className="flex flex-col gap-1">
+            <dt className="font-mono text-xs text-ink-muted">{label}</dt>
+            <dd className="text-2xl font-semibold tabular-nums text-ink">{value}</dd>
+          </div>
+        ))}
+      </dl>
 
       <div className="grid gap-4 rounded-md border border-edge bg-surface p-4 sm:grid-cols-2">
         <div className="flex flex-col gap-2">
-          <h3 className="font-mono text-xs text-ink-muted">daily views · last 30 days</h3>
+          <h3 className="font-mono text-xs text-ink-muted">daily views · 30d</h3>
           <ViewSparkline days={views.byDay} />
         </div>
         <div className="grid grid-cols-2 gap-4 font-mono text-xs">
           <div className="flex flex-col gap-1.5">
-            <h3 className="text-ink-muted">top referrers (30d)</h3>
+            <h3 className="text-ink-muted">referrers · 30d</h3>
             {views.topReferrers30d.length === 0 ? (
               <p className="text-ink-faint">direct / none yet</p>
             ) : (
@@ -52,7 +53,7 @@ export async function DraftAnalytics({ draftId }: { draftId: string }) {
             )}
           </div>
           <div className="flex flex-col gap-1.5">
-            <h3 className="text-ink-muted">top countries (30d)</h3>
+            <h3 className="text-ink-muted">countries · 30d</h3>
             {views.topCountries30d.length === 0 ? (
               <p className="text-ink-faint">none yet</p>
             ) : (

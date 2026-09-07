@@ -62,15 +62,20 @@ test("browser sign-in, publishing, version restore, and privacy apply to anonymo
     await expect(
       viewer.frameLocator("iframe").getByRole("heading", { name: "Revised browser plan" }),
     ).toBeVisible();
+    await page.screenshot({
+      path: ".data/qa/artifacts/draft-controls-desktop.png",
+      fullPage: true,
+    });
     await page.setViewportSize({ width: 375, height: 812 });
+    await page.screenshot({ path: ".data/qa/artifacts/draft-controls-mobile.png", fullPage: true });
     await page.getByLabel("Link version").selectOption("1");
     await expect(page.getByRole("link", { name: "open ↗", exact: true })).toHaveAttribute(
       "href",
       new URL(firstUrl!, draft.url).href,
     );
-    await expect(
-      page.getByText("Anyone with the link can open this draft.", { exact: true }),
-    ).toBeVisible();
+    await page.getByLabel("Access settings", { exact: true }).click();
+    await expect(page.getByText("Anyone with the link", { exact: true })).toBeVisible();
+    await expect(page.getByText("Private or password access replaces this URL.")).toBeVisible();
     expect(
       await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
     ).toBe(true);
@@ -78,6 +83,7 @@ test("browser sign-in, publishing, version restore, and privacy apply to anonymo
     await page.getByRole("button", { name: "private", exact: true }).click();
     await expect.poll(async () => (await anonymous.request.get(draft.url)).status()).toBe(404);
     expect((await anonymous.request.get(new URL(firstUrl!, draft.url).href)).status()).toBe(404);
+    await page.getByLabel("Access settings", { exact: true }).click();
     await page.getByRole("button", { name: "public", exact: true }).click();
     const publicUrl = await page
       .getByRole("link", { name: "open ↗", exact: true })

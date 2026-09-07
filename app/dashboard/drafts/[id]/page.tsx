@@ -11,7 +11,7 @@ import { NewVersionForm } from "@/components/dashboard/upload-form";
 import { VisibilityControls } from "@/components/dashboard/visibility-controls";
 import { getDraftForOwner, listVersions } from "@/db/queries/drafts";
 import { isAdmin, requireUser } from "@/lib/auth/session";
-import { formatBytes, formatRelativeTime, shortHash } from "@/lib/format";
+import { formatBytes, formatRelativeTime } from "@/lib/format";
 import { draftUrl, draftVersionPath, draftVersionUrl } from "@/lib/urls";
 import { uuidSchema } from "@/lib/validation/api";
 
@@ -40,7 +40,7 @@ export default async function DraftDetailPage({ params }: { params: Promise<{ id
             defaultValue={draft.title}
             maxLength={200}
             aria-label="Draft title"
-            className="min-w-64 flex-1 rounded border border-transparent bg-transparent px-2 py-1 text-2xl font-semibold text-ink transition-colors hover:border-edge focus:border-edge"
+            className="min-w-0 flex-1 rounded border border-transparent bg-transparent px-2 py-1 text-2xl font-semibold text-ink transition-colors hover:border-edge focus:border-edge"
           />
           <button
             type="submit"
@@ -50,7 +50,7 @@ export default async function DraftDetailPage({ params }: { params: Promise<{ id
           </button>
         </form>
 
-        <div className="flex flex-wrap items-center gap-3 font-mono text-xs">
+        <div className="flex flex-wrap items-center justify-between gap-3 font-mono text-xs">
           <ShareLink
             key={draft.slug}
             currentUrl={url}
@@ -65,11 +65,6 @@ export default async function DraftDetailPage({ params }: { params: Promise<{ id
             visibility={draft.visibility}
             hasPassword={draft.passwordHash !== null}
           />
-
-          <form action={deleteDraftAction}>
-            <input type="hidden" name="draftId" value={draft.id} />
-            <DangerButton label="delete draft" confirmLabel="confirm delete" />
-          </form>
         </div>
       </section>
 
@@ -119,10 +114,6 @@ export default async function DraftDetailPage({ params }: { params: Promise<{ id
         <NewVersionForm draftId={draft.id} kind={draft.kind} />
 
         <h2 className="font-mono text-sm text-ink-muted">version history</h2>
-        <p className="text-sm text-ink-muted">
-          Each version has its own link. Viewing or sharing it keeps the current version unchanged.
-          Saved versions are kept when you reach a limit.
-        </p>
         <ul className="flex flex-col divide-y divide-edge rounded-md border border-edge bg-surface">
           {versions.map((version) => (
             <li
@@ -138,13 +129,23 @@ export default async function DraftDetailPage({ params }: { params: Promise<{ id
                 {formatBytes(version.totalSizeBytes ?? version.sizeBytes)}
                 {version.isBundle ? " · HTML + media" : ""}
               </span>
-              <span className="text-ink-faint">
-                {version.originalFilename ?? version.contentType}
-              </span>
-              <code title={version.contentSha256} className="text-ink-muted">
-                sha256:{shortHash(version.contentSha256)}
-              </code>
-              <span className="text-ink-faint">{version.source}</span>
+              <details className="min-w-0 text-ink-faint">
+                <summary className="cursor-pointer hover:text-ink-muted">file details</summary>
+                <dl className="mt-2 flex flex-col gap-1 break-all">
+                  <div>
+                    <dt className="sr-only">Filename</dt>
+                    <dd>{version.originalFilename ?? version.contentType}</dd>
+                  </div>
+                  <div>
+                    <dt className="sr-only">Source</dt>
+                    <dd>{version.source}</dd>
+                  </div>
+                  <div>
+                    <dt>SHA-256</dt>
+                    <dd>{version.contentSha256}</dd>
+                  </div>
+                </dl>
+              </details>
               <div className="ml-auto flex flex-wrap items-start gap-2">
                 <a
                   href={draftVersionPath(draft.slug, version.id)}
@@ -166,6 +167,13 @@ export default async function DraftDetailPage({ params }: { params: Promise<{ id
           ))}
         </ul>
       </section>
+
+      <footer className="flex justify-end border-t border-edge pt-4">
+        <form action={deleteDraftAction}>
+          <input type="hidden" name="draftId" value={draft.id} />
+          <DangerButton label="delete draft" confirmLabel="confirm delete" />
+        </form>
+      </footer>
     </main>
   );
 }
