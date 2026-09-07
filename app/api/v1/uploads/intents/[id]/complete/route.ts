@@ -26,7 +26,7 @@ export async function POST(req: Request, { params }: Params): Promise<Response> 
         expiresAt: result.intent.expiresAt.toISOString(),
       },
       draft: serializeDraft(result.draft, result.version.versionNumber),
-      version: serializeVersion(result.version),
+      version: serializeVersion(result.version, result.draft.slug),
     });
   } catch (error) {
     return uploadErrorResponse(error);

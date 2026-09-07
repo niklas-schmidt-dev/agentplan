@@ -3,7 +3,7 @@ import type { DraftKind, UserPlan } from "@/db/schema";
 /** null = no limit. All values apply to the "free" plan; "unlimited" gets null everywhere. */
 export type EffectiveLimits = {
   maxDrafts: number | null;
-  /** Retention, not a hard cap: uploading past it prunes the oldest versions. */
+  /** Hard cap: existing versions stay available when uploads reach the limit. */
   keepVersionsByKind: Record<DraftKind, number | null>;
   maxStorageBytes: number | null;
   maxActiveTokens: number | null;

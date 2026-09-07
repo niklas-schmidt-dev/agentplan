@@ -2,7 +2,15 @@ import { submitDraftPassword } from "@/app/p/[slug]/actions";
 
 export type PasswordFormError = "wrong-password" | "rate-limited";
 
-export function DraftPasswordForm({ slug, error }: { slug: string; error?: PasswordFormError }) {
+export function DraftPasswordForm({
+  slug,
+  versionId,
+  error,
+}: {
+  slug: string;
+  versionId?: string;
+  error?: PasswordFormError;
+}) {
   return (
     <main className="flex min-h-dvh flex-col items-center justify-center gap-6 px-6">
       <div className="flex w-full max-w-sm flex-col gap-4 rounded-lg border border-edge bg-surface p-6">
@@ -15,6 +23,7 @@ export function DraftPasswordForm({ slug, error }: { slug: string; error?: Passw
         </div>
         <form action={submitDraftPassword} className="flex flex-col gap-3">
           <input type="hidden" name="slug" value={slug} />
+          {versionId ? <input type="hidden" name="versionId" value={versionId} /> : null}
           <input
             type="password"
             name="password"

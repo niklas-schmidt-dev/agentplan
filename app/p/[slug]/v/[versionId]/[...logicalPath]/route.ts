@@ -1,3 +1,4 @@
+import { uuidSchema } from "@/lib/validation/api";
 import { getDraftBySlug, getVersionAsset, getVersionById } from "@/db/queries/drafts";
 import { authenticateSession } from "@/lib/api/auth";
 import { readAccessCookie } from "@/lib/drafts/access";
@@ -44,6 +45,7 @@ type Params = {
 async function resolveBundleFile(req: Request, params: Awaited<Params["params"]>) {
   const draft = await getDraftBySlug(params.slug);
   if (!draft || draft.kind !== "html") return null;
+  if (!uuidSchema.safeParse(params.versionId).success) return null;
   const version = await getVersionById(draft.id, params.versionId);
   if (!version?.isBundle) return null;
   const segments = params.logicalPath;

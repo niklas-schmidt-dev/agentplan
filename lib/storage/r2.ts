@@ -137,8 +137,9 @@ export class R2Storage implements ObjectStorage {
   }
 
   async copy(sourceKey: string, destinationKey: string, contentType: string): Promise<void> {
+    const client = this.getClient();
     const copySource = `${this.bucket}/${sourceKey.split("/").map(encodeURIComponent).join("/")}`;
-    await this.getClient().send(
+    await client.send(
       new CopyObjectCommand({
         Bucket: this.bucket,
         Key: destinationKey,

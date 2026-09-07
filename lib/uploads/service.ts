@@ -15,7 +15,6 @@ import {
 import { recordAuditEvent } from "@/lib/audit/events";
 import { hashPassword } from "@/lib/drafts/password";
 import { generateSlug } from "@/lib/drafts/slug";
-import { listVersionStorageKeys } from "@/lib/drafts/version-storage";
 import {
   DraftNotFoundError,
   PasswordRequiredError,
@@ -23,7 +22,6 @@ import {
   type UploadSource,
 } from "@/lib/drafts/service";
 import { lockAndAssertUploadQuota } from "@/lib/limits/enforce";
-import { retentionForKind } from "@/lib/limits/plans";
 import {
   getStorage,
   resolveStorageDriver,
@@ -148,6 +146,7 @@ export async function createUploadIntent(input: {
         userId: input.ownerId,
         sizeBytes: input.sizeBytes,
         newDraft: input.target.type === "new",
+        targetDraftId: input.target.type === "draft" ? input.target.draftId : null,
       },
       tx,
     );
@@ -366,11 +365,12 @@ export async function completeUploadIntent(
         .where(and(eq(users.id, intent.ownerId), isNull(users.blockedAt)));
       if (!owner) throw new DraftNotFoundError();
 
-      const limits = await lockAndAssertUploadQuota(
+      await lockAndAssertUploadQuota(
         {
           userId: intent.ownerId,
           sizeBytes: validation.sizeBytes,
           newDraft: intent.targetDraftId === null,
+          targetDraftId: intent.targetDraftId,
           excludeIntentId: intent.id,
         },
         tx,
@@ -441,31 +441,6 @@ export async function completeUploadIntent(
         .returning();
       if (!updatedDraft) throw new DraftNotFoundError();
 
-      const keepVersions = retentionForKind(limits, intent.kind);
-      const pruned =
-        keepVersions === null
-          ? []
-          : await tx
-              .select({ id: draftVersions.id })
-              .from(draftVersions)
-              .where(eq(draftVersions.draftId, draft.id))
-              .orderBy(desc(draftVersions.versionNumber))
-              .offset(keepVersions);
-      const prunedKeys = await listVersionStorageKeys(
-        pruned.map((stale) => stale.id),
-        tx,
-      );
-      for (const storageKey of prunedKeys) {
-        await queueStorageDeletion({ storageKey, reason: "version_retention" }, tx);
-      }
-      if (pruned.length) {
-        await tx.delete(draftVersions).where(
-          inArray(
-            draftVersions.id,
-            pruned.map((row) => row.id),
-          ),
-        );
-      }
       await queueStorageDeletion(
         {
           storageKey: stagingKey,
@@ -485,14 +460,11 @@ export async function completeUploadIntent(
         completed,
         draft: updatedDraft,
         version,
-        pruned,
-        prunedKeys,
       };
     });
 
     if (result.state === "already_completed") return completedResult(result.completed);
     await tryDeleteStorageKey(stagingKey);
-    for (const storageKey of result.prunedKeys) await tryDeleteStorageKey(storageKey);
     await recordAuditEvent({
       type: intent.targetDraftId ? "draft.version_created" : "draft.created",
       userId: intent.ownerId,

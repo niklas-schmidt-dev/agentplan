@@ -28,3 +28,13 @@ export function appUrl(): string {
 export function draftUrl(slug: string): string {
   return `${appUrl()}/p/${slug}`;
 }
+
+/** The UUID pins the bytes; omitting it follows the current version. */
+export function draftVersionPath(slug: string, versionId?: string): string {
+  const base = `/p/${encodeURIComponent(slug)}`;
+  return versionId ? `${base}/v/${encodeURIComponent(versionId)}` : base;
+}
+
+export function draftVersionUrl(slug: string, versionId: string): string {
+  return `${appUrl()}${draftVersionPath(slug, versionId)}`;
+}

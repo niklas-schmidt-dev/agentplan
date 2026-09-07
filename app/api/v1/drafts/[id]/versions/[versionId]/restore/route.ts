@@ -55,7 +55,7 @@ export async function POST(req: Request, { params }: Params): Promise<Response> 
     return Response.json(
       {
         draft: serializeDraft(updatedDraft, restored.versionNumber),
-        version: serializeVersion(restored),
+        version: serializeVersion(restored, updatedDraft.slug),
       },
       { status: 201 },
     );

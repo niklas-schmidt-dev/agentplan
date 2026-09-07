@@ -1,9 +1,6 @@
 import { notFound } from "next/navigation";
-import {
-  deleteDraftAction,
-  renameDraftAction,
-  restoreVersionAction,
-} from "@/app/dashboard/actions";
+import { deleteDraftAction, renameDraftAction } from "@/app/dashboard/actions";
+import { RestoreVersionForm } from "@/components/dashboard/restore-version-form";
 import { CopyButton } from "@/components/dashboard/copy-button";
 import { DangerButton } from "@/components/dashboard/danger-button";
 import { DashboardHeader } from "@/components/dashboard/header";
@@ -15,7 +12,7 @@ import { getDraftForOwner, listVersions } from "@/db/queries/drafts";
 import { getDraftViewStats } from "@/lib/analytics/queries";
 import { isAdmin, requireUser } from "@/lib/auth/session";
 import { formatBytes, formatRelativeTime, shortHash } from "@/lib/format";
-import { draftUrl } from "@/lib/urls";
+import { draftUrl, draftVersionPath, draftVersionUrl } from "@/lib/urls";
 import { uuidSchema } from "@/lib/validation/api";
 
 export const metadata = { title: "Draft" };
@@ -195,6 +192,10 @@ export default async function DraftDetailPage({ params }: { params: Promise<{ id
         <NewVersionForm draftId={draft.id} kind={draft.kind} />
 
         <h2 className="font-mono text-sm text-ink-muted">version history</h2>
+        <p className="text-sm text-ink-muted">
+          Each version has its own link. Viewing or sharing it keeps the current version unchanged.
+          Saved versions are kept when you reach a limit.
+        </p>
         <ul className="flex flex-col divide-y divide-edge rounded-md border border-edge bg-surface">
           {versions.map((version) => (
             <li
@@ -217,18 +218,23 @@ export default async function DraftDetailPage({ params }: { params: Promise<{ id
                 sha256:{shortHash(version.contentSha256)}
               </code>
               <span className="text-ink-faint">{version.source}</span>
-              {version.id !== draft.currentVersionId ? (
-                <form action={restoreVersionAction} className="ml-auto">
-                  <input type="hidden" name="draftId" value={draft.id} />
-                  <input type="hidden" name="versionId" value={version.id} />
-                  <button
-                    type="submit"
-                    className="rounded border border-edge px-2 py-1 text-ink-muted transition-colors hover:border-lime hover:text-lime"
-                  >
-                    restore
-                  </button>
-                </form>
-              ) : null}
+              <div className="ml-auto flex flex-wrap items-start gap-2">
+                <a
+                  href={draftVersionPath(draft.slug, version.id)}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="rounded border border-edge px-2 py-1 text-ink-muted transition-colors hover:border-lime hover:text-lime"
+                >
+                  view ↗
+                </a>
+                <CopyButton
+                  value={draftVersionUrl(draft.slug, version.id)}
+                  label="copy version link"
+                />
+                {version.id !== draft.currentVersionId ? (
+                  <RestoreVersionForm draftId={draft.id} versionId={version.id} />
+                ) : null}
+              </div>
             </li>
           ))}
         </ul>

@@ -221,6 +221,20 @@ POST   /api/v1/tokens                               (session only)
 DELETE /api/v1/tokens/:id                           (session only)
 ```
 
+The stable viewer link `/p/<slug>` follows the current version. Each saved version
+also has a shareable viewer link at `/p/<slug>/v/<version-UUID>`, returned as
+`version.url` in version-list and upload responses. Removing `/v/<version-UUID>`
+returns to the current version. The dashboard offers **view**, **copy version
+link**, and **restore as current** for past versions. Restore creates another
+version; it does not change existing version links.
+
+Version links use the draft's current visibility, password, and moderation rules.
+Changing a public draft to protected visibility rotates its slug and invalidates
+previous links, including version links. Saved versions are never automatically
+pruned to make room for an upload. At storage or version limits, new uploads and
+restores are rejected while existing versions remain available. Versions already
+removed by the previous retention policy cannot be recovered by this change.
+
 Errors have a stable shape agents can match on:
 
 ```json
@@ -237,8 +251,8 @@ Free-plan limits (all server-enforced; tunable via `AP_*` env vars, defaults in
 | Upload size                    | Available storage quota; no per-file size cap |
 | HTML bundle                    | Available storage quota; up to 50 assets      |
 | Drafts per user                | 100                                           |
-| Versions kept per draft        | HTML 100; image 20; video 2                   |
-| Bundled HTML versions          | 2                                             |
+| Versions per draft             | HTML 100; image 20; video 2                   |
+| Bundled HTML versions          | Included in the HTML version limit            |
 | Total storage per user         | 300 MiB                                       |
 | Active API tokens per user     | 25                                            |
 | Uploads per user               | 30 / 10 min and 300 / day                     |

@@ -5,16 +5,24 @@ import { redirect } from "next/navigation";
 import { getDraftForOwner, getVersionById } from "@/db/queries/drafts";
 import { requireUser } from "@/lib/auth/session";
 import {
+  DraftWriteConflictError,
   restoreVersion,
   setDraftPassword,
   setDraftTitle,
   setDraftVisibility,
   softDeleteDraft,
 } from "@/lib/drafts/service";
+import { restoreBundleVersion } from "@/lib/uploads/bundles";
+import { UploadIntentConflictError } from "@/lib/uploads/service";
 import { QuotaExceededError, RateLimitedError } from "@/lib/limits/errors";
 import { consumeUploadRateLimit } from "@/lib/limits/enforce";
 import { createToken, revokeToken } from "@/lib/tokens/service";
-import { createTokenSchema, draftPasswordSchema, uuidSchema, visibilitySchema } from "@/lib/validation/api";
+import {
+  createTokenSchema,
+  draftPasswordSchema,
+  uuidSchema,
+  visibilitySchema,
+} from "@/lib/validation/api";
 import { normalizeTitle } from "@/lib/validation/upload";
 import type { Draft } from "@/db/schema";
 
@@ -87,35 +95,43 @@ export async function deleteDraftAction(formData: FormData): Promise<void> {
   redirect("/dashboard");
 }
 
-export async function restoreVersionAction(formData: FormData): Promise<void> {
+export type RestoreVersionState = { error: string } | null;
+
+export async function restoreVersionAction(
+  _prev: RestoreVersionState,
+  formData: FormData,
+): Promise<RestoreVersionState> {
   const { draft } = await requireOwnedDraft(formData.get("draftId"));
   const versionId = uuidSchema.safeParse(formData.get("versionId"));
-  if (versionId.success) {
-    const version = await getVersionById(draft.id, versionId.data);
-    if (version) {
-      try {
-        await consumeUploadRateLimit(draft.ownerId);
-        await restoreVersion({
-          draft,
-          version,
-          source: "browser",
-          rateLimitConsumed: true,
-        });
-      } catch (error) {
-        // No error channel on this plain form action; a limit rejection just
-        // leaves the page unchanged instead of surfacing a 500.
-        if (!limitErrorMessage(error)) throw error;
-        console.warn("restoreVersionAction rate/quota limited", error);
-      }
+  const version = versionId.success ? await getVersionById(draft.id, versionId.data) : null;
+  if (!version) return { error: "This version is no longer available." };
+  try {
+    await consumeUploadRateLimit(draft.ownerId);
+    if (version.isBundle) {
+      await restoreBundleVersion({
+        ownerId: draft.ownerId,
+        draftId: draft.id,
+        sourceVersionId: version.id,
+        source: "browser",
+      });
+    } else {
+      await restoreVersion({ draft, version, source: "browser", rateLimitConsumed: true });
     }
+  } catch (error) {
+    const limited = limitErrorMessage(error);
+    if (limited) return { error: limited };
+    if (error instanceof DraftWriteConflictError || error instanceof UploadIntentConflictError) {
+      return { error: error.message };
+    }
+    console.error("restoreVersionAction failed", error);
+    return { error: "Could not restore this version. Please try again." };
   }
   revalidatePath(`/dashboard/drafts/${draft.id}`);
+  revalidatePath("/dashboard");
+  return null;
 }
 
-export type CreateTokenState =
-  | { secret: string; name: string }
-  | { error: string }
-  | null;
+export type CreateTokenState = { secret: string; name: string } | { error: string } | null;
 
 export async function createTokenAction(
   _prev: CreateTokenState,

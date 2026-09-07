@@ -16,7 +16,12 @@ import { draftVersions, storageDeletionJobs, uploadIntents, users } from "@/db/s
 import { removeDraftAsAdmin } from "@/lib/admin/service";
 import { createDraftWithFirstVersion } from "@/lib/drafts/service";
 import { getStorage } from "@/lib/storage";
-import { completeBundleUpload, createBundleUpload, getBundleForOwner } from "@/lib/uploads/bundles";
+import {
+  completeBundleUpload,
+  createBundleUpload,
+  getBundleForOwner,
+  restoreBundleVersion,
+} from "@/lib/uploads/bundles";
 import { eq } from "drizzle-orm";
 
 const hasDb = Boolean(process.env.DATABASE_URL);
@@ -79,7 +84,7 @@ describe.skipIf(!hasDb)("bundle upload lifecycle (integration)", () => {
     return completeBundleUpload(created.intent.id, ownerId);
   }
 
-  it("serves pinned HTML and assets, redirects /content, and retains two bundle versions", async () => {
+  it("serves pinned HTML and assets, redirects /content, and preserves bundle versions at storage limits", async () => {
     const entryBytes = new TextEncoder().encode(
       '<!doctype html><img src="images/hero.png" alt="hero">',
     ).byteLength;
@@ -125,15 +130,52 @@ describe.skipIf(!hasDb)("bundle upload lifecycle (integration)", () => {
     expect(asset.headers.get("content-type")).toBe("image/png");
 
     await uploadBundle({ type: "draft", draftId: first.draft.id });
-    const third = await uploadBundle({ type: "draft", draftId: first.draft.id });
+    await expect(uploadBundle({ type: "draft", draftId: first.draft.id })).rejects.toThrow(
+      /Storage quota reached.*preserved/,
+    );
     const versions = await getDb()
       .select()
       .from(draftVersions)
       .where(eq(draftVersions.draftId, first.draft.id));
     expect(versions.filter((version) => version.isBundle)).toHaveLength(2);
-    expect(versions.some((version) => version.id === first.version.id)).toBe(false);
-    expect(third.version.versionNumber).toBe(3);
+    expect(versions.some((version) => version.id === first.version.id)).toBe(true);
+    expect(await getStorage().get(first.version.storageKey)).not.toBeNull();
     vi.unstubAllEnvs();
+  });
+
+  it("keeps three bundles and restores all assets into a fourth version", async () => {
+    const first = await uploadBundle({ type: "new", title: "History", visibility: "public" });
+    await uploadBundle({ type: "draft", draftId: first.draft.id });
+    await uploadBundle({ type: "draft", draftId: first.draft.id });
+    const restored = await restoreBundleVersion({
+      ownerId,
+      draftId: first.draft.id,
+      sourceVersionId: first.version.id,
+      source: "browser",
+    });
+    expect(restored.version.versionNumber).toBe(4);
+    expect(restored.version.isBundle).toBe(true);
+    for (const version of [first.version, restored.version]) {
+      const asset = await getVersionedContent(
+        new Request(
+          `http://localhost/p/${first.draft.slug}/v/${version.id}/nested/images/hero.png`,
+        ),
+        {
+          params: Promise.resolve({
+            slug: first.draft.slug,
+            versionId: version.id,
+            logicalPath: ["nested", "images", "hero.png"],
+          }),
+        },
+      );
+      expect(asset.status).toBe(200);
+      expect(new Uint8Array(await asset.arrayBuffer())).toEqual(png);
+    }
+    const versions = await getDb()
+      .select()
+      .from(draftVersions)
+      .where(eq(draftVersions.draftId, first.draft.id));
+    expect(versions).toHaveLength(4);
   });
 
   it("moderation cancels a pending bundle and inventories its immutable keys", async () => {

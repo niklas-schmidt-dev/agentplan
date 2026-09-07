@@ -62,7 +62,7 @@ export async function POST(req: Request, { params }: Params): Promise<Response> 
     return Response.json(
       {
         draft: serializeDraft(updatedDraft, version.versionNumber),
-        version: serializeVersion(version),
+        version: serializeVersion(version, updatedDraft.slug),
       },
       { status: 201 },
     );
@@ -91,5 +91,7 @@ export async function GET(req: Request, { params }: Params): Promise<Response> {
   if (!draft) return notFound();
 
   const versions = await listVersions(draft.id);
-  return Response.json({ versions: versions.map(serializeVersion) });
+  return Response.json({
+    versions: versions.map((version) => serializeVersion(version, draft.slug)),
+  });
 }

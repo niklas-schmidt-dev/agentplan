@@ -1,5 +1,5 @@
 import type { ApiToken, Draft, DraftVersion } from "@/db/schema";
-import { draftUrl } from "@/lib/urls";
+import { draftUrl, draftVersionUrl } from "@/lib/urls";
 
 export function serializeDraft(draft: Draft, versionNumber: number | null) {
   return {
@@ -15,9 +15,10 @@ export function serializeDraft(draft: Draft, versionNumber: number | null) {
   };
 }
 
-export function serializeVersion(version: DraftVersion) {
+export function serializeVersion(version: DraftVersion, slug: string) {
   return {
     id: version.id,
+    url: draftVersionUrl(slug, version.id),
     version: version.versionNumber,
     contentSha256: version.contentSha256,
     sizeBytes: version.sizeBytes,

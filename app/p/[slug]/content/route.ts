@@ -1,3 +1,4 @@
+import { uuidSchema } from "@/lib/validation/api";
 import { getDraftBySlug, getVersionById } from "@/db/queries/drafts";
 import { authenticateSession } from "@/lib/api/auth";
 import { readAccessCookie } from "@/lib/drafts/access";
@@ -62,7 +63,11 @@ async function resolveContent(
   if (resolveDraftView(draft, { userId, accessToken }).state !== "granted") {
     return notFoundResponse();
   }
-  const version = await getVersionById(draft.id, draft.currentVersionId);
+  const requestedVersion = new URL(req.url).searchParams.get("version");
+  if (requestedVersion !== null && !uuidSchema.safeParse(requestedVersion).success) {
+    return notFoundResponse();
+  }
+  const version = await getVersionById(draft.id, requestedVersion ?? draft.currentVersionId);
   if (!version) return notFoundResponse();
   return { draft, version, sessionId, userId };
 }

@@ -116,73 +116,51 @@ export async function listUsersWithUsage({
   if (allUsers.length === 0) return [];
   const pageUserIds = allUsers.map((user) => user.id);
 
-  const [draftAgg, storageAgg, reservedAgg, reclaimAgg, tokenAgg, blockRows, viewsByOwner] =
-    await Promise.all([
-      db
-        .select({ ownerId: drafts.ownerId, drafts: count() })
-        .from(drafts)
-        .where(and(liveDraftFilter, inArray(drafts.ownerId, pageUserIds)))
-        .groupBy(drafts.ownerId),
-      db
-        .select({
-          ownerId: drafts.ownerId,
-          bytes: sql<string>`sum(coalesce(${draftVersions.totalSizeBytes}, ${draftVersions.sizeBytes}))`,
-        })
-        .from(draftVersions)
-        .innerJoin(drafts, eq(draftVersions.draftId, drafts.id))
-        .where(and(liveDraftFilter, inArray(drafts.ownerId, pageUserIds)))
-        .groupBy(drafts.ownerId),
-      db
-        .select({ ownerId: uploadIntents.ownerId, bytes: sum(uploadIntents.expectedBytes) })
-        .from(uploadIntents)
-        .where(
-          and(
-            inArray(uploadIntents.ownerId, pageUserIds),
-            eq(uploadIntents.status, "pending"),
-            gt(uploadIntents.expiresAt, sql`now()`),
-          ),
-        )
-        .groupBy(uploadIntents.ownerId),
-      db
-        .select({
-          ownerId: uploadIntents.ownerId,
-          bytes: sum(uploadIntentReclaims.sizeBytes),
-        })
-        .from(uploadIntentReclaims)
-        .innerJoin(uploadIntents, eq(uploadIntentReclaims.intentId, uploadIntents.id))
-        .where(
-          and(
-            inArray(uploadIntents.ownerId, pageUserIds),
-            eq(uploadIntents.status, "pending"),
-            gt(uploadIntents.expiresAt, sql`now()`),
-          ),
-        )
-        .groupBy(uploadIntents.ownerId),
-      db
-        .select({ userId: apiTokens.userId, tokens: count() })
-        .from(apiTokens)
-        .where(and(activeTokenFilter, inArray(apiTokens.userId, pageUserIds)))
-        .groupBy(apiTokens.userId),
-      db
-        .select({
-          userId: userBlocks.userId,
-          id: userBlocks.id,
-          reason: userBlocks.reason,
-        })
-        .from(userBlocks)
-        .where(inArray(userBlocks.userId, pageUserIds)),
-      getViewCountsByOwner(pageUserIds),
-    ]);
+  const [draftAgg, storageAgg, reservedAgg, tokenAgg, blockRows, viewsByOwner] = await Promise.all([
+    db
+      .select({ ownerId: drafts.ownerId, drafts: count() })
+      .from(drafts)
+      .where(and(liveDraftFilter, inArray(drafts.ownerId, pageUserIds)))
+      .groupBy(drafts.ownerId),
+    db
+      .select({
+        ownerId: drafts.ownerId,
+        bytes: sql<string>`sum(coalesce(${draftVersions.totalSizeBytes}, ${draftVersions.sizeBytes}))`,
+      })
+      .from(draftVersions)
+      .innerJoin(drafts, eq(draftVersions.draftId, drafts.id))
+      .where(and(liveDraftFilter, inArray(drafts.ownerId, pageUserIds)))
+      .groupBy(drafts.ownerId),
+    db
+      .select({ ownerId: uploadIntents.ownerId, bytes: sum(uploadIntents.expectedBytes) })
+      .from(uploadIntents)
+      .where(
+        and(
+          inArray(uploadIntents.ownerId, pageUserIds),
+          eq(uploadIntents.status, "pending"),
+          gt(uploadIntents.expiresAt, sql`now()`),
+        ),
+      )
+      .groupBy(uploadIntents.ownerId),
+    db
+      .select({ userId: apiTokens.userId, tokens: count() })
+      .from(apiTokens)
+      .where(and(activeTokenFilter, inArray(apiTokens.userId, pageUserIds)))
+      .groupBy(apiTokens.userId),
+    db
+      .select({
+        userId: userBlocks.userId,
+        id: userBlocks.id,
+        reason: userBlocks.reason,
+      })
+      .from(userBlocks)
+      .where(inArray(userBlocks.userId, pageUserIds)),
+    getViewCountsByOwner(pageUserIds),
+  ]);
 
   const draftsByOwner = new Map(draftAgg.map((row) => [row.ownerId, row.drafts]));
   const bytesByOwner = new Map(storageAgg.map((row) => [row.ownerId, Number(row.bytes ?? 0)]));
-  const reclaimedByOwner = new Map(reclaimAgg.map((row) => [row.ownerId, Number(row.bytes ?? 0)]));
-  const reservedByOwner = new Map(
-    reservedAgg.map((row) => [
-      row.ownerId,
-      Math.max(0, Number(row.bytes ?? 0) - (reclaimedByOwner.get(row.ownerId) ?? 0)),
-    ]),
-  );
+  const reservedByOwner = new Map(reservedAgg.map((row) => [row.ownerId, Number(row.bytes ?? 0)]));
   const tokensByUser = new Map(tokenAgg.map((row) => [row.userId, row.tokens]));
   const blocksByUser = new Map(blockRows.map((row) => [row.userId, row]));
 
