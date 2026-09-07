@@ -1,3 +1,4 @@
+import { withUploadDiagnostics } from "@/lib/uploads/diagnostics";
 import { getBundleForOwner } from "@/lib/uploads/bundles";
 import { apiError, notFound } from "@/lib/api/responses";
 import { getStorage, resolveStorageDriver } from "@/lib/storage";
@@ -17,7 +18,7 @@ function isAlreadyExists(error: unknown): boolean {
   );
 }
 
-export async function PUT(req: Request, { params }: Params): Promise<Response> {
+async function handlePUT(req: Request, { params }: Params): Promise<Response> {
   if (process.env.NODE_ENV === "production" || resolveStorageDriver() !== "fs") {
     return notFound();
   }
@@ -65,3 +66,8 @@ export async function PUT(req: Request, { params }: Params): Promise<Response> {
   }
   return new Response(null, { status: 204 });
 }
+
+export const PUT = withUploadDiagnostics(
+  "/api/v1/uploads/bundles/[id]/files/[fileId]/body",
+  handlePUT,
+);

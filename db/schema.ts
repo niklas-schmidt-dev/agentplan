@@ -317,23 +317,6 @@ export const uploadIntentFiles = pgTable(
   ],
 );
 
-export const uploadIntentReclaims = pgTable(
-  "upload_intent_reclaims",
-  {
-    intentId: uuid("intent_id")
-      .notNull()
-      .references(() => uploadIntents.id, { onDelete: "cascade" }),
-    versionId: uuid("version_id")
-      .notNull()
-      .references(() => draftVersions.id, { onDelete: "restrict" }),
-    sizeBytes: bigint("size_bytes", { mode: "number" }).notNull(),
-  },
-  (table) => [
-    primaryKey({ columns: [table.intentId, table.versionId] }),
-    uniqueIndex("upload_intent_reclaims_version_idx").on(table.versionId),
-  ],
-);
-
 export const storageDeletionJobs = pgTable(
   "storage_deletion_jobs",
   {

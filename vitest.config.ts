@@ -1,10 +1,18 @@
 import path from "node:path";
 import { defineConfig } from "vitest/config";
 
+if (process.env.REQUIRE_DATABASE_TESTS === "1" && !process.env.TEST_DATABASE_URL) {
+  throw new Error("Full verification requires TEST_DATABASE_URL. Run npm run check:full.");
+}
+
 export default defineConfig({
   test: {
     environment: "node",
-    include: ["tests/unit/**/*.test.ts", "tests/security/**/*.test.ts", "tests/integration/**/*.test.ts"],
+    include: [
+      "tests/unit/**/*.test.ts",
+      "tests/security/**/*.test.ts",
+      "tests/integration/**/*.test.ts",
+    ],
     // Integration files share one database and some (admin, signup-hook)
     // toggle global settings like signups_enabled; parallel files would race.
     fileParallelism: false,

@@ -44,6 +44,11 @@ function collect(result, label) {
       line.includes("not-for-production") ||
       line.includes("development-only") ||
       line.includes("postgres://postgres:postgres@localhost") ||
+      // Older local agent checkpoints contain this source template before its
+      // development-only annotation. It contains placeholders, not credentials.
+      line.includes(
+        "databaseUrl: `postgres://postgres:${password}@127.0.0.1:${dbPort}/agentplan_qa`",
+      ) ||
       // Historical versions of CI embedded their detector regex in the YAML.
       (line.includes("R2_SECRET_ACCESS_KEY=.+") && line.includes("PRIVATE KEY"))
     ) {

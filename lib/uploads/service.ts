@@ -1,12 +1,11 @@
 import { randomUUID } from "node:crypto";
 import { and, desc, eq, gt, inArray, isNull, max, sql } from "drizzle-orm";
-import { uploadSpecFor, type UploadKind, type UploadSpec } from "@agentplan/upload-contract";
+import { uploadSpecFor, type UploadSpec } from "@agentplan/upload-contract";
 import { getDb, type Database } from "@/db/client";
 import {
   draftVersions,
   drafts,
   uploadIntentFiles,
-  uploadIntentReclaims,
   uploadIntents,
   users,
   type UploadIntent,
@@ -284,7 +283,6 @@ export async function failUploadIntent(intent: UploadIntent, failureCode: string
       .where(and(eq(uploadIntents.id, intent.id), eq(uploadIntents.status, "pending")))
       .returning({ id: uploadIntents.id });
     if (!failed) return false;
-    await tx.delete(uploadIntentReclaims).where(eq(uploadIntentReclaims.intentId, intent.id));
     for (const key of cleanup) {
       await queueStorageDeletion(
         {
@@ -505,7 +503,6 @@ export async function cancelUploadIntent(ownerId: string, intentId: string): Pro
       .where(and(eq(uploadIntents.id, intent.id), eq(uploadIntents.status, "pending")))
       .returning({ id: uploadIntents.id });
     if (!cancelled) return false;
-    await tx.delete(uploadIntentReclaims).where(eq(uploadIntentReclaims.intentId, intent.id));
     for (const key of cleanup) {
       await queueStorageDeletion(
         {
@@ -539,8 +536,4 @@ export async function purgeExpiredUploadIntents(): Promise<number> {
       ),
     );
   return expired.length;
-}
-
-export function kindLabel(kind: UploadKind): string {
-  return kind === "html" ? "HTML" : kind === "image" ? "image" : "video";
 }

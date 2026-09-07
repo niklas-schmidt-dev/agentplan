@@ -47,9 +47,7 @@ test.describe("hostile HTML isolation", () => {
     expect(missingContent.status()).toBe(404);
     expect(missingContent.headers()["cache-control"]).toBe("private, no-store");
     expect(missingContent.headers()["x-content-type-options"]).toBe("nosniff");
-    expect(missingContent.headers()["strict-transport-security"]).toContain(
-      "includeSubDomains",
-    );
+    expect(missingContent.headers()["strict-transport-security"]).toContain("includeSubDomains");
 
     const securityTxt = await page.request.get("/.well-known/security.txt");
     expect(securityTxt.status()).toBe(200);
@@ -110,11 +108,13 @@ test.describe("hostile HTML isolation", () => {
     expect(content.headers()["x-content-type-options"]).toBe("nosniff");
     expect(content.headers()["referrer-policy"]).toBe("no-referrer");
 
-    await page.goto(`/p/${draft.slug}`);
-    await expect(page.locator("iframe")).toHaveAttribute(
-      "sandbox",
-      "allow-scripts allow-forms allow-modals allow-popups",
-    );
+    for (const url of [`/p/${draft.slug}`, `/dashboard/drafts/${draft.id}`]) {
+      await page.goto(url);
+      await expect(page.locator("iframe")).toHaveAttribute(
+        "sandbox",
+        "allow-scripts allow-forms allow-modals allow-popups",
+      );
+    }
   });
 
   test("private drafts are unreachable for anonymous visitors", async ({ page, browser }) => {

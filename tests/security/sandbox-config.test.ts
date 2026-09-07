@@ -1,94 +1,73 @@
-import { readFileSync } from "node:fs";
-import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { NextRequest } from "next/server";
+import {
+  unstable_doesMiddlewareMatch,
+  unstable_getResponseFromNextConfig,
+} from "next/experimental/testing/server";
+import nextConfig from "@/next.config";
+import { config, proxy } from "@/proxy";
 
-// Static guardrails: the sandbox attributes are load-bearing security controls,
-// so assert on the source directly. If these strings ever change, the reviewer
-// is forced to confront the security implication.
+afterEach(() => vi.unstubAllEnvs());
 
-const root = process.cwd();
-
-// Strip comments before asserting: the source deliberately *names* the forbidden
-// tokens in warning comments, so we must inspect only executable code.
-function readCode(relative: string): string {
-  return readFileSync(path.join(root, relative), "utf8")
-    .replace(/\/\*[\s\S]*?\*\//g, "")
-    .replace(/\{\/\*[\s\S]*?\*\/\}/g, "")
-    .replace(/^\s*\/\/.*$/gm, "");
-}
-
-describe("iframe sandbox is never weakened", () => {
-  const viewerFiles = ["app/p/[slug]/page.tsx", "app/dashboard/drafts/[id]/page.tsx"];
-
-  for (const file of viewerFiles) {
-    describe(file, () => {
-      const source = readCode(file);
-
-      it("uses the exact approved sandbox allowlist", () => {
-        expect(source).toContain('sandbox="allow-scripts allow-forms allow-modals allow-popups"');
-      });
-
-      it("never grants same-origin or top-navigation", () => {
-        expect(source).not.toContain("allow-same-origin");
-        expect(source).not.toContain("allow-top-navigation");
-      });
+describe("application response hardening", () => {
+  it("applies security headers to application pages and auth-aware caching to API routes", async () => {
+    const home = await unstable_getResponseFromNextConfig({
+      url: "https://agentplan.test/",
+      nextConfig,
     });
-  }
-});
-
-describe("content route ships hardened headers", () => {
-  const sources = [
-    readCode("app/p/[slug]/content/route.ts"),
-    readCode("app/p/[slug]/v/[versionId]/[...logicalPath]/route.ts"),
-  ];
-
-  it("sets a CSP sandbox even on direct navigation", () => {
-    for (const source of sources) {
-      expect(source).toContain("sandbox allow-scripts allow-forms allow-modals allow-popups");
-      expect(source).not.toContain("allow-same-origin");
-    }
+    expect(Object.fromEntries(home.headers)).toMatchObject({
+      "strict-transport-security": "max-age=63072000; includeSubDomains",
+      "x-frame-options": "DENY",
+      "x-content-type-options": "nosniff",
+      "referrer-policy": "strict-origin-when-cross-origin",
+      "permissions-policy": "camera=(), microphone=(), geolocation=()",
+      "cross-origin-opener-policy": "same-origin",
+    });
+    const api = await unstable_getResponseFromNextConfig({
+      url: "https://agentplan.test/api/v1/drafts",
+      nextConfig,
+    });
+    expect(api.headers.get("cache-control")).toBe("private, no-store");
+    expect(api.headers.get("vary")).toBe("Authorization, Cookie");
   });
 
-  it("sends nosniff, no-referrer, and visibility-aware caching", () => {
-    for (const source of sources) {
-      expect(source).toContain('"X-Content-Type-Options": "nosniff"');
-      expect(source).toContain('"Referrer-Policy": "no-referrer"');
-      expect(source).toContain(
-        '"Strict-Transport-Security": "max-age=63072000; includeSubDomains"',
+  it("issues a fresh script nonce per request and forwards the matching policy to Next.js", () => {
+    vi.stubEnv("NODE_ENV", "production");
+    const policies = Array.from({ length: 2 }, () => {
+      const response = proxy(new NextRequest("https://agentplan.test/dashboard"));
+      const nonce = response.headers.get("x-middleware-request-x-nonce");
+      expect(nonce).toBeTruthy();
+      const policy = response.headers.get("content-security-policy")!;
+      expect(policy).toContain(`script-src 'self' 'nonce-${nonce}' 'strict-dynamic'`);
+      expect(policy).not.toContain("'unsafe-eval'");
+      expect(
+        policy.split("; ").find((directive) => directive.startsWith("script-src")),
+      ).not.toContain("'unsafe-inline'");
+      expect(policy).toContain("frame-ancestors 'none'");
+      expect(policy).toContain("media-src 'self'");
+      expect(response.headers.get("x-middleware-request-content-security-policy")).toBe(policy);
+      return policy;
+    });
+    expect(policies[0]).not.toBe(policies[1]);
+  });
+
+  it.each(["/p/plan/content", "/p/plan/content/", "/p/plan/v/version/nested/index.html"])(
+    "leaves the content route's sandbox policy intact for %s",
+    (pathname) => {
+      const response = proxy(new NextRequest(`https://agentplan.test${pathname}`));
+      expect(response.headers.get("content-security-policy")).toBeNull();
+      expect(response.headers.get("x-middleware-request-x-nonce")).toBeNull();
+    },
+  );
+
+  it.each(["/", "/dashboard", "/p/plan", "/p/plan/v/version"])(
+    "applies the application policy to %s",
+    (pathname) => {
+      const url = `https://agentplan.test${pathname}`;
+      expect(unstable_doesMiddlewareMatch({ config, nextConfig, url })).toBe(true);
+      expect(proxy(new NextRequest(url)).headers.get("content-security-policy")).toContain(
+        "frame-ancestors 'none'",
       );
-      expect(source).toContain("private, no-store");
-    }
-  });
-});
-
-describe("application-wide response hardening", () => {
-  const source = readCode("next.config.ts");
-  const proxySource = readCode("proxy.ts");
-
-  it("sets transport, framing, MIME, referrer, and browser capability controls", () => {
-    expect(source).toContain('"Strict-Transport-Security"');
-    expect(source).toContain("includeSubDomains");
-    expect(source).toContain('"X-Frame-Options", value: "DENY"');
-    expect(source).toContain('"X-Content-Type-Options", value: "nosniff"');
-    expect(source).toContain('"Permissions-Policy"');
-    expect(source).toContain('"Cross-Origin-Opener-Policy"');
-  });
-
-  it("marks every API response private and varies on both auth mechanisms", () => {
-    expect(source).toContain('source: "/api/:path*"');
-    expect(source).toContain('"Cache-Control", value: "private, no-store"');
-    expect(source).toContain('"Vary", value: "Authorization, Cookie"');
-  });
-
-  it("uses a per-request script nonce and never allows inline application scripts", () => {
-    expect(proxySource).toContain("'nonce-${nonce}'");
-    expect(proxySource).toContain("'strict-dynamic'");
-    expect(proxySource).not.toContain("script-src 'self' 'unsafe-inline'");
-    expect(proxySource).toContain("frame-ancestors 'none'");
-    expect(proxySource).toContain("media-src 'self'");
-    expect(proxySource).toContain("https://blob.vercel-storage.com");
-    expect(proxySource).toContain(".r2.cloudflarestorage.com");
-    expect(proxySource).toContain("^\\/p\\/[^/]+\\/v\\/[^/]+\\/.+");
-    expect(readCode("app/layout.tsx")).toContain('export const dynamic = "force-dynamic"');
-  });
+    },
+  );
 });

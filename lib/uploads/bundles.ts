@@ -12,7 +12,6 @@ import {
   draftVersions,
   drafts,
   uploadIntentFiles,
-  uploadIntentReclaims,
   uploadIntents,
   users,
   type DraftVersion,
@@ -163,12 +162,6 @@ export async function createBundleUpload(input: {
 }): Promise<{
   intent: UploadIntent;
   files: BundleFileDescriptor[];
-  quota: {
-    grossReservedBytes: number;
-    plannedReclaimBytes: number;
-    netGrowthBytes: number;
-    willPruneVersions: number[];
-  };
 }> {
   let manifest: ReturnType<typeof validateBundleManifest>;
   try {
@@ -344,12 +337,6 @@ export async function createBundleUpload(input: {
         sizeBytes: file.expectedBytes,
       })),
     ],
-    quota: {
-      grossReservedBytes: manifest.totalBytes,
-      plannedReclaimBytes: 0,
-      netGrowthBytes: manifest.totalBytes,
-      willPruneVersions: [],
-    },
   };
 }
 
@@ -665,9 +652,6 @@ export async function completeBundleUpload(
         .returning();
       if (!updatedDraft) throw new DraftNotFoundError();
 
-      await tx
-        .delete(uploadIntentReclaims)
-        .where(eq(uploadIntentReclaims.intentId, lockedIntent.id));
       const [completed] = await tx
         .update(uploadIntents)
         .set({ status: "completed", completedAt: sql`now()`, updatedAt: sql`now()` })
@@ -970,9 +954,6 @@ export async function restoreBundleVersion(input: {
         .where(eq(drafts.id, lockedDraft.id))
         .returning();
       if (!updatedDraft) throw new DraftNotFoundError();
-      await tx
-        .delete(uploadIntentReclaims)
-        .where(eq(uploadIntentReclaims.intentId, lockedIntent.id));
       await tx
         .update(uploadIntents)
         .set({ status: "completed", completedAt: sql`now()`, updatedAt: sql`now()` })

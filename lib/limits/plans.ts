@@ -44,10 +44,6 @@ export function limitsForPlan(plan: UserPlan): EffectiveLimits {
   };
 }
 
-export function retentionForKind(limits: EffectiveLimits, kind: DraftKind): number | null {
-  return limits.keepVersionsByKind[kind];
-}
-
 /** Attempts per draft+IP per 15 minutes; guards viewers, so it is plan-independent. */
 export function passwordAttemptsPerWindow(): number {
   return envInt("AP_PASSWORD_ATTEMPTS_PER_15MIN", 10);

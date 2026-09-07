@@ -1,3 +1,4 @@
+import { withUploadDiagnostics } from "@/lib/uploads/diagnostics";
 import { authenticateApiRequest, isFailure } from "@/lib/api/auth";
 import { apiError, insufficientScope, notFound, unauthorized } from "@/lib/api/responses";
 import { serializeDraft, serializeVersion } from "@/lib/api/serialize";
@@ -8,7 +9,7 @@ import { uuidSchema } from "@/lib/validation/api";
 
 type Params = { params: Promise<{ id: string }> };
 
-export async function GET(req: Request, { params }: Params): Promise<Response> {
+async function handleGET(req: Request, { params }: Params): Promise<Response> {
   const actor = await authenticateApiRequest(req, "drafts:write");
   if (isFailure(actor)) {
     return actor.failure === "scope" ? insufficientScope(actor.scope) : unauthorized();
@@ -43,7 +44,7 @@ export async function GET(req: Request, { params }: Params): Promise<Response> {
   });
 }
 
-export async function DELETE(req: Request, { params }: Params): Promise<Response> {
+async function handleDELETE(req: Request, { params }: Params): Promise<Response> {
   const actor = await authenticateApiRequest(req, "drafts:write");
   if (isFailure(actor)) {
     return actor.failure === "scope" ? insufficientScope(actor.scope) : unauthorized();
@@ -65,3 +66,7 @@ export async function DELETE(req: Request, { params }: Params): Promise<Response
     return uploadErrorResponse(error);
   }
 }
+
+export const GET = withUploadDiagnostics("/api/v1/uploads/bundles/[id]", handleGET);
+
+export const DELETE = withUploadDiagnostics("/api/v1/uploads/bundles/[id]", handleDELETE);

@@ -84,47 +84,12 @@ export class AgentPlanApi {
     return body as T;
   }
 
-  private uploadForm(
-    bytes: Uint8Array,
-    filename: string,
-    fields: { title?: string; visibility?: string; password?: string },
-  ): FormData {
-    const form = new FormData();
-    form.set("file", new File([new Uint8Array(bytes)], filename, { type: "text/html" }));
-    if (fields.title) form.set("title", fields.title);
-    if (fields.visibility) form.set("visibility", fields.visibility);
-    if (fields.password) form.set("password", fields.password);
-    return form;
-  }
-
   listDrafts(): Promise<{ drafts: ApiDraft[] }> {
     return this.request("/api/v1/drafts");
   }
 
   getDraft(id: string): Promise<{ draft: ApiDraft }> {
     return this.request(`/api/v1/drafts/${encodeURIComponent(id)}`);
-  }
-
-  createDraft(
-    bytes: Uint8Array,
-    filename: string,
-    fields: { title?: string; visibility?: string; password?: string },
-  ): Promise<{ draft: ApiDraft }> {
-    return this.request("/api/v1/drafts", {
-      method: "POST",
-      body: this.uploadForm(bytes, filename, fields),
-    });
-  }
-
-  addVersion(
-    draftId: string,
-    bytes: Uint8Array,
-    filename: string,
-  ): Promise<{ draft: ApiDraft; version: ApiVersion }> {
-    return this.request(`/api/v1/drafts/${encodeURIComponent(draftId)}/versions`, {
-      method: "POST",
-      body: this.uploadForm(bytes, filename, {}),
-    });
   }
 
   createUploadIntent(input: {

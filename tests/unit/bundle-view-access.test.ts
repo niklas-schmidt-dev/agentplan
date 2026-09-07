@@ -6,7 +6,6 @@ import {
   authorizeBundleViewGrant,
   bundleVersionPath,
   issueBundlePasswordGrant,
-  issueBundleSessionGrant,
 } from "@/lib/drafts/bundle-view-access";
 import type { Draft } from "@/db/schema";
 
@@ -27,20 +26,21 @@ describe("bundle view grants", () => {
     );
   });
 
-  it("issues opaque session and password grants without exposing password hashes", () => {
-    const sessionGrant = issueBundleSessionGrant({
+  it("keeps the password hash out of the decoded grant payload", () => {
+    const passwordHash = "secret-password-hash";
+    const grant = issueBundlePasswordGrant({
       draftId: "draft-1",
       versionId: "version-1",
-      sessionId: "session-1",
+      passwordHash,
     });
-    const passwordGrant = issueBundlePasswordGrant({
+    const payload = JSON.parse(Buffer.from(grant.split(".")[0]!, "base64url").toString("utf8"));
+    expect(payload).toEqual({
       draftId: "draft-1",
       versionId: "version-1",
-      passwordHash: "secret-password-hash",
+      kind: "password",
+      expiresAt: expect.any(Number),
     });
-    expect(sessionGrant).toContain(".");
-    expect(passwordGrant).toContain(".");
-    expect(passwordGrant).not.toContain("secret-password-hash");
+    expect(JSON.stringify(payload)).not.toContain(passwordHash);
   });
 
   it("binds password grants to the version, current password hash, and expiry", async () => {

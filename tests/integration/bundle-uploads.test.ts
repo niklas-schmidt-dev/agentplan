@@ -112,6 +112,14 @@ describe.skipIf(!hasDb)("bundle upload lifecycle (integration)", () => {
       },
     );
     expect(entry.status).toBe(200);
+    expect(Object.fromEntries(entry.headers)).toMatchObject({
+      "content-security-policy":
+        "sandbox allow-scripts allow-forms allow-modals allow-popups; frame-ancestors 'self'",
+      "x-content-type-options": "nosniff",
+      "referrer-policy": "no-referrer",
+      "strict-transport-security": "max-age=63072000; includeSubDomains",
+      "cache-control": "public, max-age=0, must-revalidate",
+    });
     expect(await entry.text()).toContain('src="images/hero.png"');
 
     const asset = await getVersionedContent(
@@ -127,6 +135,7 @@ describe.skipIf(!hasDb)("bundle upload lifecycle (integration)", () => {
       },
     );
     expect(asset.status).toBe(200);
+    expect(asset.headers.get("content-security-policy")).toBe("sandbox; frame-ancestors 'self'");
     expect(asset.headers.get("content-type")).toBe("image/png");
 
     await uploadBundle({ type: "draft", draftId: first.draft.id });

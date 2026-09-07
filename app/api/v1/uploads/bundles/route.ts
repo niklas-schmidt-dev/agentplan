@@ -1,3 +1,5 @@
+import { recordUploadResource } from "@/lib/diagnostics/request";
+import { withUploadDiagnostics } from "@/lib/uploads/diagnostics";
 import { z } from "zod";
 import { authenticateApiRequest, isFailure } from "@/lib/api/auth";
 import { insufficientScope, invalidRequest, unauthorized } from "@/lib/api/responses";
@@ -34,7 +36,7 @@ const createSchema = z.object({
   target: targetSchema,
 });
 
-export async function POST(req: Request): Promise<Response> {
+async function handlePOST(req: Request): Promise<Response> {
   const actor = await authenticateApiRequest(req, "drafts:write");
   if (isFailure(actor)) {
     return actor.failure === "scope" ? insufficientScope(actor.scope) : unauthorized();
@@ -59,6 +61,7 @@ export async function POST(req: Request): Promise<Response> {
       files: input.files,
       target: input.target,
     });
+    recordUploadResource("uploadIntentId", result.intent.id);
     return Response.json(
       {
         intent: {
@@ -67,7 +70,6 @@ export async function POST(req: Request): Promise<Response> {
           expiresAt: result.intent.expiresAt.toISOString(),
         },
         files: result.files,
-        quota: result.quota,
       },
       { status: 201 },
     );
@@ -76,7 +78,7 @@ export async function POST(req: Request): Promise<Response> {
   }
 }
 
-export async function GET(req: Request): Promise<Response> {
+async function handleGET(req: Request): Promise<Response> {
   const actor = await authenticateApiRequest(req, "drafts:write");
   if (isFailure(actor)) {
     return actor.failure === "scope" ? insufficientScope(actor.scope) : unauthorized();
@@ -96,3 +98,7 @@ export async function GET(req: Request): Promise<Response> {
     })),
   });
 }
+
+export const POST = withUploadDiagnostics("/api/v1/uploads/bundles", handlePOST);
+
+export const GET = withUploadDiagnostics("/api/v1/uploads/bundles", handleGET);

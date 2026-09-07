@@ -1,3 +1,4 @@
+import { withUploadDiagnostics } from "@/lib/uploads/diagnostics";
 import { z } from "zod";
 import { authenticateApiRequest, isFailure } from "@/lib/api/auth";
 import { insufficientScope, invalidRequest, notFound, unauthorized } from "@/lib/api/responses";
@@ -14,7 +15,7 @@ const targetSchema = z.object({
 
 type Params = { params: Promise<{ id: string }> };
 
-export async function POST(req: Request, { params }: Params): Promise<Response> {
+async function handlePOST(req: Request, { params }: Params): Promise<Response> {
   const actor = await authenticateApiRequest(req, "drafts:write");
   if (isFailure(actor)) {
     return actor.failure === "scope" ? insufficientScope(actor.scope) : unauthorized();
@@ -43,3 +44,5 @@ export async function POST(req: Request, { params }: Params): Promise<Response> 
     return uploadErrorResponse(error);
   }
 }
+
+export const POST = withUploadDiagnostics("/api/v1/uploads/bundles/[id]/targets", handlePOST);

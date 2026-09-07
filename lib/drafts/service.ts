@@ -5,7 +5,6 @@ import {
   draftVersions,
   drafts,
   uploadIntentFiles,
-  uploadIntentReclaims,
   uploadIntents,
   users,
   type Draft,
@@ -610,7 +609,6 @@ export async function softDeleteDraft(
           })),
         );
       }
-      await tx.delete(uploadIntentReclaims).where(eq(uploadIntentReclaims.intentId, intent.id));
     }
     for (const key of keys) {
       await queueStorageDeletion(

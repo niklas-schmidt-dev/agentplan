@@ -129,8 +129,6 @@ export async function lockAndAssertUploadQuota(
 export async function getUserStorageUsage(userId: string): Promise<{
   committedBytes: number;
   reservedBytes: number;
-  grossReservedBytes: number;
-  plannedReclaimBytes: number;
 }> {
   const db = getDb();
   const [[committed], [reserved]] = await Promise.all([
@@ -152,13 +150,9 @@ export async function getUserStorageUsage(userId: string): Promise<{
         ),
       ),
   ]);
-  const grossReservedBytes = Number(reserved?.total ?? 0);
-  const plannedReclaimBytes = 0;
   return {
     committedBytes: Number(committed?.total ?? 0),
-    reservedBytes: Math.max(0, grossReservedBytes - plannedReclaimBytes),
-    grossReservedBytes,
-    plannedReclaimBytes,
+    reservedBytes: Number(reserved?.total ?? 0),
   };
 }
 

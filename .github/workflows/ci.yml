@@ -52,6 +52,7 @@ jobs:
       DATABASE_URL: postgres://postgres:postgres@localhost:5432/agentplan_test
       DATABASE_URL_DIRECT: postgres://postgres:postgres@localhost:5432/agentplan_test
       TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/agentplan_test
+      REQUIRE_DATABASE_TESTS: "1"
       STORAGE_DRIVER: fs
       STORAGE_FS_ROOT: .data/ci-storage
       BETTER_AUTH_SECRET: ci-secret-not-for-production-00000000
@@ -116,5 +117,15 @@ jobs:
       - run: npm run db:migrate
       - name: Install Playwright browser
         run: npx playwright install --with-deps chromium
-      - name: Run e2e security suite
+      - name: Build shipped CLI
+        run: npm run build -w agentplan-cli
+      - name: Run browser and CLI journeys
         run: npm run test:e2e
+      - name: Preserve QA evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: qa-evidence
+          path: .data/qa/artifacts/
+          retention-days: 7
+          include-hidden-files: true
