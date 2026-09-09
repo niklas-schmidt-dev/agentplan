@@ -251,9 +251,11 @@ Errors have a stable shape agents can match on:
 
 ## Plans, limits & abuse protection
 
-Three plans exist. **Free** applies the caps below. **Pro** removes the draft,
-version, and token caps and is bound only by storage (10 GiB by default,
-configurable per product); `/pricing` compares them. Pro can be sold through the optional
+Three plans exist. **Free** applies the caps below and keeps one version per
+draft. **Pro** adds version history and restore, removes the draft and token
+caps, and is bound only by storage (10 GiB by default, configurable per
+product); `/pricing` compares them. Upload rate windows are abuse throttles,
+not plan features. Pro can be sold through the optional
 [Polar integration](docs/self-hosting.md#optional-paid-plans-through-polar) or
 granted by an administrator. **Unlimited** is an operator plan that bypasses
 every quota and is never sold.
@@ -266,7 +268,7 @@ Free-plan limits (all server-enforced; tunable via `AP_*` env vars, defaults in
 | Upload size                    | Available storage quota; no per-file size cap |
 | HTML bundle                    | Available storage quota; up to 50 assets      |
 | Drafts per user                | 50                                            |
-| Versions per draft             | HTML 100; image 20; video 2                   |
+| Versions per draft             | 1 (history and restore are Pro features)      |
 | Bundled HTML versions          | Included in the HTML version limit            |
 | Total storage per user         | 50 MiB                                        |
 | Active API tokens per user     | 5                                             |

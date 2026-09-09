@@ -16,7 +16,11 @@ import { eq, sql } from "drizzle-orm";
 import { drafts, rateLimits, users, type UserPlan } from "@/db/schema";
 import { POST as createDraftRoute } from "@/app/api/v1/drafts/route";
 import { POST as restoreRoute } from "@/app/api/v1/drafts/[id]/versions/[versionId]/restore/route";
-import { addVersionToDraft, createDraftWithFirstVersion } from "@/lib/drafts/service";
+import {
+  addVersionToDraft,
+  createDraftWithFirstVersion,
+  restoreVersion,
+} from "@/lib/drafts/service";
 import { consumeUploadRateLimit } from "@/lib/limits/enforce";
 import { QuotaExceededError, RateLimitedError } from "@/lib/limits/errors";
 import { consumeRateLimit, consumeRateLimits } from "@/lib/limits/rate-limit";
@@ -146,7 +150,43 @@ describe.skipIf(!hasDb)("abuse limits (integration)", () => {
     expect(row?.count).toBe(1);
   });
 
+  it("free plan keeps one version per draft and blocks restore by default", async () => {
+    delete process.env.AP_MAX_VERSIONS_PER_DRAFT;
+    const ownerId = await createUser();
+    const { draft, version } = await createDraftWithFirstVersion({
+      ownerId,
+      title: "Single version",
+      visibility: "private",
+      bytes: html,
+      source: "browser",
+    });
+    await expect(addVersionToDraft({ draft, bytes: html, source: "browser" })).rejects.toThrow(
+      /Version limit reached \(1\).*preserved.*Pro/,
+    );
+    await expect(restoreVersion({ draft, version, source: "browser" })).rejects.toBeInstanceOf(
+      QuotaExceededError,
+    );
+    expect((await listVersions(draft.id)).map((v) => v.versionNumber)).toEqual([1]);
+
+    const proId = await createUser("pro");
+    const pro = await createDraftWithFirstVersion({
+      ownerId: proId,
+      title: "Pro history",
+      visibility: "private",
+      bytes: html,
+      source: "browser",
+    });
+    await addVersionToDraft({ draft: pro.draft, bytes: html, source: "browser" });
+    const restored = await restoreVersion({
+      draft: pro.draft,
+      version: pro.version,
+      source: "browser",
+    });
+    expect(restored.version.versionNumber).toBe(3);
+  });
+
   it("enforces the per-user storage quota", async () => {
+    process.env.AP_MAX_VERSIONS_PER_DRAFT = "10";
     process.env.AP_MAX_STORAGE_BYTES_PER_USER = String(html.byteLength + 5);
     const ownerId = await createUser();
 
@@ -186,6 +226,7 @@ describe.skipIf(!hasDb)("abuse limits (integration)", () => {
   });
 
   it("rate limits uploads per user", async () => {
+    process.env.AP_MAX_VERSIONS_PER_DRAFT = "10";
     process.env.AP_UPLOADS_PER_10MIN = "2";
     const ownerId = await createUser();
 

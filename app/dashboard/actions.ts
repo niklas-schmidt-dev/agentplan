@@ -95,7 +95,7 @@ export async function deleteDraftAction(formData: FormData): Promise<void> {
   redirect("/dashboard");
 }
 
-export type RestoreVersionState = { error: string } | null;
+export type RestoreVersionState = { error: string; quota?: boolean } | null;
 
 export async function restoreVersionAction(
   _prev: RestoreVersionState,
@@ -119,7 +119,7 @@ export async function restoreVersionAction(
     }
   } catch (error) {
     const limited = limitErrorMessage(error);
-    if (limited) return { error: limited };
+    if (limited) return { error: limited, quota: error instanceof QuotaExceededError };
     if (error instanceof DraftWriteConflictError || error instanceof UploadIntentConflictError) {
       return { error: error.message };
     }

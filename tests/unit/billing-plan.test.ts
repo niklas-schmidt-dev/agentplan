@@ -85,6 +85,23 @@ describe("billing plan resolution", () => {
     expect(resolveEffectivePlan("pro", null, now).storageBytes).toBe(20 * GiB);
   });
 
+  it("free keeps one version per draft by default; pro and unlimited keep history", () => {
+    vi.stubEnv("AP_MAX_VERSIONS_PER_DRAFT", "");
+    vi.stubEnv("AP_MAX_IMAGE_VERSIONS_PER_DRAFT", "");
+    vi.stubEnv("AP_MAX_VIDEO_VERSIONS_PER_DRAFT", "");
+    expect(limitsForPlan("free").keepVersionsByKind).toEqual({ html: 1, image: 1, video: 1 });
+    expect(limitsForPlan("pro").keepVersionsByKind).toEqual({
+      html: null,
+      image: null,
+      video: null,
+    });
+    expect(limitsForPlan("unlimited").keepVersionsByKind).toEqual({
+      html: null,
+      image: null,
+      video: null,
+    });
+  });
+
   it("pro limits are storage-bound only", () => {
     const limits = limitsForEffectivePlan({
       plan: "pro",
