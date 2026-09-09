@@ -29,7 +29,8 @@ independent, optional additions.
 6. Open the deployment and register with `ADMIN_BOOTSTRAP_EMAIL`. That identity
    becomes the initial administrator.
 7. Optionally add Resend or the generic email webhook for verification and
-   password recovery, and/or GitHub OAuth as another sign-in method.
+   password recovery, GitHub OAuth as another sign-in method, and/or Polar to
+   sell Pro plans.
 
 Vercel provides the deployment hostname automatically. `BETTER_AUTH_URL` and
 `NEXT_PUBLIC_APP_URL` are optional unless you want to override that hostname,
@@ -136,6 +137,62 @@ GITHUB_CLIENT_SECRET=
 Register `https://your-origin.example/api/auth/callback/github` as the OAuth
 callback. The first GitHub account must expose the address configured in
 `ADMIN_BOOTSTRAP_EMAIL`.
+
+## Optional paid plans through Polar
+
+AgentPlan ships with three plans. `free` applies every cap in
+`lib/limits/plans.ts`; `pro` removes the draft, version, and token caps and is
+bound only by storage; `unlimited` is an operator plan that bypasses everything
+and is never sold. Without a payment provider, administrators assign plans from
+`/dashboard/admin` (or `scripts/set-user-plan.ts`) and nothing else changes.
+
+To sell Pro, AgentPlan integrates [Polar](https://polar.sh) as merchant of
+record: Polar collects payment, handles VAT/sales tax, and issues invoices. Set
+all three values to enable billing:
+
+```dotenv
+POLAR_ACCESS_TOKEN=
+POLAR_WEBHOOK_SECRET=
+POLAR_PRO_PRODUCT_IDS=
+```
+
+| Variable                | Requirement                                                                                     |
+| ----------------------- | ----------------------------------------------------------------------------------------------- |
+| `POLAR_ACCESS_TOKEN`    | Organization Access Token from the Polar dashboard.                                             |
+| `POLAR_WEBHOOK_SECRET`  | Secret of a Polar webhook pointing at `https://your-origin.example/api/billing/webhooks`.       |
+| `POLAR_PRO_PRODUCT_IDS` | Comma-separated Polar product IDs that grant Pro, in the order shown on the billing page.       |
+| `POLAR_SERVER`          | Optional; `sandbox` while testing against sandbox.polar.sh. Tokens and products are per server. |
+| `AP_PRO_STORAGE_BYTES`  | Optional; storage included with Pro when a product has no `storage_gb` metadata (10 GiB).       |
+
+Setup in Polar:
+
+1. Create one recurring product per storage tier, for example "Pro" and
+   "Pro 50 GB". Add `storage_gb` to a product's metadata to sell a tier other
+   than the default; several products may be listed in `POLAR_PRO_PRODUCT_IDS`.
+2. Create a webhook for the endpoint above and subscribe at least to
+   `customer.state_changed`, `customer.deleted`, `subscription.*`, and
+   `order.paid`. Polar signs deliveries with the webhook secret. Both legacy
+   Polar HMAC and Standard Webhooks secrets (generated from September 8, 2026)
+   are supported, including timestamp/replay checks. Use the complete secret
+   shown in the dashboard. See [Polar's signing documentation](https://polar.sh/docs/integrate/webhooks/delivery).
+3. Deploy with the variables set. The dashboard gains a **plan** page with
+   hosted checkout and the Polar customer portal for invoices, payment method,
+   and cancellation.
+
+How entitlements are kept correct:
+
+- The Better Auth user ID is the Polar customer's external ID, so every webhook
+  maps directly to an account. Webhooks are reduced to "re-read this customer's
+  state", which is idempotent and order-independent.
+- The daily purge cron also reconciles every active Pro subscription against
+  Polar, so a lost webhook cannot leave someone over- or under-entitled for
+  more than a day. A renewal that arrives late is tolerated for three days.
+- Billing only ever raises a user. An administrator-granted `pro` or
+  `unlimited` plan is never lowered by a lapsed subscription.
+- Blocking an account revokes its Polar subscription; deleting an account
+  deletes the Polar customer, which cancels remaining subscriptions.
+- When a subscription ends, existing drafts and links stay available. Only the
+  Free caps apply to new uploads again.
 
 ## Database choices
 

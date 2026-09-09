@@ -22,7 +22,9 @@ export type AuditEventType =
   | "user.deletion_failed"
   | "user.blocked"
   | "user.unblocked"
-  | "settings.signups_changed";
+  | "settings.signups_changed"
+  | "billing.checkout_started"
+  | "billing.subscription_changed";
 
 /** Best-effort: an audit failure must never fail the user-facing operation. */
 export async function recordAuditEvent(event: {

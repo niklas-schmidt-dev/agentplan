@@ -81,6 +81,7 @@ export function AdminUserActions({
                 className="col-span-full row-start-1 appearance-none rounded border border-edge bg-canvas py-1 pr-6 pl-2 text-ink-muted disabled:opacity-60"
               >
                 <option value="free">free</option>
+                <option value="pro">pro</option>
                 <option value="unlimited">unlimited</option>
               </select>
               <svg

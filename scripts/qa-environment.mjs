@@ -12,7 +12,7 @@ export function localEnvironment(state, root = process.cwd()) {
   const env = { ...process.env };
   for (const key of Object.keys(env)) {
     if (
-      /^(DATABASE_|TEST_DATABASE_|BETTER_AUTH_|AUTH_|RESEND_|GITHUB_CLIENT_|BLOB_|R2_|VERCEL|AP_|STORAGE_|AGENTPLAN_|PLAYWRIGHT_|QA_|CRON_SECRET|NEXT_PUBLIC_)/.test(
+      /^(DATABASE_|TEST_DATABASE_|BETTER_AUTH_|AUTH_|RESEND_|GITHUB_CLIENT_|BLOB_|R2_|VERCEL|AP_|STORAGE_|AGENTPLAN_|PLAYWRIGHT_|QA_|CRON_SECRET|NEXT_PUBLIC_|POLAR_)/.test(
         key,
       )
     )

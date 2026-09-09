@@ -1,7 +1,10 @@
 /**
- * Sets a user's plan. "unlimited" bypasses all quotas and upload rate limits.
+ * Sets a user's granted plan. "pro" lifts draft/version/token caps and grants
+ * the default Pro storage; "unlimited" bypasses all quotas and upload rate
+ * limits. A paid subscription can raise a user above the granted plan but
+ * never below it.
  *
- *   bun scripts/set-user-plan.ts <email> <free|unlimited>
+ *   bun scripts/set-user-plan.ts <email> <free|pro|unlimited>
  *
  * Needs DATABASE_URL (bun loads .env automatically).
  */
@@ -10,8 +13,8 @@ import { closeDb, getDb } from "../db/client";
 import { users } from "../db/schema";
 
 const [email, plan] = process.argv.slice(2);
-if (!email || (plan !== "free" && plan !== "unlimited")) {
-  console.error("Usage: bun scripts/set-user-plan.ts <email> <free|unlimited>");
+if (!email || (plan !== "free" && plan !== "pro" && plan !== "unlimited")) {
+  console.error("Usage: bun scripts/set-user-plan.ts <email> <free|pro|unlimited>");
   process.exit(1);
 }
 

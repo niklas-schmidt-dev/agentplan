@@ -1,28 +1,34 @@
 import { createHmac } from "node:crypto";
 import { and, eq, gt, isNull, ne, or, sql } from "drizzle-orm";
 import { getDb, type Database } from "@/db/client";
-import { apiTokens, draftVersions, drafts, uploadIntents, users, type UserPlan } from "@/db/schema";
+import { apiTokens, draftVersions, drafts, uploadIntents, type UserPlan } from "@/db/schema";
+import { getEffectivePlanForUser } from "@/lib/billing/service";
+import { limitsForEffectivePlan } from "@/lib/billing/plan";
 import { QuotaExceededError, RateLimitedError } from "./errors";
-import { limitsForPlan, passwordAttemptsPerWindow, type EffectiveLimits } from "./plans";
+import { passwordAttemptsPerWindow, type EffectiveLimits } from "./plans";
 import { consumeRateLimit, consumeRateLimits } from "./rate-limit";
 
+/** Effective plan name (granted plan combined with any current subscription). */
 export async function getUserPlan(
   userId: string,
   db: Pick<Database, "select"> = getDb(),
 ): Promise<UserPlan> {
-  const [row] = await db
-    .select({ plan: users.plan })
-    .from(users)
-    .where(eq(users.id, userId))
-    .limit(1);
-  return row?.plan ?? "free";
+  return (await getEffectivePlanForUser(userId, db)).plan;
+}
+
+/** Effective limits for quota checks; billing storage tiers are already folded in. */
+export async function getUserLimits(
+  userId: string,
+  db: Pick<Database, "select"> = getDb(),
+): Promise<EffectiveLimits> {
+  return limitsForEffectivePlan(await getEffectivePlanForUser(userId, db));
 }
 
 /**
  * Consumes every upload rate-limit window atomically before storage work.
  */
 export async function consumeUploadRateLimit(userId: string): Promise<void> {
-  const limits = limitsForPlan(await getUserPlan(userId));
+  const limits = await getUserLimits(userId);
   const windows = [
     { limit: limits.uploadsPerTenMinutes, key: `uploads:10m:${userId}`, windowSeconds: 600 },
     { limit: limits.uploadsPerDay, key: `uploads:1d:${userId}`, windowSeconds: 86_400 },
@@ -52,7 +58,7 @@ export async function lockAndAssertUploadQuota(
   await db.execute(
     sql`select pg_advisory_xact_lock(hashtext('upload-quota'), hashtext(${params.userId}))`,
   );
-  const limits = limitsForPlan(await getUserPlan(params.userId, db));
+  const limits = await getUserLimits(params.userId, db);
 
   if (params.newDraft && limits.maxDrafts !== null) {
     const [row] = await db
@@ -161,7 +167,7 @@ export async function assertTokenCreationAllowed(
   userId: string,
   db: Pick<Database, "select"> = getDb(),
 ): Promise<void> {
-  const limits = limitsForPlan(await getUserPlan(userId, db));
+  const limits = await getUserLimits(userId, db);
   if (limits.maxActiveTokens === null) return;
   const [row] = await db
     .select({ count: sql<number>`count(*)::int` })

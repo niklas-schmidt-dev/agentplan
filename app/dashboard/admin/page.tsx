@@ -8,8 +8,9 @@ import { UsageMeter } from "@/components/dashboard/usage-meter";
 import { getAdminStats, listUsersWithUsage } from "@/lib/admin/service";
 import { getAdminViewStats, getTopDraftsByViews } from "@/lib/analytics/queries";
 import { isAdmin, requireAdmin } from "@/lib/auth/session";
+import { isBillingConfigured } from "@/lib/billing/config";
 import { formatBytes, formatRelativeTime } from "@/lib/format";
-import { limitsForPlan } from "@/lib/limits/plans";
+import { limitsForEffectivePlan } from "@/lib/billing/plan";
 import { getSignupsEnabled } from "@/lib/settings/service";
 
 export const metadata = { title: "Admin" };
@@ -41,7 +42,11 @@ export default async function AdminPage({
 
   return (
     <main className="mx-auto flex min-h-dvh w-full max-w-5xl flex-col gap-6 px-6 py-8">
-      <DashboardHeader email={admin.email} isAdmin={isAdmin(admin)} />
+      <DashboardHeader
+        email={admin.email}
+        isAdmin={isAdmin(admin)}
+        billingEnabled={isBillingConfigured()}
+      />
 
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h1 className="font-mono text-sm text-ink-muted">admin / users</h1>
@@ -133,7 +138,7 @@ export default async function AdminPage({
         >
           {userRows.map((user) => {
             const isSelf = user.id === admin.id;
-            const limits = limitsForPlan(user.plan);
+            const limits = limitsForEffectivePlan(user.effectivePlan);
             return (
               <li key={user.id} className="flex flex-col gap-3 p-4 font-mono text-xs">
                 <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5">
@@ -143,13 +148,27 @@ export default async function AdminPage({
                   </p>
                   <span
                     className={`rounded-sm border px-1.5 py-0.5 ${
-                      user.plan === "unlimited"
+                      user.effectivePlan.plan !== "free"
                         ? "border-lime/40 bg-lime/5 text-lime"
                         : "border-edge text-ink-muted"
                     }`}
+                    title={
+                      user.effectivePlan.source === "subscription"
+                        ? `paid subscription (granted: ${user.plan})`
+                        : "granted by an admin"
+                    }
                   >
-                    {user.plan}
+                    {user.effectivePlan.plan}
+                    {user.effectivePlan.source === "subscription" ? " · paid" : ""}
                   </span>
+                  {user.subscription ? (
+                    <span className="text-ink-faint">
+                      {user.subscription.productName} · {user.subscription.status}
+                      {user.subscription.currentPeriodEnd
+                        ? `${user.subscription.cancelAtPeriodEnd ? " · ends" : " · renews"} ${formatRelativeTime(user.subscription.currentPeriodEnd)}`
+                        : ""}
+                    </span>
+                  ) : null}
                   {user.role === "admin" ? (
                     <span className="rounded-sm border border-lime/40 px-1.5 py-0.5 text-lime">
                       admin

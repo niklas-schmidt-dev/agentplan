@@ -52,6 +52,32 @@ exercises actual email delivery and links for a fresh account.
 
 ## Lifecycle and checks
 
+### Polar Sandbox on local dev/QA
+
+On the configured operator machine, run `npm run dev:billing` instead of `qa:up`
+to start the same managed QA database, fixtures, filesystem storage, and inbox
+with Polar Sandbox enabled. It requires authenticated LocalCan and Portless on
+PATH and private configuration in `.data/polar-setup/` (see its local README).
+The app opens at `https://agentplan-sandbox.localhost`.
+
+The runner loads only Sandbox billing credentials and routes the public
+`https://dev-webhooks.agentplan.app/api/billing/webhooks` URL through a loopback
+gateway. That gateway accepts only webhook POSTs and a static `/healthz` probe;
+the dashboard and QA inbox remain local. Payloads are signature- and
+timestamp-checked by the application. Ctrl-C stops the app, gateway, and this
+LocalCan tunnel. The domain stays configured for the next start. Do not run
+`qa:up` or another billing runner simultaneously in this checkout.
+
+The default `qa:up` and automated checks keep billing disabled. Use synthetic
+accounts with a syntactically valid email domain for hosted checkout; Polar
+rejects the standard QA fixture addresses ending in `.test`. Test accounts and
+credentials belong in ignored `.data/`, not source control. While dev is stopped,
+Sandbox webhook deliveries cannot arrive; after restarting, use **refresh
+status** or Polar's **Redeliver** control. If Polar disabled the endpoint after
+repeated failures, re-enable it in the Sandbox dashboard.
+
+### Commands
+
 ```sh
 npm run qa:setup       # provision/migrate without starting the app
 npm run qa:doctor      # redacted JSON: checkout, URLs, DB, migrations, pending uploads

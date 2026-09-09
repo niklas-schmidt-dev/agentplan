@@ -10,9 +10,11 @@ import { NewDraftForm, PendingUploads } from "@/components/dashboard/upload-form
 import { UsageMeter } from "@/components/dashboard/usage-meter";
 import { getViewCountsForOwner } from "@/lib/analytics/queries";
 import { isAdmin, requireUser } from "@/lib/auth/session";
+import { isBillingConfigured } from "@/lib/billing/config";
+import { limitsForEffectivePlan } from "@/lib/billing/plan";
+import { getEffectivePlanForUser } from "@/lib/billing/service";
 import { formatBytes, formatRelativeTime } from "@/lib/format";
-import { getUserPlan, getUserStorageUsage } from "@/lib/limits/enforce";
-import { limitsForPlan } from "@/lib/limits/plans";
+import { getUserStorageUsage } from "@/lib/limits/enforce";
 import { listPendingUploadIntents } from "@/lib/uploads/service";
 import { draftUrl } from "@/lib/urls";
 import { visibilitySchema } from "@/lib/validation/api";
@@ -29,7 +31,8 @@ export default async function DashboardPage({
   const visibility = visibilitySchema.safeParse(params.visibility);
   const search = params.q?.trim() || undefined;
 
-  const [page, usage, plan, intents] = await Promise.all([
+  const billingEnabled = isBillingConfigured();
+  const [page, usage, effective, intents] = await Promise.all([
     listDraftsPageForOwner(user.id, {
       search,
       limit: 50,
@@ -38,7 +41,7 @@ export default async function DashboardPage({
       updatedWithinDays: params.recent === "1" ? 7 : undefined,
     }),
     getUserStorageUsage(user.id),
-    getUserPlan(user.id),
+    getEffectivePlanForUser(user.id),
     listPendingUploadIntents(user.id),
   ]).catch((error: unknown) => {
     if (error instanceof InvalidDraftCursorError) redirect("/dashboard");
@@ -57,11 +60,14 @@ export default async function DashboardPage({
     if (cursor) query.set("cursor", cursor);
     return `/dashboard?${query.toString()}`;
   };
-  const limits = limitsForPlan(plan);
+  const limits = limitsForEffectivePlan(effective);
+  const storageUsed = usage.committedBytes + usage.reservedBytes;
+  const nearStorageLimit =
+    limits.maxStorageBytes !== null && storageUsed >= limits.maxStorageBytes * 0.8;
 
   return (
     <main className="mx-auto flex min-h-dvh w-full max-w-5xl flex-col gap-6 px-6 py-8">
-      <DashboardHeader email={user.email} isAdmin={isAdmin(user)} />
+      <DashboardHeader email={user.email} isAdmin={isAdmin(user)} billingEnabled={billingEnabled} />
 
       <details className="rounded-md border border-edge bg-surface p-4" open={drafts.length === 0}>
         <summary className="cursor-pointer font-mono text-sm text-lime">+ new draft</summary>
@@ -70,11 +76,11 @@ export default async function DashboardPage({
         </div>
       </details>
 
-      <section className="rounded-md border border-edge bg-surface px-4 py-3 font-mono text-xs">
-        <div className="max-w-xs">
+      <section className="flex flex-wrap items-end justify-between gap-4 rounded-md border border-edge bg-surface px-4 py-3 font-mono text-xs">
+        <div className="w-full max-w-xs">
           <UsageMeter
-            label="storage"
-            used={usage.committedBytes + usage.reservedBytes}
+            label={`storage · ${effective.plan} plan`}
+            used={storageUsed}
             limit={limits.maxStorageBytes}
             format={formatBytes}
             detail={
@@ -84,6 +90,18 @@ export default async function DashboardPage({
             }
           />
         </div>
+        {billingEnabled && effective.plan === "free" ? (
+          <Link
+            href="/dashboard/billing"
+            className={`rounded border px-3 py-1.5 transition-colors ${
+              nearStorageLimit
+                ? "border-lime text-lime hover:bg-lime/10"
+                : "border-edge text-ink-muted hover:border-lime hover:text-lime"
+            }`}
+          >
+            {nearStorageLimit ? "almost full — upgrade to pro →" : "upgrade to pro →"}
+          </Link>
+        ) : null}
       </section>
 
       <PendingUploads

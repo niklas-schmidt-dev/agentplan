@@ -30,7 +30,10 @@ const child = spawn(
 // Next access logs contain reset/verification query tokens. Preserve diagnostics,
 // but strip query strings and known credential shapes before writing artifacts.
 function redact(value) {
-  return value.replace(/\?[^\s"']+/g, "?[redacted]").replace(/ap_live_[A-Za-z0-9_-]+/g, "[token]");
+  return value
+    .replace(/\?[^\s"']+/g, "?[redacted]")
+    .replace(/ap_live_[A-Za-z0-9_-]+/g, "[token]")
+    .replace(/(?:polar_(?:oat|mst)_|whsec_)[A-Za-z0-9+/=_-]+/g, "[token]");
 }
 for (const stream of [child.stdout, child.stderr]) {
   let pending = "";

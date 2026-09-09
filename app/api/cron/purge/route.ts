@@ -2,6 +2,8 @@ import { internalError, unauthorized } from "@/lib/api/responses";
 import { purgePendingUserDeletionObjects } from "@/lib/admin/service";
 import { purgeExpiredViewEvents } from "@/lib/analytics/views";
 import { purgeExpiredAuditEvents } from "@/lib/audit/events";
+import { reconcileSubscriptions } from "@/lib/billing/service";
+import { billingErrorSummary } from "@/lib/billing/errors";
 import { purgeDeletedDrafts, purgeExpiredRateLimits } from "@/lib/drafts/purge";
 import { constantTimeEqual } from "@/lib/security/compare";
 import { purgeRetiredTokens } from "@/lib/tokens/service";
@@ -33,8 +35,16 @@ export async function GET(req: Request): Promise<Response> {
         purgeExpiredViewEvents(5_000, deadline),
       ]);
     await purgeExpiredRateLimits();
+    // Billing drift is bounded to one day even if a webhook was lost.
+    const billing = await reconcileSubscriptions(deadline).catch((error: unknown) => {
+      console.error("Billing reconcile failed", billingErrorSummary(error));
+      return { checked: 0, changed: 0, skipped: true, failed: true };
+    });
 
     return Response.json({
+      billingChecked: billing.checked,
+      billingChanged: billing.changed,
+      billingSkipped: billing.skipped,
       purged: drafts.purged,
       failed: drafts.failed,
       userDeletionsPurged: users.purged,

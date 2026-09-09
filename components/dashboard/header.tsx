@@ -1,7 +1,15 @@
 import Link from "next/link";
 import { SignOutButton } from "@/components/auth-buttons";
 
-export function DashboardHeader({ email, isAdmin = false }: { email: string; isAdmin?: boolean }) {
+export function DashboardHeader({
+  email,
+  isAdmin = false,
+  billingEnabled = false,
+}: {
+  email: string;
+  isAdmin?: boolean;
+  billingEnabled?: boolean;
+}) {
   return (
     <header className="flex flex-wrap items-center justify-between gap-3 border-b border-edge pb-4">
       <nav className="flex items-center gap-4 font-mono text-sm">
@@ -14,6 +22,14 @@ export function DashboardHeader({ email, isAdmin = false }: { email: string; isA
         >
           tokens
         </Link>
+        {billingEnabled ? (
+          <Link
+            href="/dashboard/billing"
+            className="text-ink-muted transition-colors hover:text-lime"
+          >
+            plan
+          </Link>
+        ) : null}
         {isAdmin ? (
           <Link
             href="/dashboard/admin"
