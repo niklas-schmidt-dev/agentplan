@@ -39,6 +39,8 @@ import { assertCurrentAdmin, countActiveAdmins } from "@/lib/admin/authorization
 import { getViewCountsByOwner } from "@/lib/analytics/queries";
 import { recordAuditEvent } from "@/lib/audit/events";
 import { normalizeBlockedEmail } from "@/lib/auth/blocked-identities";
+import { getEffectivePlansForUsers, revokeBillingForUser } from "@/lib/billing/service";
+import type { EffectivePlan } from "@/lib/billing/plan";
 import { getStorage } from "@/lib/storage";
 import { queueStorageDeletion, tryDeleteStorageKey } from "@/lib/storage/cleanup";
 import { cleanupKeysForIntent } from "@/lib/uploads/service";
@@ -87,6 +89,15 @@ export async function getAdminStats(): Promise<AdminStats> {
 }
 
 export type AdminUserRow = User & {
+  /** Granted plan combined with any current subscription. */
+  effectivePlan: EffectivePlan;
+  subscription: {
+    productName: string;
+    status: string;
+    storageBytes: number;
+    currentPeriodEnd: Date | null;
+    cancelAtPeriodEnd: boolean;
+  } | null;
   draftCount: number;
   storageBytes: number;
   reservedBytes: number;
@@ -116,47 +127,49 @@ export async function listUsersWithUsage({
   if (allUsers.length === 0) return [];
   const pageUserIds = allUsers.map((user) => user.id);
 
-  const [draftAgg, storageAgg, reservedAgg, tokenAgg, blockRows, viewsByOwner] = await Promise.all([
-    db
-      .select({ ownerId: drafts.ownerId, drafts: count() })
-      .from(drafts)
-      .where(and(liveDraftFilter, inArray(drafts.ownerId, pageUserIds)))
-      .groupBy(drafts.ownerId),
-    db
-      .select({
-        ownerId: drafts.ownerId,
-        bytes: sql<string>`sum(coalesce(${draftVersions.totalSizeBytes}, ${draftVersions.sizeBytes}))`,
-      })
-      .from(draftVersions)
-      .innerJoin(drafts, eq(draftVersions.draftId, drafts.id))
-      .where(and(liveDraftFilter, inArray(drafts.ownerId, pageUserIds)))
-      .groupBy(drafts.ownerId),
-    db
-      .select({ ownerId: uploadIntents.ownerId, bytes: sum(uploadIntents.expectedBytes) })
-      .from(uploadIntents)
-      .where(
-        and(
-          inArray(uploadIntents.ownerId, pageUserIds),
-          eq(uploadIntents.status, "pending"),
-          gt(uploadIntents.expiresAt, sql`now()`),
-        ),
-      )
-      .groupBy(uploadIntents.ownerId),
-    db
-      .select({ userId: apiTokens.userId, tokens: count() })
-      .from(apiTokens)
-      .where(and(activeTokenFilter, inArray(apiTokens.userId, pageUserIds)))
-      .groupBy(apiTokens.userId),
-    db
-      .select({
-        userId: userBlocks.userId,
-        id: userBlocks.id,
-        reason: userBlocks.reason,
-      })
-      .from(userBlocks)
-      .where(inArray(userBlocks.userId, pageUserIds)),
-    getViewCountsByOwner(pageUserIds),
-  ]);
+  const [draftAgg, storageAgg, reservedAgg, tokenAgg, blockRows, viewsByOwner, plansByUser] =
+    await Promise.all([
+      db
+        .select({ ownerId: drafts.ownerId, drafts: count() })
+        .from(drafts)
+        .where(and(liveDraftFilter, inArray(drafts.ownerId, pageUserIds)))
+        .groupBy(drafts.ownerId),
+      db
+        .select({
+          ownerId: drafts.ownerId,
+          bytes: sql<string>`sum(coalesce(${draftVersions.totalSizeBytes}, ${draftVersions.sizeBytes}))`,
+        })
+        .from(draftVersions)
+        .innerJoin(drafts, eq(draftVersions.draftId, drafts.id))
+        .where(and(liveDraftFilter, inArray(drafts.ownerId, pageUserIds)))
+        .groupBy(drafts.ownerId),
+      db
+        .select({ ownerId: uploadIntents.ownerId, bytes: sum(uploadIntents.expectedBytes) })
+        .from(uploadIntents)
+        .where(
+          and(
+            inArray(uploadIntents.ownerId, pageUserIds),
+            eq(uploadIntents.status, "pending"),
+            gt(uploadIntents.expiresAt, sql`now()`),
+          ),
+        )
+        .groupBy(uploadIntents.ownerId),
+      db
+        .select({ userId: apiTokens.userId, tokens: count() })
+        .from(apiTokens)
+        .where(and(activeTokenFilter, inArray(apiTokens.userId, pageUserIds)))
+        .groupBy(apiTokens.userId),
+      db
+        .select({
+          userId: userBlocks.userId,
+          id: userBlocks.id,
+          reason: userBlocks.reason,
+        })
+        .from(userBlocks)
+        .where(inArray(userBlocks.userId, pageUserIds)),
+      getViewCountsByOwner(pageUserIds),
+      getEffectivePlansForUsers(pageUserIds, db),
+    ]);
 
   const draftsByOwner = new Map(draftAgg.map((row) => [row.ownerId, row.drafts]));
   const bytesByOwner = new Map(storageAgg.map((row) => [row.ownerId, Number(row.bytes ?? 0)]));
@@ -164,16 +177,34 @@ export async function listUsersWithUsage({
   const tokensByUser = new Map(tokenAgg.map((row) => [row.userId, row.tokens]));
   const blocksByUser = new Map(blockRows.map((row) => [row.userId, row]));
 
-  return allUsers.map((user) => ({
-    ...user,
-    draftCount: draftsByOwner.get(user.id) ?? 0,
-    storageBytes: bytesByOwner.get(user.id) ?? 0,
-    reservedBytes: reservedByOwner.get(user.id) ?? 0,
-    tokenCount: tokensByUser.get(user.id) ?? 0,
-    views30d: viewsByOwner.get(user.id) ?? 0,
-    blockId: blocksByUser.get(user.id)?.id ?? null,
-    blockReason: blocksByUser.get(user.id)?.reason ?? null,
-  }));
+  return allUsers.map((user) => {
+    const resolved = plansByUser.get(user.id);
+    const subscription = resolved?.subscription ?? null;
+    return {
+      ...user,
+      effectivePlan: resolved ?? {
+        plan: user.plan,
+        storageBytes: null,
+        source: "granted" as const,
+      },
+      subscription: subscription
+        ? {
+            productName: subscription.productName,
+            status: subscription.status,
+            storageBytes: subscription.storageBytes,
+            currentPeriodEnd: subscription.currentPeriodEnd,
+            cancelAtPeriodEnd: subscription.cancelAtPeriodEnd,
+          }
+        : null,
+      draftCount: draftsByOwner.get(user.id) ?? 0,
+      storageBytes: bytesByOwner.get(user.id) ?? 0,
+      reservedBytes: reservedByOwner.get(user.id) ?? 0,
+      tokenCount: tokensByUser.get(user.id) ?? 0,
+      views30d: viewsByOwner.get(user.id) ?? 0,
+      blockId: blocksByUser.get(user.id)?.id ?? null,
+      blockReason: blocksByUser.get(user.id)?.reason ?? null,
+    };
+  });
 }
 
 export type IdentityBlockRow = {
@@ -623,6 +654,8 @@ export async function blockUser(
       },
     });
   });
+  // A blocked account must not keep paying for a service it cannot use.
+  await revokeBillingForUser(targetUserId, "blocked");
 }
 
 export async function unblockIdentityBlock(
@@ -923,6 +956,9 @@ async function deleteUser(
   });
   if (!deletion) return;
 
+  // The provider cancels subscriptions and forgets the customer; local rows
+  // were removed by the users cascade above.
+  await revokeBillingForUser(targetUserId, "deleted");
   // Best effort now; the cron retries any event that remains pending.
   await purgeUserDeletionObjects(deletion.eventId, deletion.metadata);
 }

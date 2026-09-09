@@ -16,7 +16,7 @@ import { setSignupsEnabled } from "@/lib/settings/service";
 
 const userIdSchema = z.string().min(1).max(255);
 const draftIdSchema = z.uuid();
-const planSchema = z.enum(["free", "unlimited"]);
+const planSchema = z.enum(["free", "pro", "unlimited"]);
 const roleSchema = z.enum(["user", "admin"]);
 const blockIdSchema = z.uuid();
 const blockReasonSchema = z.string().trim().min(1).max(500);

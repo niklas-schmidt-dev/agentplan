@@ -249,7 +249,14 @@ Errors have a stable shape agents can match on:
 { "error": { "code": "INVALID_FILE_TYPE", "message": "Only HTML files are supported." } }
 ```
 
-## Limits & abuse protection
+## Plans, limits & abuse protection
+
+Three plans exist. **Free** applies the caps below. **Pro** removes the draft,
+version, and token caps and is bound only by storage (10 GiB by default,
+configurable per product); it can be sold through the optional
+[Polar integration](docs/self-hosting.md#optional-paid-plans-through-polar) or
+granted by an administrator. **Unlimited** is an operator plan that bypasses
+every quota and is never sold.
 
 Free-plan limits (all server-enforced; tunable via `AP_*` env vars, defaults in
 `lib/limits/plans.ts`):
@@ -267,7 +274,8 @@ Free-plan limits (all server-enforced; tunable via `AP_*` env vars, defaults in
 | Token create/revoke operations | 60 / hour and 200 / day                       |
 | Draft password attempts        | 10 / 15 min per draft + IP                    |
 
-File and bundle sizes use the remaining storage quota; `unlimited` bypasses it.
+File and bundle sizes use the remaining storage quota; `pro` raises it and
+`unlimited` bypasses it.
 Dashboard and CLI uploads go directly to storage, including standalone HTML.
 The legacy buffered HTML multipart endpoints retain a small request-body bound
 and direct larger uploads to `/api/v1/uploads/intents`. Storage provider limits

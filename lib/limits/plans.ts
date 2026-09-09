@@ -1,6 +1,6 @@
 import type { DraftKind, UserPlan } from "@/db/schema";
 
-/** null = no limit. All values apply to the "free" plan; "unlimited" gets null everywhere. */
+/** null = no limit. */
 export type EffectiveLimits = {
   maxDrafts: number | null;
   /** Hard cap: existing versions stay available when uploads reach the limit. */
@@ -19,7 +19,26 @@ function envInt(name: string, fallback: number): number {
   return Number.isSafeInteger(value) && value > 0 ? value : fallback;
 }
 
-export function limitsForPlan(plan: UserPlan): EffectiveLimits {
+export const GiB = 1024 ** 3;
+
+/**
+ * Storage included with Pro when neither the billing product nor an admin says
+ * otherwise. Pro is deliberately storage-bound: drafts, versions, and tokens are
+ * unlimited, so this single number is what the subscription actually sells.
+ */
+export function defaultProStorageBytes(): number {
+  return envInt("AP_PRO_STORAGE_BYTES", 10 * GiB);
+}
+
+/**
+ * Plan tiers:
+ * - free: every cap applies.
+ * - pro: only storage (and generous upload rate limits) apply. `storageBytes`
+ *   comes from the billing subscription; admins granting Pro manually get the
+ *   default.
+ * - unlimited: operator/admin plan; bypasses everything, never sold.
+ */
+export function limitsForPlan(plan: UserPlan, storageBytes?: number | null): EffectiveLimits {
   if (plan === "unlimited") {
     return {
       maxDrafts: null,
@@ -28,6 +47,16 @@ export function limitsForPlan(plan: UserPlan): EffectiveLimits {
       maxActiveTokens: null,
       uploadsPerTenMinutes: null,
       uploadsPerDay: null,
+    };
+  }
+  if (plan === "pro") {
+    return {
+      maxDrafts: null,
+      keepVersionsByKind: { html: null, image: null, video: null },
+      maxStorageBytes: storageBytes ?? defaultProStorageBytes(),
+      maxActiveTokens: null,
+      uploadsPerTenMinutes: envInt("AP_PRO_UPLOADS_PER_10MIN", 120),
+      uploadsPerDay: envInt("AP_PRO_UPLOADS_PER_DAY", 2_000),
     };
   }
   return {

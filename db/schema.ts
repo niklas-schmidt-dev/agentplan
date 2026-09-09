@@ -18,7 +18,7 @@ import {
   type AnyPgColumn,
 } from "drizzle-orm/pg-core";
 
-export const userPlan = pgEnum("user_plan", ["free", "unlimited"]);
+export const userPlan = pgEnum("user_plan", ["free", "pro", "unlimited"]);
 export const userRole = pgEnum("user_role", ["user", "admin"]);
 
 // --- Better Auth tables (shape must match better-auth's generated schema) ---
@@ -31,8 +31,10 @@ export const users = pgTable(
     email: text("email").notNull().unique(),
     emailVerified: boolean("email_verified").default(false).notNull(),
     image: text("image"),
-    // App-managed, invisible to Better Auth. "unlimited" bypasses quotas and
-    // upload rate limits; set via scripts/set-user-plan.ts.
+    // App-managed, invisible to Better Auth. This is the operator-granted plan
+    // (admin UI or scripts/set-user-plan.ts). A paid subscription lives in
+    // billing_subscriptions; lib/limits/plans.ts combines both and never lets
+    // billing lower a manually granted plan. "unlimited" bypasses every quota.
     plan: userPlan("plan").notNull().default("free"),
     // Assigned by the signup hook in lib/auth/auth.ts: the very first user
     // becomes "admin"; admins manage users and settings under /dashboard/admin.
@@ -414,6 +416,42 @@ export const draftViewEvents = pgTable(
   ],
 );
 
+// One row per user with an active (or trialing) paid subscription, mirrored
+// from the billing provider through webhooks and the daily reconcile job. The
+// row is deleted when the provider reports no active subscription; it never
+// overrides the operator-granted users.plan.
+export const billingSubscriptions = pgTable(
+  "billing_subscriptions",
+  {
+    userId: text("user_id")
+      .primaryKey()
+      .references(() => users.id, { onDelete: "cascade" }),
+    provider: varchar("provider", { length: 32 }).notNull().default("polar"),
+    customerId: text("customer_id").notNull(),
+    subscriptionId: text("subscription_id").notNull().unique(),
+    productId: text("product_id").notNull(),
+    productName: text("product_name").notNull(),
+    status: varchar("status", { length: 32 }).notNull(),
+    // Resolved storage quota for this subscription (product metadata or the
+    // configured Pro default) so quota checks never call the provider.
+    storageBytes: bigint("storage_bytes", { mode: "number" }).notNull(),
+    // Display-only price snapshot in minor units (e.g. cents).
+    amount: integer("amount").notNull().default(0),
+    currency: varchar("currency", { length: 8 }).notNull().default("usd"),
+    recurringInterval: varchar("recurring_interval", { length: 16 }),
+    currentPeriodEnd: timestamp("current_period_end", { withTimezone: true }),
+    cancelAtPeriodEnd: boolean("cancel_at_period_end").notNull().default(false),
+    endsAt: timestamp("ends_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .$onUpdate(() => new Date())
+      .notNull(),
+    syncedAt: timestamp("synced_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [index("billing_subscriptions_period_end_idx").on(table.currentPeriodEnd)],
+);
+
 // Admin-managed runtime settings (e.g. "signups_enabled"). A missing key means
 // the setting's default applies; see lib/settings/service.ts.
 export const appSettings = pgTable("app_settings", {
@@ -454,3 +492,4 @@ export type DraftViewerKind = (typeof draftViewerKind.enumValues)[number];
 export type Visibility = (typeof draftVisibility.enumValues)[number];
 export type UserPlan = (typeof userPlan.enumValues)[number];
 export type UserRole = (typeof userRole.enumValues)[number];
+export type BillingSubscription = typeof billingSubscriptions.$inferSelect;

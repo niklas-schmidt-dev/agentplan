@@ -55,7 +55,14 @@ The core security invariants are:
     and upload moderation mutation rechecks the actor's current database role.
     Moderated uploads leave all read paths immediately and are permanently purged
     by the deleted-draft retention job.
-11. **No secrets in the repository.** Only `.env.example` placeholders are committed.
+11. **Billing never lowers entitlements below what an operator granted, and
+    entitlements are provider-verified.** Webhooks from the payment provider are
+    signature- and timestamp-checked, then reduced to an idempotent re-read of
+    the customer's state keyed by the account ID; a daily reconcile bounds drift
+    from lost deliveries. Checkout and portal links are minted server-side for
+    the signed-in user only. Blocking or deleting an account also revokes its
+    subscription so nobody keeps paying for a service they cannot use.
+12. **No secrets in the repository.** Only `.env.example` placeholders are committed.
     CI scans the current tree and complete reachable Git history without printing
     matched values.
 

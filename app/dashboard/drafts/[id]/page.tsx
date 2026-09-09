@@ -11,6 +11,7 @@ import { NewVersionForm } from "@/components/dashboard/upload-form";
 import { VisibilityControls } from "@/components/dashboard/visibility-controls";
 import { getDraftForOwner, listVersions } from "@/db/queries/drafts";
 import { isAdmin, requireUser } from "@/lib/auth/session";
+import { isBillingConfigured } from "@/lib/billing/config";
 import { formatBytes, formatRelativeTime } from "@/lib/format";
 import { draftUrl, draftVersionPath, draftVersionUrl } from "@/lib/urls";
 import { uuidSchema } from "@/lib/validation/api";
@@ -40,7 +41,11 @@ export default async function DraftDetailPage({
 
   return (
     <main className="mx-auto flex min-h-dvh w-full max-w-5xl flex-col gap-6 px-6 py-8">
-      <DashboardHeader email={user.email} isAdmin={isAdmin(user)} />
+      <DashboardHeader
+        email={user.email}
+        isAdmin={isAdmin(user)}
+        billingEnabled={isBillingConfigured()}
+      />
 
       <section className="flex flex-col gap-4">
         <form action={renameDraftAction} className="flex flex-wrap items-center gap-2">

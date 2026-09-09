@@ -4,6 +4,7 @@ import { AdminUnblockButton } from "@/components/dashboard/admin-unblock-button"
 import { DashboardHeader } from "@/components/dashboard/header";
 import { listIdentityBlocks } from "@/lib/admin/service";
 import { isAdmin, requireAdmin } from "@/lib/auth/session";
+import { isBillingConfigured } from "@/lib/billing/config";
 import { formatRelativeTime } from "@/lib/format";
 
 export const metadata = { title: "Blocked identities" };
@@ -37,7 +38,11 @@ export default async function AdminBlocksPage({
 
   return (
     <main className="mx-auto flex min-h-dvh w-full max-w-5xl flex-col gap-6 px-6 py-8">
-      <DashboardHeader email={admin.email} isAdmin={isAdmin(admin)} />
+      <DashboardHeader
+        email={admin.email}
+        isAdmin={isAdmin(admin)}
+        billingEnabled={isBillingConfigured()}
+      />
 
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>

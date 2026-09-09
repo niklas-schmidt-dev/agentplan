@@ -4,6 +4,7 @@ import { AdminDraftActions } from "@/components/dashboard/admin-draft-actions";
 import { DashboardHeader } from "@/components/dashboard/header";
 import { listDraftsForAdmin } from "@/lib/admin/service";
 import { isAdmin, requireAdmin } from "@/lib/auth/session";
+import { isBillingConfigured } from "@/lib/billing/config";
 import { formatBytes, formatRelativeTime } from "@/lib/format";
 import { deletedDraftRetentionDays } from "@/lib/limits/plans";
 
@@ -60,7 +61,11 @@ export default async function AdminContentPage({
 
   return (
     <main className="mx-auto flex min-h-dvh w-full max-w-5xl flex-col gap-6 px-6 py-8">
-      <DashboardHeader email={admin.email} isAdmin={isAdmin(admin)} />
+      <DashboardHeader
+        email={admin.email}
+        isAdmin={isAdmin(admin)}
+        billingEnabled={isBillingConfigured()}
+      />
 
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
