@@ -7,11 +7,13 @@ import { DangerButton } from "@/components/dashboard/danger-button";
 import { DashboardHeader } from "@/components/dashboard/header";
 import { Suspense } from "react";
 import { DraftAnalytics } from "@/components/dashboard/draft-analytics";
+import { UpgradePrompt } from "@/components/dashboard/upgrade-prompt";
 import { NewVersionForm } from "@/components/dashboard/upload-form";
 import { VisibilityControls } from "@/components/dashboard/visibility-controls";
 import { getDraftForOwner, listVersions } from "@/db/queries/drafts";
 import { isAdmin, requireUser } from "@/lib/auth/session";
 import { isBillingConfigured } from "@/lib/billing/config";
+import { limitsForEffectivePlan } from "@/lib/billing/plan";
 import { getEffectivePlanForUser } from "@/lib/billing/service";
 import { formatBytes, formatRelativeTime } from "@/lib/format";
 import { draftUrl, draftVersionPath, draftVersionUrl } from "@/lib/urls";
@@ -38,6 +40,9 @@ export default async function DraftDetailPage({
   const billingEnabled = isBillingConfigured();
   const upgradeHref =
     billingEnabled && effective.plan === "free" ? "/dashboard/billing" : undefined;
+  const versionCap = limitsForEffectivePlan(effective).keepVersionsByKind[draft.kind];
+  const atVersionCap = versionCap !== null && versions.length >= versionCap;
+  const capLabel = versionCap === 1 ? "one version" : `${versionCap} versions`;
   const { version: requestedVersion } = await searchParams;
   const selectedVersion = versions.find(
     (version) => version.id === (requestedVersion ?? draft.currentVersionId),
@@ -138,7 +143,20 @@ export default async function DraftDetailPage({
       </Suspense>
 
       <section className="flex flex-col gap-3">
-        <NewVersionForm draftId={draft.id} kind={draft.kind} upgradeHref={upgradeHref} />
+        {!atVersionCap ? (
+          <NewVersionForm draftId={draft.id} kind={draft.kind} upgradeHref={upgradeHref} />
+        ) : upgradeHref ? (
+          <UpgradePrompt
+            title="Version history is a Pro feature"
+            message={`Free keeps ${capLabel} per draft. This link keeps working. Pro lets you add, pin, and restore versions without a cap.`}
+            href={upgradeHref}
+            alternative="or upload the new file as a separate draft"
+          />
+        ) : (
+          <p className="font-mono text-xs text-ink-faint">
+            This plan keeps {capLabel} per draft. Upload the new file as a separate draft.
+          </p>
+        )}
 
         <h2 className="font-mono text-sm text-ink-muted">version history</h2>
         <ul className="flex flex-col divide-y divide-edge rounded-md border border-edge bg-surface">
@@ -188,7 +206,11 @@ export default async function DraftDetailPage({
                   label="copy version link"
                 />
                 {version.id !== draft.currentVersionId ? (
-                  <RestoreVersionForm draftId={draft.id} versionId={version.id} />
+                  <RestoreVersionForm
+                    draftId={draft.id}
+                    versionId={version.id}
+                    upgradeHref={upgradeHref}
+                  />
                 ) : null}
               </div>
             </li>

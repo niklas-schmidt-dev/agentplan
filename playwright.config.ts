@@ -51,6 +51,11 @@ export default defineConfig({
       AUTH_EMAIL_FROM: "",
       GITHUB_CLIENT_ID: "",
       GITHUB_CLIENT_SECRET: "",
+      // Journeys upload and restore versions on Free fixtures; the product
+      // default keeps one version per draft (covered by integration tests).
+      AP_MAX_VERSIONS_PER_DRAFT: "100",
+      AP_MAX_IMAGE_VERSIONS_PER_DRAFT: "20",
+      AP_MAX_VIDEO_VERSIONS_PER_DRAFT: "2",
     },
   },
 });

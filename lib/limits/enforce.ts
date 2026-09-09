@@ -86,7 +86,9 @@ export async function lockAndAssertUploadQuota(
           .where(eq(draftVersions.draftId, params.targetDraftId));
         if ((versions?.count ?? 0) >= cap) {
           throw new QuotaExceededError(
-            `Version limit reached (${cap}). Your saved versions and links are preserved. Create a new draft or upgrade your plan to upload more versions.`,
+            cap === 1
+              ? "Version limit reached (1): Free keeps one version per draft and its link stays preserved. Upload a new draft, or upgrade to Pro for version history and restore."
+              : `Version limit reached (${cap}). Your saved versions and links are preserved. Create a new draft or upgrade your plan to upload more versions.`,
           );
         }
       }

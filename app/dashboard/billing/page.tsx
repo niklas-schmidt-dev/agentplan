@@ -110,9 +110,9 @@ export default async function BillingPage({
           </h1>
           <p className="max-w-lg text-sm leading-6 text-ink-muted">
             {effective.plan === "free"
-              ? "Links never expire on Free. When a limit is reached, new uploads wait until you make space or move to Pro."
+              ? "Links never expire on Free. Each draft keeps one version; when a limit is reached, new uploads wait until you make space or move to Pro."
               : effective.plan === "pro"
-                ? "Drafts, versions, and tokens are uncapped. Only storage counts, and you can see exactly how much is left."
+                ? "Version history, restore, drafts, and tokens are uncapped. Only storage counts, and you can see exactly how much is left."
                 : "This account was granted the unlimited plan by an administrator."}
           </p>
           {subscription ? (
@@ -163,8 +163,9 @@ export default async function BillingPage({
           </div>
           <PlanComparison columns={columns} />
           <p className="max-w-2xl text-sm leading-6 text-ink-muted">
-            Pro is billed by Polar, which handles tax and invoices. If you cancel, every draft and
-            link you published stays online; only new uploads go back to the Free limits.
+            Pro is billed by Polar, which handles tax and invoices. If you cancel, every draft,
+            version, and link you published stays online; only new uploads go back to the Free
+            limits.
           </p>
         </section>
       ) : paying ? null : (

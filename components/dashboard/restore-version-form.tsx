@@ -2,8 +2,17 @@
 
 import { useActionState } from "react";
 import { restoreVersionAction } from "@/app/dashboard/actions";
+import { UpgradePrompt } from "./upgrade-prompt";
 
-export function RestoreVersionForm({ draftId, versionId }: { draftId: string; versionId: string }) {
+export function RestoreVersionForm({
+  draftId,
+  versionId,
+  upgradeHref,
+}: {
+  draftId: string;
+  versionId: string;
+  upgradeHref?: string;
+}) {
   const [state, action, pending] = useActionState(restoreVersionAction, null);
   return (
     <form action={action} className="flex flex-col items-start gap-2">
@@ -17,7 +26,9 @@ export function RestoreVersionForm({ draftId, versionId }: { draftId: string; ve
       >
         {pending ? "restoring…" : "restore as current"}
       </button>
-      {state?.error ? (
+      {state?.error && state.quota && upgradeHref ? (
+        <UpgradePrompt title="Restore is a Pro feature" message={state.error} href={upgradeHref} />
+      ) : state?.error ? (
         <p role="alert" className="max-w-sm text-danger">
           {state.error}
         </p>

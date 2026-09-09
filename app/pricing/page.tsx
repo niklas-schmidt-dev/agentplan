@@ -20,9 +20,9 @@ const promises = [
   },
   {
     index: "02",
-    name: "Pro is storage, nothing else",
+    name: "Pro unlocks history",
     detail:
-      "Drafts, versions, and API tokens are uncapped. You pay for the gigabytes your uploads occupy.",
+      "Every upload to a Pro draft becomes a version you can share, pin, and restore. Drafts and API tokens are uncapped; only storage is metered.",
   },
   {
     index: "03",
@@ -101,9 +101,10 @@ export default async function PricingPage() {
         </h1>
         <p className="max-w-xl text-base leading-7 text-ink-muted">
           Free gives every account {formatBytes(free.maxStorageBytes ?? 0)},{" "}
-          {free.maxDrafts ?? "unlimited"} drafts, and {free.maxActiveTokens ?? "unlimited"} API
-          tokens. Pro removes the counts and sells storage by the gigabyte, billed by Polar so tax
-          and invoices are handled for you.
+          {free.maxDrafts ?? "unlimited"} drafts with one version each, and{" "}
+          {free.maxActiveTokens ?? "unlimited"} API tokens. Pro adds version history and restore,
+          removes the counts, and sells storage by the gigabyte, billed by Polar so tax and invoices
+          are handled for you.
         </p>
       </section>
 

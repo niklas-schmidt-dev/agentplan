@@ -39,25 +39,34 @@ export function offerPrice(offer: ProPlanOffer): ReactNode {
   );
 }
 
-function limitCell(value: number | null, format: (value: number) => string = String): ReactNode {
+/** Values that read as "the good one" are emphasised in the paid column. */
+const EMPHASISED = new Set(["unlimited", "included"]);
+
+function limitCell(value: number | null, format: (value: number) => string = String): string {
   return value === null ? "unlimited" : format(value);
 }
 
-function versionsCell(limits: EffectiveLimits): ReactNode {
+function versionsCell(limits: EffectiveLimits): string {
   const { html, image, video } = limits.keepVersionsByKind;
   if (html === null && image === null && video === null) return "unlimited";
+  if (html === image && image === video) return String(html);
   return `${html ?? "∞"} html · ${image ?? "∞"} image · ${video ?? "∞"} video`;
 }
 
-const rows: Array<{ label: string; cell: (limits: EffectiveLimits) => ReactNode }> = [
+/** Restore copies an old version forward, so it needs room for more than one. */
+function restoreCell(limits: EffectiveLimits): string {
+  const { html, image, video } = limits.keepVersionsByKind;
+  return [html, image, video].every((cap) => cap === null || cap > 1) ? "included" : "—";
+}
+
+// Upload rate windows are abuse throttles shared by every plan and are
+// deliberately not listed here.
+const rows: Array<{ label: string; cell: (limits: EffectiveLimits) => string }> = [
   { label: "storage", cell: (limits) => limitCell(limits.maxStorageBytes, formatBytes) },
   { label: "drafts", cell: (limits) => limitCell(limits.maxDrafts) },
   { label: "versions per draft", cell: versionsCell },
+  { label: "restore any version", cell: restoreCell },
   { label: "api tokens", cell: (limits) => limitCell(limits.maxActiveTokens) },
-  {
-    label: "uploads per day",
-    cell: (limits) => limitCell(limits.uploadsPerDay),
-  },
 ];
 
 /**
@@ -75,8 +84,8 @@ export function PlanComparison({ columns }: { columns: PlanColumn[] }) {
           className="grid items-end gap-x-6"
           style={{ gridTemplateColumns: template }}
         >
-          <span role="columnheader" className="sr-only">
-            feature
+          <span role="columnheader" className="border-t-2 border-transparent pt-4 pb-5">
+            <span className="sr-only">feature</span>
           </span>
           {columns.map((column) => (
             <div
@@ -111,17 +120,18 @@ export function PlanComparison({ columns }: { columns: PlanColumn[] }) {
             </span>
             {columns.map((column) => {
               const value = row.cell(column.limits);
-              const unlimited = value === "unlimited";
               return (
                 <span
                   key={column.key}
                   role="cell"
                   className={`font-mono text-sm tabular-nums ${
-                    unlimited && column.highlighted
+                    EMPHASISED.has(value) && column.highlighted
                       ? "text-lime"
                       : column.highlighted
                         ? "text-ink"
-                        : "text-ink-muted"
+                        : value === "—"
+                          ? "text-ink-faint"
+                          : "text-ink-muted"
                   }`}
                 >
                   {value}
@@ -136,8 +146,8 @@ export function PlanComparison({ columns }: { columns: PlanColumn[] }) {
             className="grid items-start gap-x-6 border-t border-edge pt-5"
             style={{ gridTemplateColumns: template }}
           >
-            <span role="rowheader" className="sr-only">
-              action
+            <span role="rowheader">
+              <span className="sr-only">action</span>
             </span>
             {columns.map((column) => (
               <div key={column.key} role="cell" className="min-w-0">

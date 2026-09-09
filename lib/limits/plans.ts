@@ -32,7 +32,8 @@ export function defaultProStorageBytes(): number {
 
 /**
  * Plan tiers:
- * - free: every cap applies.
+ * - free: every cap applies, including one version per draft. Upload rate
+ *   windows are abuse throttles shared by every plan, not a product feature.
  * - pro: only storage (and generous upload rate limits) apply. `storageBytes`
  *   comes from the billing subscription; admins granting Pro manually get the
  *   default.
@@ -61,10 +62,12 @@ export function limitsForPlan(plan: UserPlan, storageBytes?: number | null): Eff
   }
   return {
     maxDrafts: envInt("AP_MAX_DRAFTS_PER_USER", 50),
+    // Version history and restore are Pro features: Free keeps the first
+    // upload of a draft and nothing else.
     keepVersionsByKind: {
-      html: envInt("AP_MAX_VERSIONS_PER_DRAFT", 100),
-      image: envInt("AP_MAX_IMAGE_VERSIONS_PER_DRAFT", 20),
-      video: envInt("AP_MAX_VIDEO_VERSIONS_PER_DRAFT", 2),
+      html: envInt("AP_MAX_VERSIONS_PER_DRAFT", 1),
+      image: envInt("AP_MAX_IMAGE_VERSIONS_PER_DRAFT", 1),
+      video: envInt("AP_MAX_VIDEO_VERSIONS_PER_DRAFT", 1),
     },
     maxStorageBytes: envInt("AP_MAX_STORAGE_BYTES_PER_USER", 50 * 1024 * 1024),
     maxActiveTokens: envInt("AP_MAX_ACTIVE_TOKENS_PER_USER", 5),
