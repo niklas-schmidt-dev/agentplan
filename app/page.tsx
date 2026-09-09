@@ -35,6 +35,12 @@ export default function LandingPage() {
             sign in
           </Link>
           <Link
+            href="/pricing"
+            className="font-mono text-sm text-ink-muted transition-colors hover:text-lime"
+          >
+            pricing →
+          </Link>
+          <Link
             href="/self-host"
             className="font-mono text-sm text-ink-muted transition-colors hover:text-lime"
           >

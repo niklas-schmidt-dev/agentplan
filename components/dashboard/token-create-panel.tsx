@@ -3,18 +3,29 @@
 import { useActionState, useState } from "react";
 import { createTokenAction, type CreateTokenState } from "@/app/dashboard/actions";
 import { CopyButton } from "./copy-button";
+import { UpgradePrompt } from "./upgrade-prompt";
 
 const inputClass =
   "rounded border border-edge bg-surface px-3 py-2 font-mono text-sm text-ink placeholder:text-ink-faint";
 
-export function TokenCreatePanel() {
+export function TokenCreatePanel({ upgradeHref }: { upgradeHref?: string } = {}) {
   const [generation, setGeneration] = useState(0);
   return (
-    <TokenCreateForm key={generation} onAcknowledged={() => setGeneration((value) => value + 1)} />
+    <TokenCreateForm
+      key={generation}
+      upgradeHref={upgradeHref}
+      onAcknowledged={() => setGeneration((value) => value + 1)}
+    />
   );
 }
 
-function TokenCreateForm({ onAcknowledged }: { onAcknowledged: () => void }) {
+function TokenCreateForm({
+  onAcknowledged,
+  upgradeHref,
+}: {
+  onAcknowledged: () => void;
+  upgradeHref?: string;
+}) {
   const [state, action, pending] = useActionState<CreateTokenState, FormData>(
     createTokenAction,
     null,
@@ -83,7 +94,13 @@ function TokenCreateForm({ onAcknowledged }: { onAcknowledged: () => void }) {
         expires in days <span className="text-ink-faint">(optional)</span>
         <input type="number" name="expiresInDays" min={1} max={365} className={inputClass} />
       </label>
-      {state && "error" in state ? (
+      {state && "error" in state && state.quota && upgradeHref ? (
+        <UpgradePrompt
+          message={state.error}
+          href={upgradeHref}
+          alternative="or revoke a token you no longer use"
+        />
+      ) : state && "error" in state ? (
         <p role="alert" className="font-mono text-xs text-danger">
           {state.error}
         </p>

@@ -55,7 +55,7 @@ try {
               data: {
                 filename: "quota-reservation.html",
                 contentType: "text/html",
-                sizeBytes: 300 * 1024 * 1024 - 1024,
+                sizeBytes: 50 * 1024 * 1024 - 1024,
                 target: {
                   type: "new",
                   title: "QA pending quota reservation",

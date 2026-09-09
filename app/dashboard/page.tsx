@@ -14,7 +14,7 @@ import { isBillingConfigured } from "@/lib/billing/config";
 import { limitsForEffectivePlan } from "@/lib/billing/plan";
 import { getEffectivePlanForUser } from "@/lib/billing/service";
 import { formatBytes, formatRelativeTime } from "@/lib/format";
-import { getUserStorageUsage } from "@/lib/limits/enforce";
+import { getUserStorageUsage, getUserUsageCounts } from "@/lib/limits/enforce";
 import { listPendingUploadIntents } from "@/lib/uploads/service";
 import { draftUrl } from "@/lib/urls";
 import { visibilitySchema } from "@/lib/validation/api";
@@ -32,7 +32,7 @@ export default async function DashboardPage({
   const search = params.q?.trim() || undefined;
 
   const billingEnabled = isBillingConfigured();
-  const [page, usage, effective, intents] = await Promise.all([
+  const [page, usage, effective, intents, counts] = await Promise.all([
     listDraftsPageForOwner(user.id, {
       search,
       limit: 50,
@@ -43,6 +43,7 @@ export default async function DashboardPage({
     getUserStorageUsage(user.id),
     getEffectivePlanForUser(user.id),
     listPendingUploadIntents(user.id),
+    getUserUsageCounts(user.id),
   ]).catch((error: unknown) => {
     if (error instanceof InvalidDraftCursorError) redirect("/dashboard");
     throw error;
@@ -64,6 +65,9 @@ export default async function DashboardPage({
   const storageUsed = usage.committedBytes + usage.reservedBytes;
   const nearStorageLimit =
     limits.maxStorageBytes !== null && storageUsed >= limits.maxStorageBytes * 0.8;
+  const nearDraftLimit = limits.maxDrafts !== null && counts.draftCount >= limits.maxDrafts * 0.8;
+  const upgradeHref =
+    billingEnabled && effective.plan === "free" ? "/dashboard/billing" : undefined;
 
   return (
     <main className="mx-auto flex min-h-dvh w-full max-w-5xl flex-col gap-6 px-6 py-8">
@@ -72,12 +76,12 @@ export default async function DashboardPage({
       <details className="rounded-md border border-edge bg-surface p-4" open={drafts.length === 0}>
         <summary className="cursor-pointer font-mono text-sm text-lime">+ new draft</summary>
         <div className="pt-4">
-          <NewDraftForm />
+          <NewDraftForm upgradeHref={upgradeHref} />
         </div>
       </details>
 
-      <section className="flex flex-wrap items-end justify-between gap-4 rounded-md border border-edge bg-surface px-4 py-3 font-mono text-xs">
-        <div className="w-full max-w-xs">
+      <section className="flex flex-wrap items-end justify-between gap-x-8 gap-y-4 rounded-md border border-edge bg-surface px-4 py-3 font-mono text-xs">
+        <div className="grid w-full max-w-lg grid-cols-1 gap-x-8 gap-y-3 sm:grid-cols-2">
           <UsageMeter
             label={`storage · ${effective.plan} plan`}
             used={storageUsed}
@@ -89,17 +93,18 @@ export default async function DashboardPage({
                 : undefined
             }
           />
+          <UsageMeter label="drafts" used={counts.draftCount} limit={limits.maxDrafts} />
         </div>
-        {billingEnabled && effective.plan === "free" ? (
+        {upgradeHref ? (
           <Link
-            href="/dashboard/billing"
+            href={upgradeHref}
             className={`rounded border px-3 py-1.5 transition-colors ${
-              nearStorageLimit
+              nearStorageLimit || nearDraftLimit
                 ? "border-lime text-lime hover:bg-lime/10"
                 : "border-edge text-ink-muted hover:border-lime hover:text-lime"
             }`}
           >
-            {nearStorageLimit ? "almost full — upgrade to pro →" : "upgrade to pro →"}
+            {nearStorageLimit || nearDraftLimit ? "almost at the limit — see pro →" : "see pro →"}
           </Link>
         ) : null}
       </section>

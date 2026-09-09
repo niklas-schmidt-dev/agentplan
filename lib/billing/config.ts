@@ -11,6 +11,8 @@ export type BillingConfig = {
   accessToken: string;
   webhookSecret: string;
   server: "production" | "sandbox";
+  /** Explicit API origin; overrides `server`. Used for local mocks in QA. */
+  serverUrl?: string;
   /** Products that grant Pro, in the order offered at checkout. */
   productIds: string[];
 };
@@ -33,8 +35,10 @@ export function readBillingConfig(
   const webhookSecret = env.POLAR_WEBHOOK_SECRET?.trim();
   const productIds = parseProductIds(env.POLAR_PRO_PRODUCT_IDS);
   if (!accessToken || !webhookSecret || productIds.length === 0) return null;
-  const server = env.POLAR_SERVER?.trim().toLowerCase() === "sandbox" ? "sandbox" : "production";
-  return { accessToken, webhookSecret, server, productIds };
+  const rawServer = env.POLAR_SERVER?.trim() ?? "";
+  const serverUrl = /^https?:\/\//i.test(rawServer) ? rawServer.replace(/\/+$/, "") : undefined;
+  const server = rawServer.toLowerCase() === "sandbox" ? "sandbox" : "production";
+  return { accessToken, webhookSecret, server, productIds, ...(serverUrl ? { serverUrl } : {}) };
 }
 
 export function isBillingConfigured(
@@ -48,11 +52,14 @@ let cachedClient: { key: string; client: Polar } | undefined;
 /** Lazy singleton; constructing it must not be needed at build time. */
 export function getPolarClient(config: BillingConfig | null = readBillingConfig()): Polar {
   if (!config) throw new Error("Billing is not configured (POLAR_* variables are missing)");
-  const key = `${config.server}:${config.accessToken}`;
+  const key = `${config.serverUrl ?? config.server}:${config.accessToken}`;
   if (cachedClient?.key !== key) {
     cachedClient = {
       key,
-      client: new Polar({ accessToken: config.accessToken, server: config.server }),
+      client: new Polar({
+        accessToken: config.accessToken,
+        ...(config.serverUrl ? { serverURL: config.serverUrl } : { server: config.server }),
+      }),
     };
   }
   return cachedClient.client;

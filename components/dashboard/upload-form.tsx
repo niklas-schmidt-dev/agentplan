@@ -4,6 +4,7 @@ import { completeBrowserUpload, UncertainCompletionError } from "@/lib/uploads/b
 import { mapWithConcurrency } from "@/lib/uploads/concurrency";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { UpgradePrompt } from "./upgrade-prompt";
 import {
   normalizeBundlePath,
   selectBundleEntry,
@@ -17,13 +18,36 @@ import {
 const inputClass =
   "rounded border border-edge bg-surface px-3 py-2 font-mono text-sm text-ink placeholder:text-ink-faint";
 
-async function uploadError(response: Response): Promise<string> {
-  try {
-    const body = (await response.json()) as { error?: { message?: string } };
-    return body.error?.message ?? "Upload failed. Please try again.";
-  } catch {
-    return "Upload failed. Please try again.";
+/** Carries the public API error code so the form can react to quota rejections. */
+class UploadRequestError extends Error {
+  constructor(
+    message: string,
+    readonly code: string | null,
+  ) {
+    super(message);
+    this.name = "UploadRequestError";
   }
+}
+
+async function uploadError(response: Response): Promise<UploadRequestError> {
+  try {
+    const body = (await response.json()) as { error?: { code?: string; message?: string } };
+    return new UploadRequestError(
+      body.error?.message ?? "Upload failed. Please try again.",
+      body.error?.code ?? null,
+    );
+  } catch {
+    return new UploadRequestError("Upload failed. Please try again.", null);
+  }
+}
+
+type FormError = { message: string; quota: boolean };
+
+function toFormError(failure: unknown): FormError {
+  return {
+    message: failure instanceof Error ? failure.message : "Upload failed.",
+    quota: failure instanceof UploadRequestError && failure.code === "QUOTA_EXCEEDED",
+  };
 }
 
 type UploadState = "idle" | "uploading" | "validating";
@@ -61,7 +85,7 @@ async function directUpload(
     }),
     redirect: "error",
   });
-  if (!intentResponse.ok) throw new Error(await uploadError(intentResponse));
+  if (!intentResponse.ok) throw await uploadError(intentResponse);
   const intent = (await intentResponse.json()) as {
     intent: { id: string };
     upload: { method: string; url: string; headers: Record<string, string> };
@@ -187,7 +211,7 @@ async function bundleUpload(
     }),
     redirect: "error",
   });
-  if (!createdResponse.ok) throw new Error(await uploadError(createdResponse));
+  if (!createdResponse.ok) throw await uploadError(createdResponse);
   const created = (await createdResponse.json()) as {
     intent: { id: string };
     files: Array<{ id: string; path: string; sizeBytes: number }>;
@@ -208,7 +232,7 @@ async function bundleUpload(
           redirect: "error",
         },
       );
-      if (!targetResponse.ok) throw new Error(await uploadError(targetResponse));
+      if (!targetResponse.ok) throw await uploadError(targetResponse);
       const issued = (await targetResponse.json()) as {
         targets: Array<{
           fileId: string;
@@ -359,9 +383,9 @@ function BundlePicker({
   );
 }
 
-export function NewDraftForm() {
+export function NewDraftForm({ upgradeHref }: { upgradeHref?: string } = {}) {
   const router = useRouter();
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<FormError | null>(null);
   const [state, setState] = useState<UploadState>("idle");
   const [recoveryPath, setRecoveryPath] = useState<string | null>(null);
   const [visibility, setVisibility] = useState<"private" | "public" | "password">("private");
@@ -420,7 +444,7 @@ export function NewDraftForm() {
     } catch (uploadFailure) {
       if (uploadFailure instanceof UncertainCompletionError) setRecoveryPath(uploadFailure.path);
       setState("idle");
-      setError(uploadFailure instanceof Error ? uploadFailure.message : "Upload failed.");
+      setError(toFormError(uploadFailure));
     }
   }
 
@@ -500,9 +524,15 @@ export function NewDraftForm() {
           }}
         />
       ) : null}
-      {error ? (
+      {error && error.quota && upgradeHref ? (
+        <UpgradePrompt
+          message={error.message}
+          href={upgradeHref}
+          alternative="or delete drafts you no longer need"
+        />
+      ) : error ? (
         <p role="alert" className="font-mono text-xs text-danger">
-          {error}
+          {error.message}
         </p>
       ) : null}
       {mode === "bundle" && progress ? (
@@ -521,9 +551,17 @@ export function NewDraftForm() {
   );
 }
 
-export function NewVersionForm({ draftId, kind }: { draftId: string; kind: UploadKind }) {
+export function NewVersionForm({
+  draftId,
+  kind,
+  upgradeHref,
+}: {
+  draftId: string;
+  kind: UploadKind;
+  upgradeHref?: string;
+}) {
   const router = useRouter();
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<FormError | null>(null);
   const [state, setState] = useState<UploadState>("idle");
   const [recoveryPath, setRecoveryPath] = useState<string | null>(null);
   const [mode, setMode] = useState<UploadMode>("single");
@@ -565,7 +603,7 @@ export function NewVersionForm({ draftId, kind }: { draftId: string; kind: Uploa
     } catch (uploadFailure) {
       if (uploadFailure instanceof UncertainCompletionError) setRecoveryPath(uploadFailure.path);
       setState("idle");
-      setError(uploadFailure instanceof Error ? uploadFailure.message : "Upload failed.");
+      setError(toFormError(uploadFailure));
     }
   }
 
@@ -624,9 +662,15 @@ export function NewVersionForm({ draftId, kind }: { draftId: string; kind: Uploa
           }}
         />
       ) : null}
-      {error ? (
+      {error && error.quota && upgradeHref ? (
+        <UpgradePrompt
+          message={error.message}
+          href={upgradeHref}
+          alternative="or delete versions and drafts you no longer need"
+        />
+      ) : error ? (
         <p role="alert" className="w-full font-mono text-xs text-danger">
-          {error}
+          {error.message}
         </p>
       ) : null}
       {kind === "html" && mode === "bundle" && progress ? (

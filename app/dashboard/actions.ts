@@ -131,7 +131,8 @@ export async function restoreVersionAction(
   return null;
 }
 
-export type CreateTokenState = { secret: string; name: string } | { error: string } | null;
+export type CreateTokenState =
+  { secret: string; name: string } | { error: string; quota?: boolean } | null;
 
 export async function createTokenAction(
   _prev: CreateTokenState,
@@ -164,7 +165,7 @@ export async function createTokenAction(
     return { secret: created.token, name: created.record.name };
   } catch (error) {
     const limitError = limitErrorMessage(error);
-    if (limitError) return { error: limitError };
+    if (limitError) return { error: limitError, quota: error instanceof QuotaExceededError };
     console.error("createTokenAction failed", error);
     return { error: "Could not create the token. Please try again." };
   }

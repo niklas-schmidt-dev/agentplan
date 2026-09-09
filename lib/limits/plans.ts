@@ -60,14 +60,14 @@ export function limitsForPlan(plan: UserPlan, storageBytes?: number | null): Eff
     };
   }
   return {
-    maxDrafts: envInt("AP_MAX_DRAFTS_PER_USER", 100),
+    maxDrafts: envInt("AP_MAX_DRAFTS_PER_USER", 50),
     keepVersionsByKind: {
       html: envInt("AP_MAX_VERSIONS_PER_DRAFT", 100),
       image: envInt("AP_MAX_IMAGE_VERSIONS_PER_DRAFT", 20),
       video: envInt("AP_MAX_VIDEO_VERSIONS_PER_DRAFT", 2),
     },
-    maxStorageBytes: envInt("AP_MAX_STORAGE_BYTES_PER_USER", 300 * 1024 * 1024),
-    maxActiveTokens: envInt("AP_MAX_ACTIVE_TOKENS_PER_USER", 25),
+    maxStorageBytes: envInt("AP_MAX_STORAGE_BYTES_PER_USER", 50 * 1024 * 1024),
+    maxActiveTokens: envInt("AP_MAX_ACTIVE_TOKENS_PER_USER", 5),
     uploadsPerTenMinutes: envInt("AP_UPLOADS_PER_10MIN", 30),
     uploadsPerDay: envInt("AP_UPLOADS_PER_DAY", 300),
   };

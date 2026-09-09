@@ -12,6 +12,7 @@ import { VisibilityControls } from "@/components/dashboard/visibility-controls";
 import { getDraftForOwner, listVersions } from "@/db/queries/drafts";
 import { isAdmin, requireUser } from "@/lib/auth/session";
 import { isBillingConfigured } from "@/lib/billing/config";
+import { getEffectivePlanForUser } from "@/lib/billing/service";
 import { formatBytes, formatRelativeTime } from "@/lib/format";
 import { draftUrl, draftVersionPath, draftVersionUrl } from "@/lib/urls";
 import { uuidSchema } from "@/lib/validation/api";
@@ -30,7 +31,13 @@ export default async function DraftDetailPage({
   if (!rawId.success) notFound();
   const draft = await getDraftForOwner(rawId.data, user.id);
   if (!draft) notFound();
-  const versions = await listVersions(draft.id);
+  const [versions, effective] = await Promise.all([
+    listVersions(draft.id),
+    getEffectivePlanForUser(user.id),
+  ]);
+  const billingEnabled = isBillingConfigured();
+  const upgradeHref =
+    billingEnabled && effective.plan === "free" ? "/dashboard/billing" : undefined;
   const { version: requestedVersion } = await searchParams;
   const selectedVersion = versions.find(
     (version) => version.id === (requestedVersion ?? draft.currentVersionId),
@@ -41,11 +48,7 @@ export default async function DraftDetailPage({
 
   return (
     <main className="mx-auto flex min-h-dvh w-full max-w-5xl flex-col gap-6 px-6 py-8">
-      <DashboardHeader
-        email={user.email}
-        isAdmin={isAdmin(user)}
-        billingEnabled={isBillingConfigured()}
-      />
+      <DashboardHeader email={user.email} isAdmin={isAdmin(user)} billingEnabled={billingEnabled} />
 
       <section className="flex flex-col gap-4">
         <form action={renameDraftAction} className="flex flex-wrap items-center gap-2">
@@ -135,7 +138,7 @@ export default async function DraftDetailPage({
       </Suspense>
 
       <section className="flex flex-col gap-3">
-        <NewVersionForm draftId={draft.id} kind={draft.kind} />
+        <NewVersionForm draftId={draft.id} kind={draft.kind} upgradeHref={upgradeHref} />
 
         <h2 className="font-mono text-sm text-ink-muted">version history</h2>
         <ul className="flex flex-col divide-y divide-edge rounded-md border border-edge bg-surface">
