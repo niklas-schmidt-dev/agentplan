@@ -5,21 +5,26 @@ import { TokenCreatePanel } from "@/components/dashboard/token-create-panel";
 import { isAdmin, requireUser } from "@/lib/auth/session";
 import { isBillingConfigured } from "@/lib/billing/config";
 import { formatRelativeTime } from "@/lib/format";
+import { getEffectivePlanForUser } from "@/lib/billing/service";
+import { limitsForEffectivePlan } from "@/lib/billing/plan";
 import { listTokensForUser } from "@/lib/tokens/service";
 
 export const metadata = { title: "API tokens" };
 
 export default async function TokensPage() {
   const user = await requireUser();
-  const tokens = await listTokensForUser(user.id);
+  const billingEnabled = isBillingConfigured();
+  const [tokens, effective] = await Promise.all([
+    listTokensForUser(user.id),
+    getEffectivePlanForUser(user.id),
+  ]);
+  const limits = limitsForEffectivePlan(effective);
+  const upgradeHref =
+    billingEnabled && effective.plan === "free" ? "/dashboard/billing" : undefined;
 
   return (
     <main className="mx-auto flex min-h-dvh w-full max-w-3xl flex-col gap-6 px-6 py-8">
-      <DashboardHeader
-        email={user.email}
-        isAdmin={isAdmin(user)}
-        billingEnabled={isBillingConfigured()}
-      />
+      <DashboardHeader email={user.email} isAdmin={isAdmin(user)} billingEnabled={billingEnabled} />
 
       <section className="flex flex-col gap-3">
         <h1 className="font-mono text-sm text-ink-muted">api tokens</h1>
@@ -36,11 +41,18 @@ export default async function TokensPage() {
           </code>
           .
         </p>
-        <TokenCreatePanel />
+        <TokenCreatePanel upgradeHref={upgradeHref} />
       </section>
 
       <section className="flex flex-col gap-3">
-        <h2 className="font-mono text-sm text-ink-muted">active tokens</h2>
+        <h2 className="font-mono text-sm text-ink-muted">
+          active tokens
+          <span className="text-ink-faint">
+            {" "}
+            · {tokens.length}
+            {limits.maxActiveTokens === null ? "" : ` of ${limits.maxActiveTokens}`}
+          </span>
+        </h2>
         {tokens.length === 0 ? (
           <p className="font-mono text-sm text-ink-faint">No active tokens.</p>
         ) : (

@@ -253,7 +253,7 @@ Errors have a stable shape agents can match on:
 
 Three plans exist. **Free** applies the caps below. **Pro** removes the draft,
 version, and token caps and is bound only by storage (10 GiB by default,
-configurable per product); it can be sold through the optional
+configurable per product); `/pricing` compares them. Pro can be sold through the optional
 [Polar integration](docs/self-hosting.md#optional-paid-plans-through-polar) or
 granted by an administrator. **Unlimited** is an operator plan that bypasses
 every quota and is never sold.
@@ -265,11 +265,11 @@ Free-plan limits (all server-enforced; tunable via `AP_*` env vars, defaults in
 | ------------------------------ | --------------------------------------------- |
 | Upload size                    | Available storage quota; no per-file size cap |
 | HTML bundle                    | Available storage quota; up to 50 assets      |
-| Drafts per user                | 100                                           |
+| Drafts per user                | 50                                            |
 | Versions per draft             | HTML 100; image 20; video 2                   |
 | Bundled HTML versions          | Included in the HTML version limit            |
-| Total storage per user         | 300 MiB                                       |
-| Active API tokens per user     | 25                                            |
+| Total storage per user         | 50 MiB                                        |
+| Active API tokens per user     | 5                                             |
 | Uploads per user               | 30 / 10 min and 300 / day                     |
 | Token create/revoke operations | 60 / hour and 200 / day                       |
 | Draft password attempts        | 10 / 15 min per draft + IP                    |
@@ -288,15 +288,16 @@ it needs no extra infrastructure and is correct across serverless instances.
 Soft-deleted drafts (and their stored objects) are hard-deleted after 7 days by a
 daily cron (`/api/cron/purge`, authorized via `CRON_SECRET`).
 
-The 300 MiB default also applies to existing self-hosted deployments after
-upgrade unless `AP_MAX_STORAGE_BYTES_PER_USER` is explicitly set. HTML, raster
+The Free defaults also apply to existing self-hosted deployments after an
+upgrade unless the `AP_*` variables are set; existing uploads above a limit stay
+online, only new uploads wait. HTML, raster
 images, and MP4 uploads are always available; there is no upload-kind feature
 flag.
 Revoked/expired token rows are removed after 30 days, and ordinary audit events
 after 180 days. Pending user-deletion cleanup jobs are retained until object cleanup
 completes; their object keys and target identifier are erased at completion.
 
-Admins can switch a user between `free` and `unlimited` from the user list.
+Admins can switch a user between `free`, `pro`, and `unlimited` from the user list.
 The CLI remains available for operators (needs `DATABASE_URL`, loaded from
 `.env` automatically):
 

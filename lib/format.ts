@@ -1,9 +1,12 @@
+function trimDecimals(value: number, digits: number): string {
+  return value.toFixed(digits).replace(/\.?0+$/, "");
+}
+
 export function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  if (bytes < 1024 ** 3) return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
-  const gib = bytes / 1024 ** 3;
-  return `${Number.isInteger(gib) ? gib : gib.toFixed(2)} GB`;
+  if (bytes < 1024 * 1024) return `${trimDecimals(bytes / 1024, 1)} KB`;
+  if (bytes < 1024 ** 3) return `${trimDecimals(bytes / (1024 * 1024), 2)} MB`;
+  return `${trimDecimals(bytes / 1024 ** 3, 2)} GB`;
 }
 
 /** Minor-unit price (cents) → "€3" / "€2.50"; unknown currency falls back to its code. */

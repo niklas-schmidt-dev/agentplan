@@ -162,6 +162,30 @@ export async function getUserStorageUsage(userId: string): Promise<{
   };
 }
 
+/** Live draft and active token counts for quota displays. */
+export async function getUserUsageCounts(
+  userId: string,
+): Promise<{ draftCount: number; tokenCount: number }> {
+  const db = getDb();
+  const [[draftRow], [tokenRow]] = await Promise.all([
+    db
+      .select({ count: sql<number>`count(*)::int` })
+      .from(drafts)
+      .where(and(eq(drafts.ownerId, userId), isNull(drafts.deletedAt))),
+    db
+      .select({ count: sql<number>`count(*)::int` })
+      .from(apiTokens)
+      .where(
+        and(
+          eq(apiTokens.userId, userId),
+          isNull(apiTokens.revokedAt),
+          or(isNull(apiTokens.expiresAt), gt(apiTokens.expiresAt, sql`now()`)),
+        ),
+      ),
+  ]);
+  return { draftCount: draftRow?.count ?? 0, tokenCount: tokenRow?.count ?? 0 };
+}
+
 /** Callable with a transaction so the count is atomic with the insert. */
 export async function assertTokenCreationAllowed(
   userId: string,

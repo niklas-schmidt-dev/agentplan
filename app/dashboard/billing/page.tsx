@@ -6,6 +6,7 @@ import {
 } from "@/components/dashboard/billing-actions";
 import { DashboardHeader } from "@/components/dashboard/header";
 import { UsageMeter } from "@/components/dashboard/usage-meter";
+import { offerPrice, PlanComparison, type PlanColumn } from "@/components/plan-comparison";
 import { isAdmin, requireUser } from "@/lib/auth/session";
 import { isBillingConfigured } from "@/lib/billing/config";
 import { limitsForEffectivePlan } from "@/lib/billing/plan";
@@ -14,19 +15,11 @@ import {
   getSubscriptionForUser,
   listProPlanOffers,
 } from "@/lib/billing/service";
-import { formatBytes, formatPrice, formatRelativeTime } from "@/lib/format";
-import { getUserStorageUsage } from "@/lib/limits/enforce";
+import { formatBytes, formatRelativeTime } from "@/lib/format";
+import { getUserStorageUsage, getUserUsageCounts } from "@/lib/limits/enforce";
 import { limitsForPlan } from "@/lib/limits/plans";
 
-export const metadata = { title: "Plan & billing" };
-
-function intervalLabel(interval: string | null): string {
-  if (interval === "month") return "/ month";
-  if (interval === "year") return "/ year";
-  if (interval === "week") return "/ week";
-  if (interval === "day") return "/ day";
-  return "";
-}
+export const metadata = { title: "Plan" };
 
 export default async function BillingPage({
   searchParams,
@@ -36,174 +29,153 @@ export default async function BillingPage({
   const user = await requireUser();
   const params = await searchParams;
   const billingEnabled = isBillingConfigured();
-  const [effective, subscription, usage, offers] = await Promise.all([
+  const [effective, subscription, usage, counts, offers] = await Promise.all([
     getEffectivePlanForUser(user.id),
     getSubscriptionForUser(user.id),
     getUserStorageUsage(user.id),
+    getUserUsageCounts(user.id),
     billingEnabled ? listProPlanOffers() : Promise.resolve([]),
   ]);
   const limits = limitsForEffectivePlan(effective);
   const free = limitsForPlan("free");
-  const used = usage.committedBytes + usage.reservedBytes;
+  const storageUsed = usage.committedBytes + usage.reservedBytes;
   const justCheckedOut = params.checkout === "success";
-  const hasCurrentSubscription = effective.source === "subscription";
+  const paying = effective.source === "subscription";
+  const canUpgrade = billingEnabled && effective.plan === "free";
+
+  const columns: PlanColumn[] = [
+    {
+      key: "free",
+      name: "free",
+      price: "€0",
+      limits: free,
+      highlighted: false,
+      action:
+        effective.plan === "free" ? (
+          <span className="font-mono text-xs text-ink-faint">your plan</span>
+        ) : undefined,
+    },
+    ...offers.map<PlanColumn>((offer) => {
+      const current = paying && subscription?.productId === offer.productId;
+      return {
+        key: offer.productId,
+        name: offer.name,
+        price: offerPrice(offer),
+        limits: limitsForPlan("pro", offer.storageBytes),
+        highlighted: true,
+        action: current ? (
+          <span className="font-mono text-xs text-lime">your plan</span>
+        ) : paying ? (
+          <span className="font-mono text-xs text-ink-faint">switch in the portal</span>
+        ) : effective.plan === "free" ? (
+          <CheckoutButton productId={offer.productId} label="get pro" />
+        ) : undefined,
+      };
+    }),
+  ];
 
   return (
-    <main className="mx-auto flex min-h-dvh w-full max-w-3xl flex-col gap-6 px-6 py-8">
+    <main className="mx-auto flex min-h-dvh w-full max-w-4xl flex-col gap-10 px-6 py-8">
       <DashboardHeader email={user.email} isAdmin={isAdmin(user)} billingEnabled={billingEnabled} />
 
-      <section className="flex flex-col gap-3">
-        <h1 className="font-mono text-sm text-ink-muted">plan &amp; billing</h1>
-        {justCheckedOut && !hasCurrentSubscription ? (
-          <div className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-lime bg-surface p-4">
-            <p className="font-mono text-sm text-ink">
-              Thanks! Your subscription is being activated. This usually takes a few seconds.
+      {justCheckedOut && !paying ? (
+        <aside
+          role="status"
+          className="rise flex flex-wrap items-center justify-between gap-3 border-l-2 border-lime bg-surface px-4 py-3"
+        >
+          <div>
+            <p className="font-mono text-xs uppercase tracking-[0.16em] text-lime">
+              payment received
             </p>
-            <RefreshSubscriptionButton />
+            <p className="mt-1 text-sm text-ink-muted">
+              Pro switches on as soon as Polar confirms it, usually within seconds.
+            </p>
           </div>
-        ) : null}
-        <div className="flex flex-col gap-4 rounded-md border border-edge bg-surface p-4">
-          <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-            <span className="font-mono text-sm text-ink">current plan</span>
-            <span
-              className={`rounded-sm border px-1.5 py-0.5 font-mono text-xs ${
-                effective.plan === "free"
-                  ? "border-edge text-ink-muted"
-                  : "border-lime/40 bg-lime/5 text-lime"
-              }`}
-            >
-              {effective.plan}
-            </span>
-            {subscription ? (
-              <span className="font-mono text-xs text-ink-faint">
-                {subscription.productName} · {subscription.status}
-                {subscription.cancelAtPeriodEnd && subscription.currentPeriodEnd
+          <RefreshSubscriptionButton />
+        </aside>
+      ) : null}
+
+      <section className="grid gap-8 md:grid-cols-[1fr_auto] md:items-start">
+        <div className="flex flex-col gap-3">
+          <div className="flex items-center gap-3 font-mono text-xs uppercase tracking-[0.2em] text-lime">
+            <span className="h-px w-8 bg-lime" />
+            {effective.plan} plan
+          </div>
+          <h1 className="text-3xl font-semibold tracking-[-0.03em] text-ink sm:text-4xl">
+            {effective.plan === "free"
+              ? "Everything you publish stays up."
+              : effective.plan === "pro"
+                ? "Room to publish everything."
+                : "No limits on this account."}
+          </h1>
+          <p className="max-w-lg text-sm leading-6 text-ink-muted">
+            {effective.plan === "free"
+              ? "Links never expire on Free. When a limit is reached, new uploads wait until you make space or move to Pro."
+              : effective.plan === "pro"
+                ? "Drafts, versions, and tokens are uncapped. Only storage counts, and you can see exactly how much is left."
+                : "This account was granted the unlimited plan by an administrator."}
+          </p>
+          {subscription ? (
+            <p className="font-mono text-xs text-ink-faint">
+              {subscription.productName} · {subscription.status}
+              {subscription.currentPeriodEnd
+                ? subscription.cancelAtPeriodEnd
                   ? ` · ends ${formatRelativeTime(subscription.currentPeriodEnd)}`
-                  : subscription.currentPeriodEnd
-                    ? ` · renews ${formatRelativeTime(subscription.currentPeriodEnd)}`
-                    : ""}
-              </span>
-            ) : effective.plan !== "free" ? (
-              <span className="font-mono text-xs text-ink-faint">granted by an administrator</span>
-            ) : null}
-          </div>
-          <div className="grid grid-cols-1 gap-x-6 gap-y-3 font-mono text-xs sm:grid-cols-3">
-            <UsageMeter
-              label="storage"
-              used={used}
-              limit={limits.maxStorageBytes}
-              format={formatBytes}
-            />
-            <div className="flex flex-col gap-1.5">
-              <span className="text-ink-faint">drafts</span>
-              <span className="text-ink">
-                {limits.maxDrafts === null ? (
-                  <span className="text-lime">unlimited</span>
-                ) : (
-                  `up to ${limits.maxDrafts}`
-                )}
-              </span>
-            </div>
-            <div className="flex flex-col gap-1.5">
-              <span className="text-ink-faint">versions per draft</span>
-              <span className="text-ink">
-                {limits.keepVersionsByKind.html === null ? (
-                  <span className="text-lime">unlimited</span>
-                ) : (
-                  `HTML ${limits.keepVersionsByKind.html} · image ${limits.keepVersionsByKind.image} · video ${limits.keepVersionsByKind.video}`
-                )}
-              </span>
-            </div>
-          </div>
-          {billingEnabled && (subscription || hasCurrentSubscription) ? (
-            <div className="flex flex-wrap items-center gap-3">
+                  : ` · renews ${formatRelativeTime(subscription.currentPeriodEnd)}`
+                : ""}
+            </p>
+          ) : effective.plan !== "free" ? (
+            <p className="font-mono text-xs text-ink-faint">granted by an administrator</p>
+          ) : null}
+          {billingEnabled && (subscription || paying) ? (
+            <div className="flex flex-wrap items-center gap-3 pt-1">
               <PortalButton />
               <RefreshSubscriptionButton />
-              <span className="font-mono text-xs text-ink-faint">
-                Invoices, payment method, and cancellation are handled by Polar.
-              </span>
             </div>
           ) : null}
         </div>
+
+        <dl className="grid min-w-56 grid-cols-1 gap-4 border-l border-edge pl-6 font-mono text-xs">
+          <UsageMeter
+            label="storage"
+            used={storageUsed}
+            limit={limits.maxStorageBytes}
+            format={formatBytes}
+          />
+          <UsageMeter label="drafts" used={counts.draftCount} limit={limits.maxDrafts} />
+          <UsageMeter label="api tokens" used={counts.tokenCount} limit={limits.maxActiveTokens} />
+        </dl>
       </section>
 
       {!billingEnabled ? (
-        <p className="font-mono text-xs text-ink-faint">
-          This deployment has no payment provider configured. Plans are assigned by an
-          administrator.
+        <p className="border-t border-edge pt-6 font-mono text-xs text-ink-faint">
+          This deployment has no payment provider. Plans are assigned by an administrator.
         </p>
-      ) : effective.plan === "unlimited" ? (
-        <p className="font-mono text-xs text-ink-faint">
-          Your account has no limits. There is nothing to upgrade.
-        </p>
-      ) : offers.length > 0 ? (
-        <section className="flex flex-col gap-3">
-          <h2 className="font-mono text-sm text-ink-muted">
-            {hasCurrentSubscription ? "change plan" : "upgrade"}
-          </h2>
-          <p className="max-w-xl text-sm text-ink-muted">
-            Pro removes the draft, version, and token caps. You pay only for storage; drafts are
-            kept for as long as you keep the plan. Cancel any time — existing uploads and links stay
-            available, and the Free storage limit of {formatBytes(free.maxStorageBytes ?? 0)}{" "}
-            applies to new uploads afterwards.
+      ) : effective.plan === "unlimited" ? null : offers.length > 0 ? (
+        <section className="flex flex-col gap-6">
+          <div className="flex flex-wrap items-baseline justify-between gap-3">
+            <h2 className="font-mono text-xs uppercase tracking-[0.2em] text-ink-faint">
+              {canUpgrade ? "compare" : "plans"}
+            </h2>
+            <span className="font-mono text-xs text-ink-faint">
+              prices include VAT where it applies · cancel any time
+            </span>
+          </div>
+          <PlanComparison columns={columns} />
+          <p className="max-w-2xl text-sm leading-6 text-ink-muted">
+            Pro is billed by Polar, which handles tax and invoices. If you cancel, every draft and
+            link you published stays online; only new uploads go back to the Free limits.
           </p>
-          <ul role="list" className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            {offers.map((offer) => {
-              const isCurrent =
-                subscription?.productId === offer.productId && hasCurrentSubscription;
-              return (
-                <li
-                  key={offer.productId}
-                  className={`flex flex-col gap-3 rounded-md border bg-surface p-4 ${
-                    isCurrent ? "border-lime/60" : "border-edge"
-                  }`}
-                >
-                  <div className="flex items-baseline justify-between gap-3">
-                    <span className="font-medium text-ink">{offer.name}</span>
-                    {offer.amount !== null && offer.currency ? (
-                      <span className="font-mono text-sm text-ink">
-                        {formatPrice(offer.amount, offer.currency)}
-                        <span className="text-ink-faint">
-                          {" "}
-                          {intervalLabel(offer.recurringInterval)}
-                        </span>
-                      </span>
-                    ) : null}
-                  </div>
-                  <ul className="flex flex-col gap-1 font-mono text-xs text-ink-muted">
-                    <li>
-                      <span className="text-lime">{formatBytes(offer.storageBytes)}</span> storage
-                    </li>
-                    <li>unlimited drafts, versions, and API tokens</li>
-                    <li>higher upload rate limits</li>
-                  </ul>
-                  {offer.description ? (
-                    <p className="text-xs text-ink-faint">{offer.description}</p>
-                  ) : null}
-                  {isCurrent ? (
-                    <span className="font-mono text-xs text-lime">current plan</span>
-                  ) : hasCurrentSubscription ? (
-                    <span className="font-mono text-xs text-ink-faint">
-                      Switch plans from the subscription portal.
-                    </span>
-                  ) : (
-                    <CheckoutButton productId={offer.productId} label={`get ${offer.name}`} />
-                  )}
-                </li>
-              );
-            })}
-          </ul>
         </section>
-      ) : hasCurrentSubscription ? null : (
-        <p className="font-mono text-xs text-ink-faint">
-          Plans are temporarily unavailable. Please try again later.
+      ) : paying ? null : (
+        <p className="border-t border-edge pt-6 font-mono text-xs text-ink-faint">
+          Plans could not be loaded. Try again in a moment.
         </p>
       )}
 
       <p className="font-mono text-xs text-ink-faint">
-        Questions about a charge? Contact the operator of this deployment.{" "}
-        <Link href="/dashboard" className="text-ink-muted hover:text-lime">
-          ← back to dashboard
+        <Link href="/dashboard" className="text-ink-muted transition-colors hover:text-lime">
+          ← dashboard
         </Link>
       </p>
     </main>

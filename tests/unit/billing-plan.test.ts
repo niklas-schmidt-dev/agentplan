@@ -145,8 +145,10 @@ describe("billing configuration", () => {
 describe("billing formatting", () => {
   it("formats gigabytes and prices", () => {
     expect(formatBytes(10 * GiB)).toBe("10 GB");
-    expect(formatBytes(2.5 * GiB)).toBe("2.50 GB");
-    expect(formatBytes(300 * 1024 * 1024)).toBe("300.00 MB");
+    expect(formatBytes(2.5 * GiB)).toBe("2.5 GB");
+    expect(formatBytes(50 * 1024 * 1024)).toBe("50 MB");
+    expect(formatBytes(1536)).toBe("1.5 KB");
+    expect(formatBytes(1024 * 1024 * 1.25)).toBe("1.25 MB");
     expect(formatPrice(300, "eur")).toBe("€3");
     expect(formatPrice(250, "usd")).toBe("$2.50");
   });
