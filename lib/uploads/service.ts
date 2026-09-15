@@ -1,3 +1,4 @@
+import { withDiagnosticStage } from "@/lib/diagnostics/request";
 import { finalObjectCleanupDeadline } from "./cleanup-deadline";
 import { drainBatches } from "@/lib/maintenance/drain";
 import { randomUUID } from "node:crypto";
@@ -321,15 +322,17 @@ export async function completeUploadIntent(
   intentId: string,
   ownerId?: string,
 ): Promise<UploadIntentResult> {
-  const [intent] = await getDb()
-    .select()
-    .from(uploadIntents)
-    .where(
-      ownerId
-        ? and(eq(uploadIntents.id, intentId), eq(uploadIntents.ownerId, ownerId))
-        : eq(uploadIntents.id, intentId),
-    )
-    .limit(1);
+  const [intent] = await withDiagnosticStage("completion.load", () =>
+    getDb()
+      .select()
+      .from(uploadIntents)
+      .where(
+        ownerId
+          ? and(eq(uploadIntents.id, intentId), eq(uploadIntents.ownerId, ownerId))
+          : eq(uploadIntents.id, intentId),
+      )
+      .limit(1),
+  );
   if (!intent) throw new UploadIntentNotFoundError();
   if (intent.mode !== "single") {
     throw new UploadIntentConflictError("Use the bundle completion endpoint for this upload.");
@@ -342,7 +345,9 @@ export async function completeUploadIntent(
     throw new UploadIntentExpiredError();
   }
 
-  const completionToken = await claimCompletion(intent.id);
+  const completionToken = await withDiagnosticStage("completion.claim", () =>
+    claimCompletion(intent.id),
+  );
   if (!completionToken) {
     const latest = await getUploadIntentForOwner(intent.ownerId, intent.id);
     if (latest?.status === "completed") return completedResult(latest);
@@ -355,158 +360,166 @@ export async function completeUploadIntent(
   try {
     if (!intent.stagingKey) throw new UploadIntentConflictError("Upload staging key is missing.");
     const stagingKey = intent.stagingKey;
-    const staging = await getStorage().head(stagingKey);
+    const staging = await withDiagnosticStage("storage.head", () => getStorage().head(stagingKey));
     if (!staging) throw new MediaValidationError("SIZE_MISMATCH", "Uploaded object is missing.");
     if (staging.size !== intent.expectedBytes) {
       throw new MediaValidationError("SIZE_MISMATCH", "Stored file size does not match.");
     }
-    await ensureFinalCopy(intent);
-    const finalObject = await getStorage().open(intent.finalKey);
+    await withDiagnosticStage("storage.copy", () => ensureFinalCopy(intent));
+    const finalObject = await withDiagnosticStage("storage.open", () =>
+      getStorage().open(intent.finalKey),
+    );
     if (!finalObject) throw new MediaValidationError("SIZE_MISMATCH", "Final object is missing.");
-    const validation = await validateStoredMedia({
-      object: finalObject,
-      expectedBytes: intent.expectedBytes,
-      spec: specForIntent(intent),
-    });
+    const validation = await withDiagnosticStage("media.validate", () =>
+      validateStoredMedia({
+        object: finalObject,
+        expectedBytes: intent.expectedBytes,
+        spec: specForIntent(intent),
+      }),
+    );
 
-    const result = await getDb().transaction(async (tx) => {
-      await tx.execute(
-        sql`select pg_advisory_xact_lock(hashtext('agentplan:user-storage'), hashtext(${intent.ownerId}))`,
-      );
-      const [lockedIntent] = await tx
-        .select()
-        .from(uploadIntents)
-        .where(eq(uploadIntents.id, intent.id))
-        .for("update");
-      if (!lockedIntent) throw new UploadIntentNotFoundError();
-      if (lockedIntent.status === "completed") {
-        return { state: "already_completed" as const, completed: lockedIntent };
-      }
-      if (
-        lockedIntent.status !== "pending" ||
-        lockedIntent.completionToken !== completionToken ||
-        !lockedIntent.completionExpiresAt ||
-        lockedIntent.completionExpiresAt.getTime() <= Date.now()
-      )
-        throw new UploadIntentConflictError();
-      if (lockedIntent.expiresAt.getTime() <= Date.now()) throw new UploadIntentExpiredError();
-      const [owner] = await tx
-        .select({ id: users.id })
-        .from(users)
-        .where(and(eq(users.id, intent.ownerId), isNull(users.blockedAt)));
-      if (!owner) throw new DraftNotFoundError();
-
-      await lockAndAssertUploadQuota(
-        {
-          userId: intent.ownerId,
-          sizeBytes: validation.sizeBytes,
-          newDraft: intent.targetDraftId === null,
-          targetDraftId: intent.targetDraftId,
-          excludeIntentId: intent.id,
-        },
-        tx,
-      );
-
-      let draft;
-      let versionNumber: number;
-      if (intent.targetDraftId) {
-        const [lockedDraft] = await tx
+    const result = await withDiagnosticStage("completion.persist", () =>
+      getDb().transaction(async (tx) => {
+        await tx.execute(
+          sql`select pg_advisory_xact_lock(hashtext('agentplan:user-storage'), hashtext(${intent.ownerId}))`,
+        );
+        const [lockedIntent] = await tx
           .select()
-          .from(drafts)
-          .where(
-            and(
-              eq(drafts.id, intent.targetDraftId),
-              eq(drafts.ownerId, intent.ownerId),
-              isNull(drafts.deletedAt),
-            ),
-          )
+          .from(uploadIntents)
+          .where(eq(uploadIntents.id, intent.id))
           .for("update");
-        if (!lockedDraft) throw new DraftNotFoundError();
-        if (lockedDraft.kind !== intent.kind) throw new UploadIntentConflictError();
-        const [numberRow] = await tx
-          .select({ value: max(draftVersions.versionNumber) })
-          .from(draftVersions)
-          .where(eq(draftVersions.draftId, lockedDraft.id));
-        versionNumber = (numberRow?.value ?? 0) + 1;
-        draft = lockedDraft;
-      } else {
-        const [createdDraft] = await tx
-          .insert(drafts)
+        if (!lockedIntent) throw new UploadIntentNotFoundError();
+        if (lockedIntent.status === "completed") {
+          return { state: "already_completed" as const, completed: lockedIntent };
+        }
+        if (
+          lockedIntent.status !== "pending" ||
+          lockedIntent.completionToken !== completionToken ||
+          !lockedIntent.completionExpiresAt ||
+          lockedIntent.completionExpiresAt.getTime() <= Date.now()
+        )
+          throw new UploadIntentConflictError();
+        if (lockedIntent.expiresAt.getTime() <= Date.now()) throw new UploadIntentExpiredError();
+        const [owner] = await tx
+          .select({ id: users.id })
+          .from(users)
+          .where(and(eq(users.id, intent.ownerId), isNull(users.blockedAt)));
+        if (!owner) throw new DraftNotFoundError();
+
+        await lockAndAssertUploadQuota(
+          {
+            userId: intent.ownerId,
+            sizeBytes: validation.sizeBytes,
+            newDraft: intent.targetDraftId === null,
+            targetDraftId: intent.targetDraftId,
+            excludeIntentId: intent.id,
+          },
+          tx,
+        );
+
+        let draft;
+        let versionNumber: number;
+        if (intent.targetDraftId) {
+          const [lockedDraft] = await tx
+            .select()
+            .from(drafts)
+            .where(
+              and(
+                eq(drafts.id, intent.targetDraftId),
+                eq(drafts.ownerId, intent.ownerId),
+                isNull(drafts.deletedAt),
+              ),
+            )
+            .for("update");
+          if (!lockedDraft) throw new DraftNotFoundError();
+          if (lockedDraft.kind !== intent.kind) throw new UploadIntentConflictError();
+          const [numberRow] = await tx
+            .select({ value: max(draftVersions.versionNumber) })
+            .from(draftVersions)
+            .where(eq(draftVersions.draftId, lockedDraft.id));
+          versionNumber = (numberRow?.value ?? 0) + 1;
+          draft = lockedDraft;
+        } else {
+          const [createdDraft] = await tx
+            .insert(drafts)
+            .values({
+              id: intent.draftId,
+              ownerId: intent.ownerId,
+              slug: generateSlug(intent.title ?? "", intent.visibility === "public"),
+              title: intent.title ?? titleFromFilename(intent.originalFilename),
+              kind: intent.kind,
+              visibility: intent.visibility ?? "private",
+              passwordHash: intent.passwordHash,
+            })
+            .returning();
+          if (!createdDraft) throw new Error("Draft insert returned no row");
+          draft = createdDraft;
+          versionNumber = 1;
+        }
+
+        const [version] = await tx
+          .insert(draftVersions)
           .values({
-            id: intent.draftId,
-            ownerId: intent.ownerId,
-            slug: generateSlug(intent.title ?? "", intent.visibility === "public"),
-            title: intent.title ?? titleFromFilename(intent.originalFilename),
-            kind: intent.kind,
-            visibility: intent.visibility ?? "private",
-            passwordHash: intent.passwordHash,
+            id: intent.versionId,
+            draftId: draft.id,
+            versionNumber,
+            storageKey: intent.finalKey,
+            contentSha256: validation.contentSha256,
+            contentType: intent.contentType,
+            originalFilename: intent.originalFilename,
+            sizeBytes: validation.sizeBytes,
+            totalSizeBytes: validation.sizeBytes,
+            source: intent.source,
+            createdByTokenId: intent.createdByTokenId,
           })
           .returning();
-        if (!createdDraft) throw new Error("Draft insert returned no row");
-        draft = createdDraft;
-        versionNumber = 1;
-      }
+        if (!version) throw new Error("Version insert returned no row");
 
-      const [version] = await tx
-        .insert(draftVersions)
-        .values({
-          id: intent.versionId,
-          draftId: draft.id,
-          versionNumber,
-          storageKey: intent.finalKey,
-          contentSha256: validation.contentSha256,
-          contentType: intent.contentType,
-          originalFilename: intent.originalFilename,
-          sizeBytes: validation.sizeBytes,
-          totalSizeBytes: validation.sizeBytes,
-          source: intent.source,
-          createdByTokenId: intent.createdByTokenId,
-        })
-        .returning();
-      if (!version) throw new Error("Version insert returned no row");
+        const [updatedDraft] = await tx
+          .update(drafts)
+          .set({ currentVersionId: version.id, updatedAt: sql`now()` })
+          .where(eq(drafts.id, draft.id))
+          .returning();
+        if (!updatedDraft) throw new DraftNotFoundError();
 
-      const [updatedDraft] = await tx
-        .update(drafts)
-        .set({ currentVersionId: version.id, updatedAt: sql`now()` })
-        .where(eq(drafts.id, draft.id))
-        .returning();
-      if (!updatedDraft) throw new DraftNotFoundError();
-
-      await queueStorageDeletion(
-        {
-          storageKey: stagingKey,
-          reason: "upload_staging",
-          notBefore: intent.expiresAt,
-        },
-        tx,
-      );
-      const [completed] = await tx
-        .update(uploadIntents)
-        .set({ status: "completed", completedAt: sql`now()`, updatedAt: sql`now()` })
-        .where(eq(uploadIntents.id, intent.id))
-        .returning();
-      if (!completed) throw new Error("Upload intent update returned no row");
-      return {
-        state: "completed" as const,
-        completed,
-        draft: updatedDraft,
-        version,
-      };
-    });
+        await queueStorageDeletion(
+          {
+            storageKey: stagingKey,
+            reason: "upload_staging",
+            notBefore: intent.expiresAt,
+          },
+          tx,
+        );
+        const [completed] = await tx
+          .update(uploadIntents)
+          .set({ status: "completed", completedAt: sql`now()`, updatedAt: sql`now()` })
+          .where(eq(uploadIntents.id, intent.id))
+          .returning();
+        if (!completed) throw new Error("Upload intent update returned no row");
+        return {
+          state: "completed" as const,
+          completed,
+          draft: updatedDraft,
+          version,
+        };
+      }),
+    );
 
     if (result.state === "already_completed") return completedResult(result.completed);
     await tryDeleteStorageKey(stagingKey);
-    await recordAuditEvent({
-      type: intent.targetDraftId ? "draft.version_created" : "draft.created",
-      userId: intent.ownerId,
-      draftId: result.draft.id,
-      tokenId: intent.createdByTokenId ?? undefined,
-      metadata: {
-        kind: intent.kind,
-        sizeBytes: validation.sizeBytes,
-        versionNumber: result.version.versionNumber,
-      },
-    });
+    await withDiagnosticStage("completion.audit", () =>
+      recordAuditEvent({
+        type: intent.targetDraftId ? "draft.version_created" : "draft.created",
+        userId: intent.ownerId,
+        draftId: result.draft.id,
+        tokenId: intent.createdByTokenId ?? undefined,
+        metadata: {
+          kind: intent.kind,
+          sizeBytes: validation.sizeBytes,
+          versionNumber: result.version.versionNumber,
+        },
+      }),
+    );
     return { intent: result.completed, draft: result.draft, version: result.version };
   } catch (error) {
     if (
@@ -522,7 +535,9 @@ export async function completeUploadIntent(
     }
     throw error;
   } finally {
-    await releaseCompletion(intent.id, completionToken);
+    await withDiagnosticStage("completion.release", () =>
+      releaseCompletion(intent.id, completionToken),
+    );
   }
 }
 

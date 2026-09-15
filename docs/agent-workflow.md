@@ -110,8 +110,17 @@ removes this checkout's artifacts and fixture sessions.
 
 1. Inspect the browser's failing response and its `x-request-id` header.
 2. Search `artifacts/server.log` for that ID. Upload logs contain route template,
-   method, status, duration, validated intent/file IDs, and allowlisted error
-   types/codes. They omit request bodies, passwords, tokens, and signed URLs.
+   method, status, duration, and validated intent/file IDs. Failed requests include
+   `errorSummary` with a fixed, readable description and safe error types/codes.
+   Completion failures also identify `errorStage` (for example, `storage.open` or
+   `completion.persist`) and, when applicable, the failing asset's `errorFileId`.
+   Nested `errorCauses` retain recognized database/provider codes and HTTP statuses
+   through wrappers. Causes are bounded to five levels and cycles are ignored.
+   Unknown errors identify the operation without copying exception text. Logs omit
+   raw messages/stacks, SQL/parameters, request bodies, filenames, storage keys,
+   passwords, tokens, and signed URLs. API errors remain generic; use the response's
+   `x-request-id` to find the operator-only log. These details require a deployment
+   containing the diagnostics; older logs cannot recover discarded information.
 3. Follow the intent through create/transfer/complete using its UUID. The local
    database can be inspected through `qa:exec`; it points at QA, not production.
 4. Open the Playwright report or `npx playwright show-trace <trace.zip>` to inspect

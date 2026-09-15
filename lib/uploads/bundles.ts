@@ -1,3 +1,4 @@
+import { withDiagnosticStage } from "@/lib/diagnostics/request";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { and, asc, count, eq, gt, isNull, max, sql } from "drizzle-orm";
@@ -436,7 +437,9 @@ export async function completeBundleUpload(
   intentId: string,
   ownerId: string,
 ): Promise<UploadIntentResult> {
-  const bundle = await getBundleForOwner(ownerId, intentId);
+  const bundle = await withDiagnosticStage("completion.load", () =>
+    getBundleForOwner(ownerId, intentId),
+  );
   if (!bundle) throw new UploadIntentNotFoundError();
   if (bundle.intent.status === "completed") {
     const status = await getBundleStatus(ownerId, intentId);
@@ -452,7 +455,9 @@ export async function completeBundleUpload(
     throw error;
   }
 
-  const completionToken = await claimCompletion(bundle.intent.id);
+  const completionToken = await withDiagnosticStage("completion.claim", () =>
+    claimCompletion(bundle.intent.id),
+  );
   if (!completionToken) {
     const status = await getBundleStatus(ownerId, intentId);
     if (status?.intent.status === "completed" && status.draft && status.version) {
@@ -481,7 +486,11 @@ export async function completeBundleUpload(
 
   try {
     const heads = await mapWithConcurrency(storageFiles, 8, async (file) => {
-      const object = await getStorage().head(file.finalKey);
+      const object = await withDiagnosticStage(
+        "storage.head",
+        () => getStorage().head(file.finalKey),
+        file.id,
+      );
       if (!object || object.size !== file.expectedBytes) {
         throw new MediaValidationError(
           "SIZE_MISMATCH",
@@ -503,13 +512,25 @@ export async function completeBundleUpload(
 
     let entryHash = bundle.intent.verifiedSha256;
     if (!entryHash) {
-      const entryObject = await getStorage().open(bundle.intent.finalKey);
+      const entryObject = await withDiagnosticStage(
+        "storage.open",
+        () => getStorage().open(bundle.intent.finalKey),
+        bundle.intent.id,
+      );
       if (!entryObject) throw new MediaValidationError("SIZE_MISMATCH", "HTML entry is missing.");
-      entryHash = (await consumeStoredObject(entryObject, entryBytes)).sha256;
-      await getDb()
-        .update(uploadIntents)
-        .set({ verifiedSha256: entryHash })
-        .where(ownsCompletion(bundle.intent.id, completionToken));
+      entryHash = (
+        await withDiagnosticStage(
+          "entry.validate",
+          () => consumeStoredObject(entryObject, entryBytes),
+          bundle.intent.id,
+        )
+      ).sha256;
+      await withDiagnosticStage("verification.persist", () =>
+        getDb()
+          .update(uploadIntents)
+          .set({ verifiedSha256: entryHash })
+          .where(ownsCompletion(bundle.intent.id, completionToken)),
+      );
     }
     const entryValidation = { size: entryBytes, sha256: entryHash };
     // Two simultaneous decoders bound temporary disk/decoder pressure while
@@ -521,26 +542,40 @@ export async function completeBundleUpload(
       if (!spec || spec.kind === "html") {
         throw new MediaValidationError("INVALID_FILE_TYPE", "Bundle asset metadata is invalid.");
       }
-      const object = await getStorage().open(file.finalKey);
+      const object = await withDiagnosticStage(
+        "storage.open",
+        () => getStorage().open(file.finalKey),
+        file.id,
+      );
       if (!object)
         throw new MediaValidationError(
           "SIZE_MISMATCH",
           `Bundle asset is missing: ${file.logicalPath}`,
         );
-      const validation = await validateStoredMedia({
-        object,
-        expectedBytes: file.expectedBytes,
-        spec,
-      });
-      await getDb()
-        .update(uploadIntentFiles)
-        .set({ verifiedSha256: validation.contentSha256 })
-        .where(
-          and(
-            eq(uploadIntentFiles.id, file.id),
-            sql`exists (select 1 from ${uploadIntents} where ${ownsCompletion(bundle.intent.id, completionToken)})`,
-          ),
-        );
+      const validation = await withDiagnosticStage(
+        "media.validate",
+        () =>
+          validateStoredMedia({
+            object,
+            expectedBytes: file.expectedBytes,
+            spec,
+          }),
+        file.id,
+      );
+      await withDiagnosticStage(
+        "verification.persist",
+        () =>
+          getDb()
+            .update(uploadIntentFiles)
+            .set({ verifiedSha256: validation.contentSha256 })
+            .where(
+              and(
+                eq(uploadIntentFiles.id, file.id),
+                sql`exists (select 1 from ${uploadIntents} where ${ownsCompletion(bundle.intent.id, completionToken)})`,
+              ),
+            ),
+        file.id,
+      );
       return { file, ...validation };
     });
     const totalSizeBytes =
@@ -552,135 +587,137 @@ export async function completeBundleUpload(
       );
     }
 
-    const result = await getDb().transaction(async (tx) => {
-      await tx.execute(
-        sql`select pg_advisory_xact_lock(hashtext('agentplan:user-storage'), hashtext(${bundle.intent.ownerId}))`,
-      );
-      const [lockedIntent] = await tx
-        .select()
-        .from(uploadIntents)
-        .where(eq(uploadIntents.id, bundle.intent.id))
-        .for("update");
-      if (!lockedIntent) throw new UploadIntentNotFoundError();
-      if (lockedIntent.status === "completed") {
-        return { state: "already_completed" as const, completed: lockedIntent };
-      }
-      assertPendingBundle(lockedIntent);
-      if (
-        lockedIntent.completionToken !== completionToken ||
-        !lockedIntent.completionExpiresAt ||
-        lockedIntent.completionExpiresAt.getTime() <= Date.now()
-      )
-        throw new UploadIntentConflictError();
-      const [owner] = await tx
-        .select({ id: users.id })
-        .from(users)
-        .where(and(eq(users.id, lockedIntent.ownerId), isNull(users.blockedAt)));
-      if (!owner) throw new DraftNotFoundError();
-      await lockAndAssertUploadQuota(
-        {
-          userId: lockedIntent.ownerId,
-          sizeBytes: totalSizeBytes,
-          newDraft: lockedIntent.targetDraftId === null,
-          excludeIntentId: lockedIntent.id,
-          targetDraftId: lockedIntent.targetDraftId,
-        },
-        tx,
-      );
-
-      let draft;
-      let versionNumber: number;
-      if (lockedIntent.targetDraftId) {
-        const [lockedDraft] = await tx
+    const result = await withDiagnosticStage("completion.persist", () =>
+      getDb().transaction(async (tx) => {
+        await tx.execute(
+          sql`select pg_advisory_xact_lock(hashtext('agentplan:user-storage'), hashtext(${bundle.intent.ownerId}))`,
+        );
+        const [lockedIntent] = await tx
           .select()
-          .from(drafts)
-          .where(
-            and(
-              eq(drafts.id, lockedIntent.targetDraftId),
-              eq(drafts.ownerId, lockedIntent.ownerId),
-              isNull(drafts.deletedAt),
-            ),
-          )
+          .from(uploadIntents)
+          .where(eq(uploadIntents.id, bundle.intent.id))
           .for("update");
-        if (!lockedDraft) throw new DraftNotFoundError();
-        if (lockedDraft.kind !== "html") throw new UploadIntentConflictError();
-        const [numberRow] = await tx
-          .select({ value: max(draftVersions.versionNumber) })
-          .from(draftVersions)
-          .where(eq(draftVersions.draftId, lockedDraft.id));
-        versionNumber = (numberRow?.value ?? 0) + 1;
-        draft = lockedDraft;
-      } else {
-        const [createdDraft] = await tx
-          .insert(drafts)
+        if (!lockedIntent) throw new UploadIntentNotFoundError();
+        if (lockedIntent.status === "completed") {
+          return { state: "already_completed" as const, completed: lockedIntent };
+        }
+        assertPendingBundle(lockedIntent);
+        if (
+          lockedIntent.completionToken !== completionToken ||
+          !lockedIntent.completionExpiresAt ||
+          lockedIntent.completionExpiresAt.getTime() <= Date.now()
+        )
+          throw new UploadIntentConflictError();
+        const [owner] = await tx
+          .select({ id: users.id })
+          .from(users)
+          .where(and(eq(users.id, lockedIntent.ownerId), isNull(users.blockedAt)));
+        if (!owner) throw new DraftNotFoundError();
+        await lockAndAssertUploadQuota(
+          {
+            userId: lockedIntent.ownerId,
+            sizeBytes: totalSizeBytes,
+            newDraft: lockedIntent.targetDraftId === null,
+            excludeIntentId: lockedIntent.id,
+            targetDraftId: lockedIntent.targetDraftId,
+          },
+          tx,
+        );
+
+        let draft;
+        let versionNumber: number;
+        if (lockedIntent.targetDraftId) {
+          const [lockedDraft] = await tx
+            .select()
+            .from(drafts)
+            .where(
+              and(
+                eq(drafts.id, lockedIntent.targetDraftId),
+                eq(drafts.ownerId, lockedIntent.ownerId),
+                isNull(drafts.deletedAt),
+              ),
+            )
+            .for("update");
+          if (!lockedDraft) throw new DraftNotFoundError();
+          if (lockedDraft.kind !== "html") throw new UploadIntentConflictError();
+          const [numberRow] = await tx
+            .select({ value: max(draftVersions.versionNumber) })
+            .from(draftVersions)
+            .where(eq(draftVersions.draftId, lockedDraft.id));
+          versionNumber = (numberRow?.value ?? 0) + 1;
+          draft = lockedDraft;
+        } else {
+          const [createdDraft] = await tx
+            .insert(drafts)
+            .values({
+              id: lockedIntent.draftId,
+              ownerId: lockedIntent.ownerId,
+              slug: generateSlug(lockedIntent.title ?? "", lockedIntent.visibility === "public"),
+              title: lockedIntent.title ?? titleFromFilename(lockedIntent.originalFilename),
+              kind: "html",
+              visibility: lockedIntent.visibility ?? "private",
+              passwordHash: lockedIntent.passwordHash,
+            })
+            .returning();
+          if (!createdDraft) throw new Error("Draft insert returned no row");
+          draft = createdDraft;
+          versionNumber = 1;
+        }
+
+        const [version] = await tx
+          .insert(draftVersions)
           .values({
-            id: lockedIntent.draftId,
-            ownerId: lockedIntent.ownerId,
-            slug: generateSlug(lockedIntent.title ?? "", lockedIntent.visibility === "public"),
-            title: lockedIntent.title ?? titleFromFilename(lockedIntent.originalFilename),
-            kind: "html",
-            visibility: lockedIntent.visibility ?? "private",
-            passwordHash: lockedIntent.passwordHash,
+            id: lockedIntent.versionId,
+            draftId: draft.id,
+            versionNumber,
+            storageKey: lockedIntent.finalKey,
+            contentSha256: entryValidation.sha256,
+            contentType: "text/html",
+            originalFilename: lockedIntent.originalFilename,
+            sizeBytes: entryValidation.size,
+            totalSizeBytes,
+            entryPath: lockedIntent.entryPath,
+            isBundle: true,
+            source: lockedIntent.source,
+            createdByTokenId: lockedIntent.createdByTokenId,
           })
           .returning();
-        if (!createdDraft) throw new Error("Draft insert returned no row");
-        draft = createdDraft;
-        versionNumber = 1;
-      }
+        if (!version) throw new Error("Version insert returned no row");
+        if (validatedAssets.length) {
+          await tx.insert(draftVersionAssets).values(
+            validatedAssets.map(({ file, contentSha256, sizeBytes }) => ({
+              id: file.id,
+              versionId: version.id,
+              logicalPath: file.logicalPath,
+              storageKey: file.finalKey,
+              contentSha256,
+              contentType: file.contentType,
+              originalFilename: file.originalFilename,
+              sizeBytes,
+            })),
+          );
+        }
+        const [updatedDraft] = await tx
+          .update(drafts)
+          .set({ currentVersionId: version.id, updatedAt: sql`now()` })
+          .where(eq(drafts.id, draft.id))
+          .returning();
+        if (!updatedDraft) throw new DraftNotFoundError();
 
-      const [version] = await tx
-        .insert(draftVersions)
-        .values({
-          id: lockedIntent.versionId,
-          draftId: draft.id,
-          versionNumber,
-          storageKey: lockedIntent.finalKey,
-          contentSha256: entryValidation.sha256,
-          contentType: "text/html",
-          originalFilename: lockedIntent.originalFilename,
-          sizeBytes: entryValidation.size,
-          totalSizeBytes,
-          entryPath: lockedIntent.entryPath,
-          isBundle: true,
-          source: lockedIntent.source,
-          createdByTokenId: lockedIntent.createdByTokenId,
-        })
-        .returning();
-      if (!version) throw new Error("Version insert returned no row");
-      if (validatedAssets.length) {
-        await tx.insert(draftVersionAssets).values(
-          validatedAssets.map(({ file, contentSha256, sizeBytes }) => ({
-            id: file.id,
-            versionId: version.id,
-            logicalPath: file.logicalPath,
-            storageKey: file.finalKey,
-            contentSha256,
-            contentType: file.contentType,
-            originalFilename: file.originalFilename,
-            sizeBytes,
-          })),
-        );
-      }
-      const [updatedDraft] = await tx
-        .update(drafts)
-        .set({ currentVersionId: version.id, updatedAt: sql`now()` })
-        .where(eq(drafts.id, draft.id))
-        .returning();
-      if (!updatedDraft) throw new DraftNotFoundError();
-
-      const [completed] = await tx
-        .update(uploadIntents)
-        .set({ status: "completed", completedAt: sql`now()`, updatedAt: sql`now()` })
-        .where(eq(uploadIntents.id, lockedIntent.id))
-        .returning();
-      if (!completed) throw new Error("Bundle intent update returned no row");
-      return {
-        state: "completed" as const,
-        completed,
-        draft: updatedDraft,
-        version,
-      };
-    });
+        const [completed] = await tx
+          .update(uploadIntents)
+          .set({ status: "completed", completedAt: sql`now()`, updatedAt: sql`now()` })
+          .where(eq(uploadIntents.id, lockedIntent.id))
+          .returning();
+        if (!completed) throw new Error("Bundle intent update returned no row");
+        return {
+          state: "completed" as const,
+          completed,
+          draft: updatedDraft,
+          version,
+        };
+      }),
+    );
 
     if (result.state === "already_completed") {
       const status = await getBundleStatus(ownerId, intentId);
@@ -688,19 +725,21 @@ export async function completeBundleUpload(
         throw new Error("Completed bundle metadata is missing");
       return { intent: status.intent, draft: status.draft, version: status.version };
     }
-    await recordAuditEvent({
-      type: bundle.intent.targetDraftId ? "draft.version_created" : "draft.created",
-      userId: bundle.intent.ownerId,
-      draftId: result.draft.id,
-      tokenId: bundle.intent.createdByTokenId ?? undefined,
-      metadata: {
-        kind: "html",
-        bundle: true,
-        sizeBytes: totalSizeBytes,
-        assetCount: validatedAssets.length,
-        versionNumber: result.version.versionNumber,
-      },
-    });
+    await withDiagnosticStage("completion.audit", () =>
+      recordAuditEvent({
+        type: bundle.intent.targetDraftId ? "draft.version_created" : "draft.created",
+        userId: bundle.intent.ownerId,
+        draftId: result.draft.id,
+        tokenId: bundle.intent.createdByTokenId ?? undefined,
+        metadata: {
+          kind: "html",
+          bundle: true,
+          sizeBytes: totalSizeBytes,
+          assetCount: validatedAssets.length,
+          versionNumber: result.version.versionNumber,
+        },
+      }),
+    );
     return { intent: result.completed, draft: result.draft, version: result.version };
   } catch (error) {
     if (
@@ -716,7 +755,9 @@ export async function completeBundleUpload(
     }
     throw error;
   } finally {
-    await releaseCompletion(bundle.intent.id, completionToken);
+    await withDiagnosticStage("completion.release", () =>
+      releaseCompletion(bundle.intent.id, completionToken),
+    );
   }
 }
 

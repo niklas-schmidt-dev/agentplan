@@ -1,6 +1,7 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { randomUUID } from "node:crypto";
 import { internalError } from "@/lib/api/responses";
+import { safeErrorDetails } from "./errors";
 
 type RequestDiagnostic = {
   requestId: string;
@@ -8,57 +9,53 @@ type RequestDiagnostic = {
   method: string;
   uploadIntentId?: string;
   fileId?: string;
-  errorType?: string;
-  errorCode?: string;
-};
+  errorStage?: string;
+  errorFileId?: string;
+  errorSummary?: string;
+} & Partial<ReturnType<typeof safeErrorDetails>>;
 
 const requests = new AsyncLocalStorage<RequestDiagnostic>();
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const errorTypes = new Set([
-  "Error",
-  "TypeError",
-  "RangeError",
-  "SyntaxError",
-  "AbortError",
-  "TimeoutError",
-  "UploadIntentNotFoundError",
-  "UploadIntentExpiredError",
-  "UploadIntentConflictError",
-  "DraftNotFoundError",
-  "DraftWriteConflictError",
-  "PasswordRequiredError",
-  "PasswordVisibilityConflictError",
-  "MediaValidationError",
-  "QuotaExceededError",
-  "RateLimitedError",
-]);
-const errorCodes = new Set([
-  "ECONNREFUSED",
-  "ECONNRESET",
-  "ETIMEDOUT",
-  "ENOTFOUND",
-  "EACCES",
-  "ENOSPC",
-  "ENOENT",
-  "EEXIST",
-  "23505",
-  "23503",
-  "40001",
-  "40P01",
-  "53300",
-  "57P01",
-  "AccessDenied",
-  "NoSuchKey",
-  "NoSuchBucket",
-  "SlowDown",
-  "ServiceUnavailable",
-  "INVALID_FILE_TYPE",
-  "FILE_TOO_LARGE",
-  "EMPTY_FILE",
-  "UPLOAD_KIND_DISABLED",
-  "UPLOAD_KIND_MISMATCH",
-  "SIZE_MISMATCH",
-]);
+const failedStages = new WeakMap<
+  RequestDiagnostic,
+  Map<unknown, { stage: DiagnosticStage; fileId?: string }>
+>();
+const stages = {
+  "completion.load": "Could not load the upload reservation",
+  "completion.claim": "Could not claim upload completion",
+  "storage.head": "Could not read stored file metadata",
+  "storage.open": "Could not open the stored file",
+  "storage.copy": "Could not copy the uploaded file",
+  "media.validate": "Could not validate the uploaded media",
+  "entry.validate": "Could not read and verify the HTML entry",
+  "verification.persist": "Could not save file verification",
+  "completion.persist": "Could not save the draft version",
+  "completion.audit": "Could not record the upload audit event",
+  "completion.release": "Could not release the upload completion lease",
+} as const;
+type DiagnosticStage = keyof typeof stages;
+
+/** Fixed operation labels and UUIDs only. Capture at the throw site, before parallel work or cleanup. */
+export async function withDiagnosticStage<T>(
+  stage: DiagnosticStage,
+  operation: () => PromiseLike<T>,
+  fileId?: string,
+): Promise<T> {
+  try {
+    return await operation();
+  } catch (error) {
+    const context = requests.getStore();
+    if (context && Object.hasOwn(stages, stage)) {
+      let failures = failedStages.get(context);
+      if (!failures) failedStages.set(context, (failures = new Map()));
+      // The innermost operation is the most useful. Bound retention for handled errors.
+      if (!failures.has(error) && failures.size < 32) {
+        failures.set(error, { stage, ...(fileId && uuid.test(fileId) ? { fileId } : {}) });
+      }
+    }
+    throw error;
+  }
+}
 
 /** Attach identifiers only after validation; never attach filenames, keys or user data. */
 export function recordUploadResource(key: "uploadIntentId" | "fileId", value: string): void {
@@ -66,18 +63,26 @@ export function recordUploadResource(key: "uploadIntentId" | "fileId", value: st
   if (context && uuid.test(value)) context[key] = value;
 }
 
-/** Error names/codes are allowlisted because third-party errors may contain credentials. */
+/** Traverse wrapped causes, but emit only fixed descriptions and validated metadata. */
 export function recordRequestError(error: unknown): void {
   const context = requests.getStore();
   if (!context) return;
-  context.errorType = "UnknownError";
-  if (error instanceof Error) {
-    const name = error.constructor.name;
-    context.errorType = errorTypes.has(name) ? name : "Error";
-  }
-  if (typeof error === "object" && error !== null && "code" in error) {
-    const code = (error as { code?: unknown }).code;
-    if (typeof code === "string" && errorCodes.has(code)) context.errorCode = code;
+  const failure = failedStages.get(context)?.get(error);
+  // Clear optional fields if a handler records a different error later.
+  delete context.errorCode;
+  delete context.errorCauses;
+  delete context.errorHttpStatus;
+  delete context.errorStage;
+  delete context.errorFileId;
+  const details = safeErrorDetails(error);
+  Object.assign(context, details, {
+    errorSummary:
+      details.errorSummary ??
+      `${failure ? stages[failure.stage] : "Request failed"}; the error has no recognized safe reason.`,
+  });
+  if (failure) {
+    context.errorStage = failure.stage;
+    if (failure.fileId) context.errorFileId = failure.fileId;
   }
 }
 
