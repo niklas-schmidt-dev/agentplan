@@ -135,9 +135,15 @@ AgentPlan uploads. Share screenshots that contain only synthetic data if needed.
 ## Dedicated staging and provider acceptance
 
 Local E2E uses the development server and filesystem storage. The full check
-also compiles the production build, but production runtime, provider CORS,
-callbacks and streaming need a deployed staging instance with real private
-Vercel Blob or R2 storage. Filesystem storage remains disabled in production.
+also compiles the production build and runs `node scripts/check-upload-artifact.mjs`.
+That gate copies only each upload completion/callback route's traced dependencies
+outside the checkout and detects a synthetic JPEG there. It catches missing
+runtime imports that the full development `node_modules` would conceal; CI runs
+it after the build too. The `file-type` filesystem reader dynamically imports
+`strtok3`, so upload traces explicitly include that package's runtime files.
+Production runtime, provider CORS, callbacks and streaming still need a deployed
+staging instance with real private Vercel Blob or R2 storage. Filesystem storage
+remains disabled in production.
 
 Create a dedicated staging deployment/database/bucket, migrate it, and create a
 verified QA user through the normal signup flow. Grant that account enough quota

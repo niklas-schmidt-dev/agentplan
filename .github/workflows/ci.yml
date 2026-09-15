@@ -81,6 +81,8 @@ jobs:
         run: npm run test
       - name: Production build
         run: npm run build
+      - name: Validate traced upload dependencies
+        run: node scripts/check-upload-artifact.mjs
 
   e2e:
     name: End-to-end security tests

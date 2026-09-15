@@ -384,6 +384,8 @@ try {
         completed.push("cli-build");
         await run("npm", ["run", "build"], { ...env, NODE_ENV: "production" });
         completed.push("production-build");
+        await run(process.execPath, ["scripts/check-upload-artifact.mjs"], env);
+        completed.push("upload-artifact");
         await run("npm", ["run", "test:e2e"], browserEnv);
         completed.push("browser-and-cli-e2e");
       } finally {
@@ -393,7 +395,7 @@ try {
             {
               completed,
               elapsedMs: Date.now() - started,
-              passed: completed.length === 6,
+              passed: completed.length === 7,
               excluded: ["live storage and staging: run test:staging with dedicated credentials"],
             },
             null,

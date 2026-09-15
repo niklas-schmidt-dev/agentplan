@@ -225,4 +225,34 @@ describe("request diagnostics", () => {
     expect(JSON.parse(raw)).not.toHaveProperty("errorFileId");
     expect(JSON.parse(raw)).not.toHaveProperty("errorCauses");
   });
+
+  it.each(["ERR_MODULE_NOT_FOUND", "MODULE_NOT_FOUND"])(
+    "explains %s without exposing module paths or import details",
+    async (code) => {
+      const handler = withRequestDiagnostics("/complete", async () =>
+        withDiagnosticStage("media.validate", async () => {
+          throw Object.assign(
+            new Error("Cannot find module /private/customer/secret.jpg imported from /private/app"),
+            {
+              code,
+              path: "/private/customer/secret.jpg",
+              requireStack: ["/private/app"],
+            },
+          );
+        }),
+      );
+      const response = await handler(new Request("http://localhost/complete"));
+      const raw = vi.mocked(console.error).mock.calls[0]![0] as string;
+      expect(JSON.parse(raw)).toMatchObject({
+        errorStage: "media.validate",
+        errorCode: code,
+        errorSummary: "A required server module is missing from the deployment.",
+        status: 500,
+      });
+      expect(raw).not.toMatch(/private|customer|secret|requireStack/);
+      expect(await response.json()).toEqual({
+        error: { code: "INTERNAL_ERROR", message: "Something went wrong." },
+      });
+    },
+  );
 });
