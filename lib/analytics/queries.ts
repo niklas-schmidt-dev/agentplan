@@ -1,4 +1,5 @@
-import { and, count, desc, eq, gte, inArray, isNotNull, isNull, ne, sql } from "drizzle-orm";
+import { liveDraftCondition } from "@/lib/drafts/expiration";
+import { and, count, desc, eq, gte, inArray, isNotNull, ne, sql } from "drizzle-orm";
 import { getDb } from "@/db/client";
 import { draftViewEvents, drafts, users, type DraftViewerKind } from "@/db/schema";
 
@@ -129,7 +130,7 @@ export async function getViewCountsForOwner(
     .where(
       and(
         eq(drafts.ownerId, ownerId),
-        isNull(drafts.deletedAt),
+        liveDraftCondition,
         visitorFilter,
         draftIds ? inArray(drafts.id, draftIds) : undefined,
       ),
@@ -145,9 +146,7 @@ export async function getViewCountsByOwner(ownerIds: string[]): Promise<Map<stri
     .select({ ownerId: drafts.ownerId, views: count() })
     .from(draftViewEvents)
     .innerJoin(drafts, eq(draftViewEvents.draftId, drafts.id))
-    .where(
-      and(inArray(drafts.ownerId, ownerIds), isNull(drafts.deletedAt), visitorFilter, since(30)),
-    )
+    .where(and(inArray(drafts.ownerId, ownerIds), liveDraftCondition, visitorFilter, since(30)))
     .groupBy(drafts.ownerId);
   return new Map(rows.map((row) => [row.ownerId, row.views]));
 }
@@ -199,7 +198,7 @@ export async function getTopDraftsByViews({
     .from(draftViewEvents)
     .innerJoin(drafts, eq(draftViewEvents.draftId, drafts.id))
     .innerJoin(users, eq(drafts.ownerId, users.id))
-    .where(and(isNull(drafts.deletedAt), visitorFilter, since(days)))
+    .where(and(liveDraftCondition, visitorFilter, since(days)))
     .groupBy(drafts.id, drafts.slug, drafts.title, drafts.visibility, users.email)
     .orderBy(desc(count()), desc(drafts.updatedAt))
     .limit(Math.min(Math.max(Math.trunc(limit), 1), 20));

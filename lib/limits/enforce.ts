@@ -1,3 +1,4 @@
+import { liveDraftCondition } from "@/lib/drafts/expiration";
 import { createHmac } from "node:crypto";
 import { and, eq, gt, isNull, ne, or, sql } from "drizzle-orm";
 import { getDb, type Database } from "@/db/client";
@@ -64,7 +65,7 @@ export async function lockAndAssertUploadQuota(
     const [row] = await db
       .select({ count: sql<number>`count(*)::int` })
       .from(drafts)
-      .where(and(eq(drafts.ownerId, params.userId), isNull(drafts.deletedAt)));
+      .where(and(eq(drafts.ownerId, params.userId), liveDraftCondition));
     if ((row?.count ?? 0) >= limits.maxDrafts) {
       throw new QuotaExceededError(
         `Draft limit reached (${limits.maxDrafts}). Delete drafts you no longer need.`,
@@ -105,7 +106,7 @@ export async function lockAndAssertUploadQuota(
       })
       .from(draftVersions)
       .innerJoin(drafts, eq(draftVersions.draftId, drafts.id))
-      .where(and(eq(drafts.ownerId, params.userId), isNull(drafts.deletedAt)));
+      .where(and(eq(drafts.ownerId, params.userId), liveDraftCondition));
     const [reservationRow] = await db
       .select({ total: sql<string>`coalesce(sum(${uploadIntents.expectedBytes}), 0)` })
       .from(uploadIntents)
@@ -146,7 +147,7 @@ export async function getUserStorageUsage(userId: string): Promise<{
       })
       .from(draftVersions)
       .innerJoin(drafts, eq(draftVersions.draftId, drafts.id))
-      .where(and(eq(drafts.ownerId, userId), isNull(drafts.deletedAt))),
+      .where(and(eq(drafts.ownerId, userId), liveDraftCondition)),
     db
       .select({ total: sql<string>`coalesce(sum(${uploadIntents.expectedBytes}), 0)` })
       .from(uploadIntents)
@@ -173,7 +174,7 @@ export async function getUserUsageCounts(
     db
       .select({ count: sql<number>`count(*)::int` })
       .from(drafts)
-      .where(and(eq(drafts.ownerId, userId), isNull(drafts.deletedAt))),
+      .where(and(eq(drafts.ownerId, userId), liveDraftCondition)),
     db
       .select({ count: sql<number>`count(*)::int` })
       .from(apiTokens)

@@ -113,6 +113,7 @@ export async function authorizeBundleViewGrant(
   draft: Draft,
   versionId: string,
 ): Promise<boolean> {
+  if (draft.deletedAt || (draft.expiresAt && draft.expiresAt.getTime() <= Date.now())) return false;
   const payload = parseGrant(token, draft.passwordHash ?? undefined);
   if (!payload || payload.draftId !== draft.id || payload.versionId !== versionId) return false;
   if (payload.kind === "password") {

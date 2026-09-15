@@ -50,7 +50,9 @@ The core security invariants are:
 9. **Destructive lifecycle operations are serialized.** Uploads and account
    deletion share a per-user storage lock. Deletion cleanup is durable and strips
    identifiers/object keys after completion; ordinary audit history has finite
-   retention.
+   retention. Optional draft expiry is checked on reads and writes independently
+   of cleanup. Expired drafts are purged with all versions and assets; pending
+   uploads are cancelled under the same storage lock with durable object cleanup.
 10. **Admin moderation is server-authorized and auditable.** Every plan, role, account,
     and upload moderation mutation rechecks the actor's current database role.
     Moderated uploads leave all read paths immediately and are permanently purged

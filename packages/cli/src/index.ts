@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 
+import { parseExpiryDuration } from "@agentplan/upload-contract";
 import { spawn } from "node:child_process";
 import { lstat } from "node:fs/promises";
 import { parseArgs } from "node:util";
@@ -21,6 +22,7 @@ Usage:
     --public | --private                set visibility
     --password <password>               protect the draft with a password
     --password-stdin                    read the draft password from stdin (safer)
+    --expires-in <duration>             auto-expire after 1h, 1d, 30d, etc. (1m–365d)
     --title <title>                     set the draft title
     --draft <id>                        add a version to an existing draft
     --entry <path>                      choose the bundle entry HTML
@@ -165,6 +167,7 @@ async function uploadBundle(
   flags: UploadFlags,
   visibility: "public" | "private" | "password",
   password?: string,
+  expiresInSeconds?: number,
 ): Promise<{ draft: ApiDraft; version?: unknown }> {
   const local = await inspectBundleDirectory(directory, flags.entry);
   const created = await api.createBundle({
@@ -179,6 +182,7 @@ async function uploadBundle(
       : {
           type: "new",
           title: flags.title,
+          expiresInSeconds,
           visibility,
           password,
         },
@@ -244,6 +248,8 @@ function printDraft(draft: ApiDraft, action: string): void {
   process.stdout.write(
     `${action} ${draft.title}\nVisibility: ${draft.visibility}\nVersion: ${draft.version ?? "-"}\n${draft.url}\n`,
   );
+  if (draft.expiresAt)
+    process.stdout.write(`Auto-expiry: ${draft.expiresAt} (files deleted during daily cleanup)\n`);
 }
 
 async function commandUpload(file: string | undefined, flags: UploadFlags): Promise<void> {
@@ -258,9 +264,17 @@ async function commandUpload(file: string | undefined, flags: UploadFlags): Prom
   }
   if (flags.draft && hasNewDraftOnlyOptions(flags)) {
     fail(
-      "--draft only uploads a new version; visibility, password, and title options apply only when creating a draft.",
+      "--draft only uploads a new version; visibility, password, title, and auto-expiry options apply only when creating a draft.",
       2,
     );
+  }
+  let expiresInSeconds: number | undefined;
+  if (flags["expires-in"] !== undefined) {
+    try {
+      expiresInSeconds = parseExpiryDuration(flags["expires-in"]);
+    } catch (error) {
+      fail(error instanceof Error ? error.message : "Invalid auto-expiry.", 2);
+    }
   }
   const password = flags["password-stdin"] ? await readPasswordFromStdin() : flags.password;
 
@@ -276,7 +290,7 @@ async function commandUpload(file: string | undefined, flags: UploadFlags): Prom
       : "private";
 
   if (fileMetadata.isDirectory()) {
-    const result = await uploadBundle(api, file, flags, visibility, password);
+    const result = await uploadBundle(api, file, flags, visibility, password, expiresInSeconds);
     if (flags.json) process.stdout.write(`${JSON.stringify(result)}\n`);
     else printDraft(result.draft, flags.draft ? "Uploaded new version of" : "Uploaded");
     return;
@@ -291,7 +305,7 @@ async function commandUpload(file: string | undefined, flags: UploadFlags): Prom
     sizeBytes,
     target: flags.draft
       ? { type: "draft", draftId: flags.draft }
-      : { type: "new", title: flags.title, visibility, password },
+      : { type: "new", title: flags.title, visibility, password, expiresInSeconds },
   });
   let result: { draft: ApiDraft; version?: unknown };
   let completionStarted = false;
@@ -483,6 +497,7 @@ async function main(): Promise<void> {
       password: { type: "string" },
       "password-stdin": { type: "boolean" },
       title: { type: "string" },
+      "expires-in": { type: "string" },
       draft: { type: "string" },
       entry: { type: "string" },
       json: { type: "boolean" },
@@ -507,7 +522,16 @@ async function main(): Promise<void> {
   const allowed: Record<string, string[]> = {
     login: [],
     logout: [],
-    upload: ["public", "private", "password", "password-stdin", "title", "draft", "entry"],
+    upload: [
+      "expires-in",
+      "public",
+      "private",
+      "password",
+      "password-stdin",
+      "title",
+      "draft",
+      "entry",
+    ],
     list: ["limit", "cursor", "search", "visibility"],
     open: [],
     validate: ["entry"],

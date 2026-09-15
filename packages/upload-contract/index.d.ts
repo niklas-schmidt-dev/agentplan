@@ -36,3 +36,8 @@ export declare function validateBundleManifest(input: {
     spec: UploadSpec;
   }>;
 };
+
+export declare const MIN_DRAFT_EXPIRY_SECONDS: number;
+export declare const MAX_DRAFT_EXPIRY_SECONDS: number;
+export declare function validateExpirySeconds(value?: number | null): number | null;
+export declare function parseExpiryDuration(value: string): number;

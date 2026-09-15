@@ -1,6 +1,15 @@
+import { MIN_DRAFT_EXPIRY_SECONDS, MAX_DRAFT_EXPIRY_SECONDS } from "@agentplan/upload-contract";
 import { z } from "zod";
 import { MAX_PASSWORD_LENGTH, MIN_PASSWORD_LENGTH } from "@/lib/drafts/password";
 import { TOKEN_SCOPES } from "@/lib/tokens/token";
+
+export const draftExpirySchema = z
+  .number()
+  .int()
+  .min(MIN_DRAFT_EXPIRY_SECONDS)
+  .max(MAX_DRAFT_EXPIRY_SECONDS)
+  .nullable()
+  .optional();
 
 export const visibilitySchema = z.enum(["public", "private", "password"]);
 

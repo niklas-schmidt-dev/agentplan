@@ -316,6 +316,12 @@ Set `BETTER_AUTH_URL` or `NEXT_PUBLIC_APP_URL` to the public HTTPS origin. Arran
 for a daily authenticated request to `/api/cron/purge` using
 `Authorization: Bearer $CRON_SECRET`.
 
+Optional draft auto-expiry needs migration `0016_next_midnight`. Access is denied
+at the deadline on every request, even between cron runs. The cron permanently
+deletes expired drafts, all versions, and assets, bypassing the ordinary
+soft-delete retention. Keep it scheduled so expired objects are actually removed;
+provider failures are retried on later runs.
+
 Email/password needs no additional provider. To add verification and password
 recovery, configure Resend or the HTTPS webhook described above. To add GitHub
 sign-in, use the OAuth variables and callback described above.

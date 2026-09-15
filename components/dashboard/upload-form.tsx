@@ -7,6 +7,7 @@ import { useRouter } from "next/navigation";
 import { UpgradePrompt } from "./upgrade-prompt";
 import {
   normalizeBundlePath,
+  parseExpiryDuration,
   selectBundleEntry,
   uploadKinds,
   uploadSpecFor,
@@ -68,6 +69,7 @@ async function directUpload(
         title?: string;
         visibility: "private" | "public" | "password";
         password?: string;
+        expiresInSeconds?: number | null;
       }
     | { type: "draft"; draftId: string },
   onState: (state: UploadState) => void,
@@ -191,6 +193,7 @@ async function bundleUpload(
         title?: string;
         visibility: "private" | "public" | "password";
         password?: string;
+        expiresInSeconds?: number | null;
       }
     | { type: "draft"; draftId: string },
   onState: (state: UploadState) => void,
@@ -388,6 +391,7 @@ export function NewDraftForm({ upgradeHref }: { upgradeHref?: string } = {}) {
   const [error, setError] = useState<FormError | null>(null);
   const [state, setState] = useState<UploadState>("idle");
   const [recoveryPath, setRecoveryPath] = useState<string | null>(null);
+  const [expiry, setExpiry] = useState("none");
   const [visibility, setVisibility] = useState<"private" | "public" | "password">("private");
   const [mode, setMode] = useState<UploadMode>("single");
   const [bundleFiles, setBundleFiles] = useState<File[]>([]);
@@ -403,6 +407,12 @@ export function NewDraftForm({ upgradeHref }: { upgradeHref?: string } = {}) {
     const data = new FormData(form);
     try {
       let body: { draft: { id: string } };
+      const expiresInSeconds =
+        expiry === "none"
+          ? undefined
+          : parseExpiryDuration(
+              expiry === "custom" ? `${data.get("expiryAmount")}${data.get("expiryUnit")}` : expiry,
+            );
       const titleValue = data.get("title");
       const passwordValue = data.get("password");
       if (mode === "bundle") {
@@ -412,6 +422,7 @@ export function NewDraftForm({ upgradeHref }: { upgradeHref?: string } = {}) {
           typeof entryValue === "string" && entryValue ? entryValue : undefined,
           {
             type: "new",
+            expiresInSeconds,
             title: typeof titleValue === "string" && titleValue ? titleValue : undefined,
             visibility,
             password:
@@ -431,6 +442,7 @@ export function NewDraftForm({ upgradeHref }: { upgradeHref?: string } = {}) {
           file,
           {
             type: "new",
+            expiresInSeconds,
             title: typeof titleValue === "string" && titleValue ? titleValue : undefined,
             visibility,
             password:
@@ -483,6 +495,54 @@ export function NewDraftForm({ upgradeHref }: { upgradeHref?: string } = {}) {
         title <span className="text-ink-faint">(optional, defaults to filename)</span>
         <input type="text" name="title" maxLength={200} className={inputClass} />
       </label>
+      <div className="flex flex-col gap-2 font-mono text-xs text-ink-muted">
+        <label className="flex flex-col gap-1">
+          auto-expiry
+          <select
+            name="expiry"
+            value={expiry}
+            onChange={(event) => setExpiry(event.target.value)}
+            className={inputClass}
+            aria-describedby="expiry-help"
+          >
+            <option value="none">No auto-expiry</option>
+            <option value="1h">After 1 hour</option>
+            <option value="1d">After 1 day</option>
+            <option value="30d">After 30 days</option>
+            <option value="custom">Custom duration</option>
+          </select>
+        </label>
+        {expiry === "custom" ? (
+          <div className="flex gap-2">
+            <label className="flex min-w-0 flex-1 flex-col gap-1">
+              duration
+              <input
+                name="expiryAmount"
+                type="number"
+                min="1"
+                max="525600"
+                step="1"
+                defaultValue="7"
+                required
+                className={`${inputClass} w-full`}
+              />
+            </label>
+            <label className="flex flex-col gap-1">
+              unit
+              <select name="expiryUnit" defaultValue="d" className={inputClass}>
+                <option value="m">minutes</option>
+                <option value="h">hours</option>
+                <option value="d">days</option>
+              </select>
+            </label>
+          </div>
+        ) : null}
+        <p id="expiry-help" className="text-ink-faint">
+          {expiry === "none"
+            ? "Available until you delete it."
+            : "Starts after upload. All links stop working at expiry; files and all versions are permanently deleted during daily cleanup. New versions keep this deadline. Maximum 365 days."}
+        </p>
+      </div>
       <fieldset className="flex flex-wrap items-center gap-4 font-mono text-xs text-ink-muted">
         <legend className="sr-only">Visibility</legend>
         {(["private", "public", "password"] as const).map((option) => (

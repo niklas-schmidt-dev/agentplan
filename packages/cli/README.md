@@ -31,6 +31,21 @@ agentplan upload diagram.webp
 agentplan upload demo.mp4
 ```
 
+For temporary uploads, add `--expires-in`:
+
+```sh
+agentplan upload plan.html --expires-in 1h
+agentplan upload diagram.webp --expires-in 1d
+agentplan upload ./launch-plan --expires-in 30d
+```
+
+Use a whole number followed by `m`, `h`, or `d`, between 1 minute and 365 days.
+The lifetime starts when the upload succeeds. All links stop working at expiry;
+daily cleanup permanently deletes the draft and every version. New versions and
+restores keep the original deadline, so `--expires-in` cannot be used with
+`--draft`. Omit it for a permanent draft. JSON draft responses include `expiresAt`
+as a UTC timestamp, or `null` for no expiry.
+
 ## Upload an HTML plan with images and video
 
 Keep the HTML and its relative media files in one directory:

@@ -1,3 +1,4 @@
+import { liveDraftCondition } from "@/lib/drafts/expiration";
 import { withUploadDiagnostics } from "@/lib/uploads/diagnostics";
 import { authenticateApiRequest, isFailure } from "@/lib/api/auth";
 import { apiError, insufficientScope, notFound, unauthorized } from "@/lib/api/responses";
@@ -7,7 +8,7 @@ import { uploadErrorResponse } from "@/lib/uploads/responses";
 import { uuidSchema } from "@/lib/validation/api";
 import { getDb } from "@/db/client";
 import { drafts, draftVersions } from "@/db/schema";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 
 type Params = { params: Promise<{ id: string }> };
 
@@ -29,7 +30,11 @@ async function handleGET(req: Request, { params }: Params): Promise<Response> {
   let result: Record<string, unknown> = {};
   if (intent.status === "completed") {
     const [[draft], [version]] = await Promise.all([
-      getDb().select().from(drafts).where(eq(drafts.id, intent.draftId)).limit(1),
+      getDb()
+        .select()
+        .from(drafts)
+        .where(and(eq(drafts.id, intent.draftId), liveDraftCondition))
+        .limit(1),
       getDb().select().from(draftVersions).where(eq(draftVersions.id, intent.versionId)).limit(1),
     ]);
     if (draft && version) {

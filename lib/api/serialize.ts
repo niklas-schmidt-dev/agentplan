@@ -8,6 +8,7 @@ export function serializeDraft(draft: Draft, versionNumber: number | null) {
     slug: draft.slug,
     visibility: draft.visibility,
     kind: draft.kind,
+    expiresAt: draft.expiresAt?.toISOString() ?? null,
     version: versionNumber,
     url: draftUrl(draft.slug),
     createdAt: draft.createdAt.toISOString(),

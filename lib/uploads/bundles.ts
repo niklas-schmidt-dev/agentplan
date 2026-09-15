@@ -1,3 +1,5 @@
+import { validateExpirySeconds } from "@agentplan/upload-contract";
+import { draftExpiration, liveDraftCondition } from "@/lib/drafts/expiration";
 import { withDiagnosticStage } from "@/lib/diagnostics/request";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
@@ -65,6 +67,7 @@ export type BundleTarget =
       title?: string;
       visibility: Visibility;
       password?: string;
+      expiresInSeconds?: number | null;
     }
   | { type: "draft"; draftId: string };
 
@@ -160,6 +163,8 @@ export async function createBundleUpload(input: {
   const entry = manifest.files.find((file) => file.path === manifest.entryPath)!;
   const assets = manifest.files.filter((file) => file.path !== manifest.entryPath);
   const intentId = randomUUID();
+  const draftExpiresInSeconds =
+    input.target.type === "new" ? validateExpirySeconds(input.target.expiresInSeconds) : null;
   const draftId = input.target.type === "draft" ? input.target.draftId : randomUUID();
   const versionId = randomUUID();
   const expiresAt = new Date(Date.now() + INTENT_TTL_MS);
@@ -230,7 +235,7 @@ export async function createBundleUpload(input: {
           and(
             eq(drafts.id, input.target.draftId),
             eq(drafts.ownerId, input.ownerId),
-            isNull(drafts.deletedAt),
+            liveDraftCondition,
           ),
         )
         .for("update");
@@ -281,6 +286,7 @@ export async function createBundleUpload(input: {
         entryPath: manifest.entryPath,
         fileCount: manifest.files.length,
         title,
+        draftExpiresInSeconds,
         visibility,
         passwordHash,
         source: input.source,
@@ -423,7 +429,11 @@ export async function getBundleStatus(
   }
   if (bundle.intent.status !== "completed") return { intent: bundle.intent, files };
   const [[draft], [version]] = await Promise.all([
-    getDb().select().from(drafts).where(eq(drafts.id, bundle.intent.draftId)).limit(1),
+    getDb()
+      .select()
+      .from(drafts)
+      .where(and(eq(drafts.id, bundle.intent.draftId), liveDraftCondition))
+      .limit(1),
     getDb()
       .select()
       .from(draftVersions)
@@ -443,7 +453,7 @@ export async function completeBundleUpload(
   if (!bundle) throw new UploadIntentNotFoundError();
   if (bundle.intent.status === "completed") {
     const status = await getBundleStatus(ownerId, intentId);
-    if (!status?.draft || !status.version) throw new Error("Completed bundle metadata is missing");
+    if (!status?.draft || !status.version) throw new DraftNotFoundError();
     return { intent: status.intent, draft: status.draft, version: status.version };
   }
   try {
@@ -634,7 +644,7 @@ export async function completeBundleUpload(
               and(
                 eq(drafts.id, lockedIntent.targetDraftId),
                 eq(drafts.ownerId, lockedIntent.ownerId),
-                isNull(drafts.deletedAt),
+                liveDraftCondition,
               ),
             )
             .for("update");
@@ -657,6 +667,7 @@ export async function completeBundleUpload(
               kind: "html",
               visibility: lockedIntent.visibility ?? "private",
               passwordHash: lockedIntent.passwordHash,
+              expiresAt: draftExpiration(lockedIntent.draftExpiresInSeconds),
             })
             .returning();
           if (!createdDraft) throw new Error("Draft insert returned no row");
@@ -721,8 +732,7 @@ export async function completeBundleUpload(
 
     if (result.state === "already_completed") {
       const status = await getBundleStatus(ownerId, intentId);
-      if (!status?.draft || !status.version)
-        throw new Error("Completed bundle metadata is missing");
+      if (!status?.draft || !status.version) throw new DraftNotFoundError();
       return { intent: status.intent, draft: status.draft, version: status.version };
     }
     await withDiagnosticStage("completion.audit", () =>
@@ -815,11 +825,7 @@ export async function restoreBundleVersion(input: {
       .select()
       .from(drafts)
       .where(
-        and(
-          eq(drafts.id, input.draftId),
-          eq(drafts.ownerId, input.ownerId),
-          isNull(drafts.deletedAt),
-        ),
+        and(eq(drafts.id, input.draftId), eq(drafts.ownerId, input.ownerId), liveDraftCondition),
       )
       .for("update");
     if (!draft || draft.kind !== "html") throw new DraftNotFoundError();
@@ -946,11 +952,7 @@ export async function restoreBundleVersion(input: {
         .select()
         .from(drafts)
         .where(
-          and(
-            eq(drafts.id, input.draftId),
-            eq(drafts.ownerId, input.ownerId),
-            isNull(drafts.deletedAt),
-          ),
+          and(eq(drafts.id, input.draftId), eq(drafts.ownerId, input.ownerId), liveDraftCondition),
         )
         .for("update");
       if (!lockedDraft) throw new DraftNotFoundError();

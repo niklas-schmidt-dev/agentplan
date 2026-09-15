@@ -1,11 +1,11 @@
-import { finalObjectCleanupDeadline } from "@/lib/uploads/cleanup-deadline";
+import { draftExpiration, liveDraftCondition } from "@/lib/drafts/expiration";
+import { cancelDraftUploads } from "@/lib/drafts/upload-cleanup";
 import { createHash, randomUUID } from "node:crypto";
-import { and, eq, isNull, max, sql } from "drizzle-orm";
+import { and, eq, max, sql } from "drizzle-orm";
 import { getDb } from "@/db/client";
 import {
   draftVersions,
   drafts,
-  uploadIntentFiles,
   uploadIntents,
   users,
   type Draft,
@@ -17,7 +17,7 @@ import { hashPassword } from "@/lib/drafts/password";
 import { generateSlug } from "@/lib/drafts/slug";
 import { consumeUploadRateLimit, lockAndAssertUploadQuota } from "@/lib/limits/enforce";
 import { getStorage, storageKeyFor } from "@/lib/storage";
-import { queueStorageDeletion, tryDeleteStorageKey } from "@/lib/storage/cleanup";
+import { tryDeleteStorageKey } from "@/lib/storage/cleanup";
 
 export type UploadSource = "browser" | "api_token";
 
@@ -85,6 +85,7 @@ export async function createDraftWithFirstVersion(params: {
   rateLimitConsumed?: boolean;
   /** Required plaintext when visibility is "password"; invalid otherwise. */
   password?: string;
+  expiresInSeconds?: number | null;
 }): Promise<{ draft: Draft; version: DraftVersion }> {
   const db = getDb();
   const draftId = randomUUID();
@@ -141,6 +142,7 @@ export async function createDraftWithFirstVersion(params: {
               title: params.title,
               visibility: params.visibility,
               passwordHash,
+              expiresAt: draftExpiration(params.expiresInSeconds),
             })
             .returning();
           const [version] = await tx
@@ -256,7 +258,7 @@ export async function addVersionToDraft(params: {
       const [locked] = await tx
         .select({ id: drafts.id, deletedAt: drafts.deletedAt })
         .from(drafts)
-        .where(eq(drafts.id, params.draft.id))
+        .where(and(eq(drafts.id, params.draft.id), liveDraftCondition))
         .for("update");
       if (!locked || locked.deletedAt) throw new DraftNotFoundError();
 
@@ -289,7 +291,7 @@ export async function addVersionToDraft(params: {
       const [updatedDraft] = await tx
         .update(drafts)
         .set({ currentVersionId: versionId, updatedAt: sql`now()` })
-        .where(eq(drafts.id, params.draft.id))
+        .where(and(eq(drafts.id, params.draft.id), liveDraftCondition))
         .returning();
       if (!updatedDraft) throw new DraftNotFoundError();
 
@@ -368,7 +370,7 @@ export async function restoreVersion(params: {
       const [locked] = await tx
         .select({ id: drafts.id, kind: drafts.kind, deletedAt: drafts.deletedAt })
         .from(drafts)
-        .where(eq(drafts.id, params.draft.id))
+        .where(and(eq(drafts.id, params.draft.id), liveDraftCondition))
         .for("update");
       if (!locked || locked.deletedAt) throw new DraftNotFoundError();
 
@@ -398,7 +400,7 @@ export async function restoreVersion(params: {
       const [draft] = await tx
         .update(drafts)
         .set({ currentVersionId: version.id, updatedAt: sql`now()` })
-        .where(eq(drafts.id, params.draft.id))
+        .where(and(eq(drafts.id, params.draft.id), liveDraftCondition))
         .returning();
       if (!draft) throw new DraftNotFoundError();
 
@@ -475,7 +477,7 @@ export async function setDraftVisibility(
         ...(passwordHash !== undefined ? { passwordHash } : {}),
         updatedAt: sql`now()`,
       })
-      .where(and(eq(drafts.id, draft.id), isNull(drafts.deletedAt)))
+      .where(and(eq(drafts.id, draft.id), liveDraftCondition))
       .returning();
     if (!result) throw new DraftNotFoundError();
     return result;
@@ -516,7 +518,7 @@ export async function setDraftPassword(
         ...(draft.visibility === "public" ? { slug: generateSlug("", false) } : {}),
         updatedAt: sql`now()`,
       })
-      .where(and(eq(drafts.id, draft.id), isNull(drafts.deletedAt)))
+      .where(and(eq(drafts.id, draft.id), liveDraftCondition))
       .returning();
     if (!result) throw new DraftNotFoundError();
     return result;
@@ -550,7 +552,7 @@ export async function setDraftTitle(
     const [result] = await tx
       .update(drafts)
       .set({ title, updatedAt: sql`now()` })
-      .where(and(eq(drafts.id, draft.id), isNull(drafts.deletedAt)))
+      .where(and(eq(drafts.id, draft.id), liveDraftCondition))
       .returning();
     if (!result) throw new DraftNotFoundError();
     return result;
@@ -583,45 +585,10 @@ export async function softDeleteDraft(
     const [updated] = await tx
       .update(drafts)
       .set({ deletedAt: sql`now()`, updatedAt: sql`now()` })
-      .where(and(eq(drafts.id, draft.id), isNull(drafts.deletedAt)))
+      .where(and(eq(drafts.id, draft.id), liveDraftCondition))
       .returning({ id: drafts.id });
     if (!updated) throw new DraftNotFoundError();
-    const pending = await tx
-      .update(uploadIntents)
-      .set({ status: "cancelled", failureCode: "DRAFT_DELETED", updatedAt: sql`now()` })
-      .where(and(eq(uploadIntents.targetDraftId, draft.id), eq(uploadIntents.status, "pending")))
-      .returning();
-    const keys: Array<{ storageKey: string; notBefore?: Date }> = [];
-    for (const intent of pending) {
-      if (intent.mode === "single") {
-        if (intent.stagingKey) {
-          keys.push({ storageKey: intent.stagingKey, notBefore: intent.expiresAt });
-        }
-        keys.push({ storageKey: intent.finalKey, notBefore: finalObjectCleanupDeadline(intent) });
-      } else {
-        const files = await tx
-          .select({ finalKey: uploadIntentFiles.finalKey })
-          .from(uploadIntentFiles)
-          .where(eq(uploadIntentFiles.intentId, intent.id));
-        keys.push(
-          ...[intent.finalKey, ...files.map((file) => file.finalKey)].map((storageKey) => ({
-            storageKey,
-            notBefore: finalObjectCleanupDeadline(intent),
-          })),
-        );
-      }
-    }
-    for (const key of keys) {
-      await queueStorageDeletion(
-        {
-          storageKey: key.storageKey,
-          reason: "draft_deleted",
-          notBefore: key.notBefore,
-        },
-        tx,
-      );
-    }
-    return keys;
+    return cancelDraftUploads(tx, draft.id);
   });
   await Promise.all(cleanup.map((key) => tryDeleteStorageKey(key.storageKey)));
   await recordAuditEvent({

@@ -1,3 +1,4 @@
+import { liveDraftCondition } from "@/lib/drafts/expiration";
 import { decodeDraftCursor, draftFilterKey, encodeDraftCursor } from "@/lib/api/draft-cursor";
 import { and, asc, desc, eq, gte, ilike, isNull, sql } from "drizzle-orm";
 import { getDb } from "@/db/client";
@@ -17,7 +18,7 @@ export async function getDraftBySlug(slug: string): Promise<Draft | null> {
     .select({ draft: drafts })
     .from(drafts)
     .innerJoin(users, eq(drafts.ownerId, users.id))
-    .where(and(eq(drafts.slug, slug), isNull(drafts.deletedAt), isNull(users.blockedAt)))
+    .where(and(eq(drafts.slug, slug), liveDraftCondition, isNull(users.blockedAt)))
     .limit(1);
   return draft?.draft ?? null;
 }
@@ -32,7 +33,7 @@ export async function getDraftForOwner(draftId: string, ownerId: string): Promis
       and(
         eq(drafts.id, draftId),
         eq(drafts.ownerId, ownerId),
-        isNull(drafts.deletedAt),
+        liveDraftCondition,
         isNull(users.blockedAt),
       ),
     )
@@ -74,11 +75,7 @@ export async function listDraftsPageForOwner(
   const filter = draftFilterKey(ownerId, filters);
   const cursor = filters.cursor ? decodeDraftCursor(filters.cursor, filter) : null;
   const backwards = cursor?.direction === "previous";
-  const conditions = [
-    eq(drafts.ownerId, ownerId),
-    isNull(drafts.deletedAt),
-    isNull(users.blockedAt),
-  ];
+  const conditions = [eq(drafts.ownerId, ownerId), liveDraftCondition, isNull(users.blockedAt)];
   if (filters.visibility) conditions.push(eq(drafts.visibility, filters.visibility));
   if (filters.search) conditions.push(ilike(drafts.title, `%${filters.search}%`));
   if (filters.updatedWithinDays) {

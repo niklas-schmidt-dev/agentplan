@@ -94,6 +94,17 @@ export default async function DraftDetailPage({
         </div>
       </section>
 
+      {draft.expiresAt ? (
+        <p className="font-mono text-xs text-ink-muted" role="status">
+          Auto-expiry:{" "}
+          <time dateTime={draft.expiresAt.toISOString()}>
+            {draft.expiresAt.toISOString().replace("T", " ").slice(0, 16)} UTC
+          </time>
+          . All links stop working then. Daily cleanup permanently deletes every version. New
+          uploads keep this deadline.
+        </p>
+      ) : null}
+
       <section
         aria-label="Selected version preview"
         className="flex min-h-96 items-center justify-center rounded-md border border-edge bg-surface"

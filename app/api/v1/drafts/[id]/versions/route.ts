@@ -3,6 +3,7 @@ import { authenticateApiRequest, isFailure } from "@/lib/api/auth";
 import {
   insufficientScope,
   internalError,
+  invalidRequest,
   apiError,
   limitErrorResponse,
   notFound,
@@ -49,6 +50,8 @@ export async function POST(req: Request, { params }: Params): Promise<Response> 
   }
   const upload = await readUpload(req);
   if (upload instanceof Response) return upload;
+  if (upload.expiresInSeconds !== undefined)
+    return invalidRequest("New versions inherit the draft’s auto-expiry.");
 
   try {
     const { version, draft: updatedDraft } = await addVersionToDraft({
