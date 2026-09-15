@@ -8,6 +8,8 @@ const reasons: Record<string, string> = {
   ENOSPC: "Temporary storage is full.",
   ENOENT: "A required file is missing.",
   EEXIST: "A file already exists.",
+  ERR_MODULE_NOT_FOUND: "A required server module is missing from the deployment.",
+  MODULE_NOT_FOUND: "A required server module is missing from the deployment.",
   "23502": "A required database value is missing.",
   "23505": "Database unique constraint was violated.",
   "23503": "Database referenced record is missing.",

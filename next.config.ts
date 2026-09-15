@@ -13,6 +13,11 @@ const nextConfig: NextConfig = {
   poweredByHeader: false,
   // fileTypeFromFile loads Node tokenizers dynamically; keep native resolution.
   serverExternalPackages: ["file-type"],
+  // Externalization alone cannot trace file-type's variable import of strtok3.
+  // Ship its Node reader as well as the statically imported core tokenizers.
+  outputFileTracingIncludes: {
+    "/api/v1/uploads/**/*": ["./node_modules/strtok3/lib/**/*.js"],
+  },
   async headers() {
     return [
       {
