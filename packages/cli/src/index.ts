@@ -3,8 +3,17 @@
 import { parseExpiryDuration } from "@agentplan/upload-contract";
 import { spawn } from "node:child_process";
 import { lstat } from "node:fs/promises";
-import { parseArgs } from "node:util";
-import { AgentPlanApi, ApiError, DEFAULT_API_URL, type ApiDraft } from "./api.js";
+import { AgentPlanApi, ApiError, DEFAULT_API_URL, type ApiDraft, type ApiGroup } from "./api.js";
+import { parseCommand } from "./arguments.js";
+import {
+  draftGroupTarget,
+  draftGroupFilters,
+  groupListOptions,
+  groupParentTarget,
+  paginationOptions,
+  requireUuid,
+  type GroupFlags,
+} from "./group-options.js";
 import { inspectUploadFile, inspectBundleDirectory, validateArtifact } from "./inspect.js";
 import { CliError, writeError } from "./errors.js";
 import { completeWithRecovery } from "./reconcile.js";
@@ -25,12 +34,21 @@ Usage:
     --expires-in <duration>             auto-expire after 1h, 1d, 30d, etc. (1m–365d)
     --title <title>                     set the draft title
     --draft <id>                        add a version to an existing draft
+    --group <id>                        place a new draft in a group
     --entry <path>                      choose the bundle entry HTML
     --json                              machine-readable output on stdout
   agentplan validate <file|directory>   check an artifact offline [--entry <path>] [--json]
   agentplan list [--json]               list all your drafts
     --limit <1-200> | --cursor <cursor>  return one page with nextCursor
     --search <text> --visibility <mode> filter drafts
+    --group <id> [--recursive]          list files in a group, optionally its descendants
+    --ungrouped                         list files without a group
+  agentplan move <id> [<id> ...]        move 1–50 files: --group <id> | --ungrouped
+  agentplan groups create <name>        create a group [--parent <id>] [--description <text>]
+  agentplan groups list                 list root groups [--parent <id>] [--recursive]
+    --search <text> --limit <1-200> --cursor <cursor> [--json]
+  agentplan groups move <id>            move a subtree: --parent <id> | --root
+  agentplan groups dissolve <id> --yes  move direct contents up one level, remove the group
   agentplan get <id> [--json]           inspect a draft
   agentplan versions <id> [--json]      list immutable versions
   agentplan update <id>                 change title or audience
@@ -185,6 +203,7 @@ async function uploadBundle(
           expiresInSeconds,
           visibility,
           password,
+          groupId: flags.group,
         },
   });
   const localByPath = new Map(local.files.map((file) => [file.path, file]));
@@ -250,6 +269,7 @@ function printDraft(draft: ApiDraft, action: string): void {
   );
   if (draft.expiresAt)
     process.stdout.write(`Auto-expiry: ${draft.expiresAt} (files deleted during daily cleanup)\n`);
+  if (draft.groupId) process.stdout.write(`Group: ${draft.groupId}\n`);
 }
 
 async function commandUpload(file: string | undefined, flags: UploadFlags): Promise<void> {
@@ -264,10 +284,11 @@ async function commandUpload(file: string | undefined, flags: UploadFlags): Prom
   }
   if (flags.draft && hasNewDraftOnlyOptions(flags)) {
     fail(
-      "--draft only uploads a new version; visibility, password, title, and auto-expiry options apply only when creating a draft.",
+      "--draft only uploads a new version; visibility, password, title, group, and auto-expiry options apply only when creating a draft.",
       2,
     );
   }
+  if (flags.group !== undefined) requireUuid(flags.group, "--group");
   let expiresInSeconds: number | undefined;
   if (flags["expires-in"] !== undefined) {
     try {
@@ -305,7 +326,14 @@ async function commandUpload(file: string | undefined, flags: UploadFlags): Prom
     sizeBytes,
     target: flags.draft
       ? { type: "draft", draftId: flags.draft }
-      : { type: "new", title: flags.title, visibility, password, expiresInSeconds },
+      : {
+          type: "new",
+          title: flags.title,
+          visibility,
+          password,
+          expiresInSeconds,
+          groupId: flags.group,
+        },
   });
   let result: { draft: ApiDraft; version?: unknown };
   let completionStarted = false;
@@ -328,25 +356,19 @@ async function commandUpload(file: string | undefined, flags: UploadFlags): Prom
   }
 }
 
-async function commandList(flags: {
-  json?: boolean;
-  limit?: string;
-  cursor?: string;
-  search?: string;
-  visibility?: string;
-}): Promise<void> {
-  const limit = flags.limit === undefined ? undefined : Number(flags.limit);
-  if (limit !== undefined && (!Number.isInteger(limit) || limit < 1 || limit > 200))
-    fail("--limit must be an integer from 1 to 200.", 2);
+async function commandList(
+  flags: GroupFlags & {
+    visibility?: string;
+  },
+): Promise<void> {
   if (flags.visibility && !["public", "private", "password"].includes(flags.visibility))
     fail("--visibility must be public, private, or password.", 2);
-  const api = await resolveApi();
   const options = {
-    limit,
-    cursor: flags.cursor,
-    search: flags.search,
+    ...paginationOptions(flags),
+    ...draftGroupFilters(flags),
     visibility: flags.visibility,
   };
+  const api = await resolveApi();
   const result = await api.listDrafts(options);
   const seen = new Set<string>();
   while (result.nextCursor && flags.limit === undefined && flags.cursor === undefined) {
@@ -488,30 +510,90 @@ async function commandLifecycle(
     );
 }
 
+function printGroup(group: ApiGroup): void {
+  const groupPath = group.path.map((entry) => entry.name).join(" / ") || group.name;
+  process.stdout.write(
+    `${groupPath} (${group.id}) — ${group.subtreeDraftCount} files total, ${group.directDraftCount} here, ${group.childGroupCount} subgroups\n`,
+  );
+}
+
+async function commandGroups(
+  command: string,
+  argument: string | undefined,
+  flags: GroupFlags,
+): Promise<void> {
+  if (command === "list") {
+    const options = groupListOptions(flags);
+    const api = await resolveApi();
+    const result = await api.listGroups(options);
+    const seen = new Set<string>();
+    while (result.nextCursor && flags.limit === undefined && flags.cursor === undefined) {
+      if (seen.has(result.nextCursor))
+        throw new ApiError(200, "BAD_RESPONSE", "The API repeated a pagination cursor.");
+      seen.add(result.nextCursor);
+      const next = await api.listGroups({ ...options, cursor: result.nextCursor });
+      result.groups.push(...next.groups);
+      result.nextCursor = next.nextCursor;
+    }
+    if (flags.json) process.stdout.write(`${JSON.stringify(result)}\n`);
+    else if (result.groups.length === 0)
+      process.stderr.write(
+        "No groups match this view. Create one with `agentplan groups create <name>`.\n",
+      );
+    else for (const group of result.groups) printGroup(group);
+    return;
+  }
+  if (command === "create") {
+    const name = argument?.trim();
+    if (!name || name.length > 120) fail("Group names must contain 1 to 120 characters.", 2);
+    const description = flags.description?.trim();
+    if (description !== undefined && description.length > 1000)
+      fail("Group descriptions cannot exceed 1000 characters.", 2);
+    const parentId = flags.parent === undefined ? undefined : requireUuid(flags.parent, "--parent");
+    const api = await resolveApi();
+    const result = await api.createGroup({ name, description, parentId });
+    if (flags.json) process.stdout.write(`${JSON.stringify(result)}\n`);
+    else printGroup(result.group);
+    return;
+  }
+  const id = requireUuid(argument, "Group ID");
+  if (command === "move") {
+    const parentId = groupParentTarget(flags);
+    if (id.toLowerCase() === parentId?.toLowerCase()) fail("A group cannot be its own parent.", 2);
+    const api = await resolveApi();
+    const result = await api.updateGroup(id, { parentId });
+    if (flags.json) process.stdout.write(`${JSON.stringify(result)}\n`);
+    else printGroup(result.group);
+    return;
+  }
+  if (!flags.yes)
+    fail(
+      "Dissolving moves direct files, subgroups, and pending uploads up one level. Pass --yes to continue.",
+      2,
+    );
+  const api = await resolveApi();
+  await api.dissolveGroup(id);
+  if (flags.json) process.stdout.write(`${JSON.stringify({ dissolved: true, id })}\n`);
+  else
+    process.stdout.write(
+      "Group dissolved. Direct contents moved up one level; files and links preserved.\n",
+    );
+}
+
+async function commandMove(ids: string[], flags: GroupFlags): Promise<void> {
+  const groupId = draftGroupTarget(flags, true)!;
+  for (const id of ids) requireUuid(id, "Draft ID");
+  if (new Set(ids.map((id) => id.toLowerCase())).size !== ids.length)
+    fail("Provide each draft ID only once.", 2);
+  const api = await resolveApi();
+  const result = await api.moveDrafts(ids, groupId);
+  if (flags.json) process.stdout.write(`${JSON.stringify(result)}\n`);
+  else
+    process.stdout.write(`Moved ${result.movedCount} file${result.movedCount === 1 ? "" : "s"}.\n`);
+}
+
 async function main(): Promise<void> {
-  const { values, positionals } = parseArgs({
-    args: process.argv.slice(2),
-    options: {
-      public: { type: "boolean" },
-      private: { type: "boolean" },
-      password: { type: "string" },
-      "password-stdin": { type: "boolean" },
-      title: { type: "string" },
-      "expires-in": { type: "string" },
-      draft: { type: "string" },
-      entry: { type: "string" },
-      json: { type: "boolean" },
-      help: { type: "boolean", short: "h" },
-      limit: { type: "string" },
-      cursor: { type: "string" },
-      search: { type: "string" },
-      visibility: { type: "string" },
-      yes: { type: "boolean" },
-      bundle: { type: "boolean" },
-      complete: { type: "boolean" },
-    },
-    allowPositionals: true,
-  });
+  const { values, positionals } = parseCommand(process.argv.slice(2));
 
   const [command, argument, versionId] = positionals;
   if (values.help || !command) {
@@ -519,37 +601,6 @@ async function main(): Promise<void> {
     process.exit(values.help ? 0 : 2);
   }
 
-  const allowed: Record<string, string[]> = {
-    login: [],
-    logout: [],
-    upload: [
-      "expires-in",
-      "public",
-      "private",
-      "password",
-      "password-stdin",
-      "title",
-      "draft",
-      "entry",
-    ],
-    list: ["limit", "cursor", "search", "visibility"],
-    open: [],
-    validate: ["entry"],
-    get: [],
-    versions: [],
-    update: ["title", "public", "private", "password", "password-stdin"],
-    restore: [],
-    delete: ["yes"],
-    "upload-status": ["bundle", "complete"],
-  };
-  if (!allowed[command]) fail(`Unknown command: ${command}`, 2);
-  for (const key of Object.keys(values)) {
-    if (!["json", "help", ...allowed[command]].includes(key))
-      fail(`--${key} is not supported for ${command}.`, 2);
-  }
-  const maxArguments =
-    command === "restore" ? 3 : ["login", "logout", "list"].includes(command) ? 1 : 2;
-  if (positionals.length > maxArguments) fail(`Too many arguments for ${command}.`, 2);
   switch (command) {
     case "login":
       return commandLogin();
@@ -559,6 +610,10 @@ async function main(): Promise<void> {
       return commandUpload(argument, values);
     case "list":
       return commandList(values);
+    case "groups":
+      return commandGroups(argument!, versionId, values);
+    case "move":
+      return commandMove(positionals.slice(1), values);
     case "validate":
       return commandValidate(argument, values);
     case "get":

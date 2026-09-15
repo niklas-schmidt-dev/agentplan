@@ -189,6 +189,17 @@ agentplan upload ./plan-directory        # HTML + relative image/MP4 assets
 agentplan upload ./plan-directory --entry nested/index.html
 agentplan upload ./plan-directory --draft <id>
 agentplan list [--json]
+agentplan groups create "Customer" --json
+agentplan groups create "Design" --parent <customer-group-id> --description "Launch assets"
+agentplan groups list [--parent <id>] [--recursive] [--json]
+agentplan groups move <id> --parent <destination-id>  # move the entire subtree
+agentplan groups move <id> --root
+agentplan groups dissolve <id> --yes
+agentplan upload ./plan.html --group <id>
+agentplan list --group <id> [--recursive] [--json]
+agentplan list --ungrouped [--json]
+agentplan move <draft-id> [<draft-id> ...] --group <id>
+agentplan move <draft-id> --ungrouped
 agentplan open <id>
 ```
 
@@ -199,6 +210,29 @@ stderr; missing or revoked tokens exit non-zero. Custom API endpoints must use H
 cleartext HTTP is accepted only for localhost. Authenticated requests never follow
 redirects, and interactive token entry is hidden.
 
+Groups can contain both files and nested groups, with no prescribed hierarchy.
+A file has one group or is **Ungrouped**; existing uploads start ungrouped.
+Groups organize files for their owner: they do not change visibility, passwords,
+expiry, version history, or shared links. HTML plan folders remain one bundled
+publication inside a group.
+
+`groups list` shows root groups, or direct children with `--parent`. Add
+`--recursive` to include all descendant groups. `list --group <id>` shows direct
+files; `--recursive` includes files in descendant groups. Search uses the selected
+scope; add `--recursive` when searching a subtree. Both lists accept `--search`,
+`--limit <1-200>` and `--cursor`. Without pagination options they fetch all pages;
+with either option they return one page and `nextCursor`.
+
+Use group UUIDs from JSON output, not names or paths; duplicate names are allowed.
+`move` accepts 1–50 distinct file IDs and moves them atomically. `--group` and
+`--ungrouped` are exclusive, as are `--parent` and `--root`. Uploading a new version
+with `--draft` preserves its current group and cannot use `--group`.
+
+**Dissolve group** removes only the selected container. Its direct files, direct
+subgroups, and pending new-upload targets move to its parent. At the root, files
+become ungrouped and child groups become root groups. Descendants stay together;
+no files or versions are deleted. The CLI requires `--yes` for this operation.
+
 ## API
 
 All routes are under `/api/v1` and authenticate with `Authorization: Bearer ap_live_…`
@@ -207,12 +241,18 @@ All routes are under `/api/v1` and authenticate with `Authorization: Bearer ap_l
 ```text
 POST   /api/v1/drafts                              (multipart file upload)
 GET    /api/v1/drafts
+POST   /api/v1/drafts/move                         { draftIds, groupId }
 GET    /api/v1/drafts/:id
 PATCH  /api/v1/drafts/:id                           { title?, visibility? }
 DELETE /api/v1/drafts/:id
 POST   /api/v1/drafts/:id/versions                  (multipart file upload)
 GET    /api/v1/drafts/:id/versions
 POST   /api/v1/drafts/:id/versions/:versionId/restore
+GET    /api/v1/groups
+POST   /api/v1/groups                              { name, description?, parentId? }
+GET    /api/v1/groups/:id
+PATCH  /api/v1/groups/:id                           { name?, description?, parentId? }
+DELETE /api/v1/groups/:id                           (dissolve; preserve all files)
 POST   /api/v1/uploads/intents                      (image/video reservation)
 GET    /api/v1/uploads/intents
 GET    /api/v1/uploads/intents/:id
@@ -228,6 +268,34 @@ GET    /api/v1/tokens                               (session only)
 POST   /api/v1/tokens                               (session only)
 DELETE /api/v1/tokens/:id                           (session only)
 ```
+
+Group reads use `drafts:read`; group mutations and file moves use `drafts:write`.
+All group operations are restricted to the authenticated owner.
+
+- `GET /groups` returns `{ groups, nextCursor }`. Optional parameters are
+  `parentId`, `scope=children|subtree`, `search`, `limit` (1–200, default 50), and
+  `cursor`. Omitting `parentId` selects the root: `children` lists root groups,
+  while `subtree` lists all owned groups. Each result contains `id`, `parentId`,
+  `name`, `description`, timestamps, `path` (ordered `{ id, name }` entries),
+  `directDraftCount`, `subtreeDraftCount`, `childGroupCount`, and `pendingUploadCount`.
+- `GET /groups/:id` returns `{ group, ancestors }`. Create/update return
+  `{ group }`; PATCH `parentId: null` moves a group to the root and
+  `description: null` clears the description. Self/descendant parents are rejected.
+  DELETE dissolves one group and returns `204`.
+- `GET /drafts` accepts `groupId=<UUID>` for direct files, `groupId=none` for
+  ungrouped files, or no group filter for all files. `includeDescendants=true`
+  requires a group UUID. Draft responses include nullable `groupId`.
+- `POST /drafts/move` takes `{ draftIds: [UUID, ...], groupId: UUID | null }`,
+  with 1–50 distinct IDs, and returns `{ movedCount }`. It validates the whole
+  selection before changing anything; already-correct assignments do not count.
+- New uploads accept optional `target.groupId` in single-file and bundle intents,
+  or a multipart `groupId` field for new HTML drafts. Omitted/null JSON targets
+  mean ungrouped. Version uploads reject a group target and retain the current
+  draft assignment. Previously reserved uploads follow a dissolved group's parent.
+
+Invalid group formats, cycles, and conflicting options use `INVALID_REQUEST`;
+missing or foreign groups use `NOT_FOUND`. Cursors are bound to the selected
+owner, group, search, and recursion scope. Start a new listing after changing filters.
 
 The stable viewer link `/p/<slug>` follows the current version. Each saved version
 also has a shareable viewer link at `/p/<slug>/v/<version-UUID>`, returned as

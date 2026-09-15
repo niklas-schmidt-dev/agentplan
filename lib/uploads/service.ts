@@ -41,6 +41,7 @@ import {
 } from "@/lib/validation/media";
 import { normalizeTitle, titleFromFilename } from "@/lib/validation/upload";
 import { issueUploadIntentToken } from "./tokens";
+import { assertGroupForOwner } from "@/lib/groups/access";
 
 import { claimCompletion, ownsCompletion, releaseCompletion } from "./completion-lease";
 
@@ -88,6 +89,7 @@ export async function createUploadIntent(input: {
         visibility: Visibility;
         password?: string;
         expiresInSeconds?: number | null;
+        groupId?: string | null;
       }
     | { type: "draft"; draftId: string };
   baseUrl: string;
@@ -124,6 +126,9 @@ export async function createUploadIntent(input: {
       .from(users)
       .where(and(eq(users.id, input.ownerId), isNull(users.blockedAt)));
     if (!owner) throw new DraftNotFoundError();
+    if (input.target.type === "new") {
+      await assertGroupForOwner(tx, input.target.groupId, input.ownerId);
+    }
 
     if (input.target.type === "draft") {
       const [draft] = await tx
@@ -173,6 +178,7 @@ export async function createUploadIntent(input: {
         ownerId: input.ownerId,
         targetDraftId: input.target.type === "draft" ? input.target.draftId : null,
         draftId,
+        targetGroupId: input.target.type === "new" ? (input.target.groupId ?? null) : null,
         versionId,
         stagingKey,
         finalKey,
@@ -450,11 +456,15 @@ export async function completeUploadIntent(
           versionNumber = (numberRow?.value ?? 0) + 1;
           draft = lockedDraft;
         } else {
+          // Dissolving a group can redirect a pending upload during storage work.
+          // Use the destination re-read under the account and intent locks.
+          await assertGroupForOwner(tx, lockedIntent.targetGroupId, lockedIntent.ownerId);
           const [createdDraft] = await tx
             .insert(drafts)
             .values({
               id: intent.draftId,
               ownerId: intent.ownerId,
+              groupId: lockedIntent.targetGroupId,
               slug: generateSlug(intent.title ?? "", intent.visibility === "public"),
               title: intent.title ?? titleFromFilename(intent.originalFilename),
               kind: intent.kind,

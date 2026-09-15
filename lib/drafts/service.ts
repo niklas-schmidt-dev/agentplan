@@ -18,6 +18,7 @@ import { generateSlug } from "@/lib/drafts/slug";
 import { consumeUploadRateLimit, lockAndAssertUploadQuota } from "@/lib/limits/enforce";
 import { getStorage, storageKeyFor } from "@/lib/storage";
 import { tryDeleteStorageKey } from "@/lib/storage/cleanup";
+import { assertGroupForOwner } from "@/lib/groups/access";
 
 export type UploadSource = "browser" | "api_token";
 
@@ -86,6 +87,7 @@ export async function createDraftWithFirstVersion(params: {
   /** Required plaintext when visibility is "password"; invalid otherwise. */
   password?: string;
   expiresInSeconds?: number | null;
+  groupId?: string | null;
 }): Promise<{ draft: Draft; version: DraftVersion }> {
   const db = getDb();
   const draftId = randomUUID();
@@ -123,6 +125,7 @@ export async function createDraftWithFirstVersion(params: {
             .where(eq(users.id, params.ownerId))
             .for("update");
           if (!owner || owner.blockedAt) throw new DraftNotFoundError();
+          await assertGroupForOwner(tx, params.groupId, params.ownerId);
           await lockAndAssertUploadQuota(
             {
               userId: params.ownerId,
@@ -138,6 +141,7 @@ export async function createDraftWithFirstVersion(params: {
             .values({
               id: draftId,
               ownerId: params.ownerId,
+              groupId: params.groupId ?? null,
               slug,
               title: params.title,
               visibility: params.visibility,

@@ -1,6 +1,6 @@
 {
   "name": "agentplan-cli",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "CLI for agentplan.app — publish HTML, images, and video behind stable links.",
   "license": "MIT",
   "repository": {

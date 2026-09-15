@@ -1,4 +1,10 @@
 import { liveDraftCondition } from "@/lib/drafts/expiration";
+import {
+  assertGroupForOwner,
+  assertValidGroupSubtree,
+  groupSubtreeQuery,
+} from "@/lib/groups/access";
+import { InvalidGroupError } from "@/lib/groups/errors";
 import { decodeDraftCursor, draftFilterKey, encodeDraftCursor } from "@/lib/api/draft-cursor";
 import { and, asc, desc, eq, gte, ilike, isNull, sql } from "drizzle-orm";
 import { getDb } from "@/db/client";
@@ -49,6 +55,8 @@ export type DraftListItem = Draft & {
 };
 
 export type DraftListFilters = {
+  groupId?: string | null;
+  includeDescendants?: boolean;
   search?: string;
   visibility?: Visibility;
   updatedWithinDays?: number;
@@ -71,85 +79,103 @@ export async function listDraftsPageForOwner(
   nextCursor: string | null;
   previousCursor: string | null;
 }> {
-  const limit = Math.min(200, Math.max(1, Math.trunc(filters.limit ?? 200)));
-  const filter = draftFilterKey(ownerId, filters);
-  const cursor = filters.cursor ? decodeDraftCursor(filters.cursor, filter) : null;
-  const backwards = cursor?.direction === "previous";
-  const conditions = [eq(drafts.ownerId, ownerId), liveDraftCondition, isNull(users.blockedAt)];
-  if (filters.visibility) conditions.push(eq(drafts.visibility, filters.visibility));
-  if (filters.search) conditions.push(ilike(drafts.title, `%${filters.search}%`));
-  if (filters.updatedWithinDays) {
-    conditions.push(
-      gte(drafts.updatedAt, sql`now() - make_interval(days => ${filters.updatedWithinDays})`),
-    );
-  }
+  return getDb().transaction(
+    async (tx) => {
+      if (filters.groupId) await tx.execute(sql`set local statement_timeout = '5s'`);
+      const limit = Math.min(200, Math.max(1, Math.trunc(filters.limit ?? 200)));
+      const filter = draftFilterKey(ownerId, filters);
+      const cursor = filters.cursor ? decodeDraftCursor(filters.cursor, filter) : null;
+      const backwards = cursor?.direction === "previous";
+      const conditions = [eq(drafts.ownerId, ownerId), liveDraftCondition, isNull(users.blockedAt)];
+      if (filters.includeDescendants && !filters.groupId)
+        throw new InvalidGroupError("Including subgroups requires a group.");
+      if (filters.groupId === null) conditions.push(isNull(drafts.groupId));
+      else if (filters.groupId !== undefined) {
+        await assertGroupForOwner(tx, filters.groupId, ownerId);
+        if (filters.includeDescendants) await assertValidGroupSubtree(tx, ownerId, filters.groupId);
+        conditions.push(
+          filters.includeDescendants
+            ? sql`${drafts.groupId} in (${groupSubtreeQuery(ownerId, filters.groupId)})`
+            : eq(drafts.groupId, filters.groupId),
+        );
+      }
+      if (filters.visibility) conditions.push(eq(drafts.visibility, filters.visibility));
+      if (filters.search) conditions.push(ilike(drafts.title, `%${filters.search}%`));
+      if (filters.updatedWithinDays) {
+        conditions.push(
+          gte(drafts.updatedAt, sql`now() - make_interval(days => ${filters.updatedWithinDays})`),
+        );
+      }
 
-  if (cursor)
-    conditions.push(
-      backwards
-        ? sql`(${drafts.updatedAt}, ${drafts.id}) > (${cursor.at}::timestamptz, ${cursor.id}::uuid)`
-        : sql`(${drafts.updatedAt}, ${drafts.id}) < (${cursor.at}::timestamptz, ${cursor.id}::uuid)`,
-    );
+      if (cursor)
+        conditions.push(
+          backwards
+            ? sql`(${drafts.updatedAt}, ${drafts.id}) > (${cursor.at}::timestamptz, ${cursor.id}::uuid)`
+            : sql`(${drafts.updatedAt}, ${drafts.id}) < (${cursor.at}::timestamptz, ${cursor.id}::uuid)`,
+        );
 
-  const rows = await getDb()
-    .select({
-      cursorTimestamp: sql<string>`to_char(${drafts.updatedAt} at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`,
-      draft: drafts,
-      versionNumber: draftVersions.versionNumber,
-      sizeBytes:
-        sql<number>`coalesce(${draftVersions.totalSizeBytes}, ${draftVersions.sizeBytes})`.mapWith(
-          Number,
-        ),
-      contentSha256: draftVersions.contentSha256,
-      isBundle: draftVersions.isBundle,
-    })
-    .from(drafts)
-    .innerJoin(users, eq(drafts.ownerId, users.id))
-    .leftJoin(draftVersions, eq(drafts.currentVersionId, draftVersions.id))
-    .where(and(...conditions))
-    .orderBy(
-      backwards ? asc(drafts.updatedAt) : desc(drafts.updatedAt),
-      backwards ? asc(drafts.id) : desc(drafts.id),
-    )
-    .limit(limit + 1);
+      const rows = await tx
+        .select({
+          cursorTimestamp: sql<string>`to_char(${drafts.updatedAt} at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`,
+          draft: drafts,
+          versionNumber: draftVersions.versionNumber,
+          sizeBytes:
+            sql<number>`coalesce(${draftVersions.totalSizeBytes}, ${draftVersions.sizeBytes})`.mapWith(
+              Number,
+            ),
+          contentSha256: draftVersions.contentSha256,
+          isBundle: draftVersions.isBundle,
+        })
+        .from(drafts)
+        .innerJoin(users, eq(drafts.ownerId, users.id))
+        .leftJoin(draftVersions, eq(drafts.currentVersionId, draftVersions.id))
+        .where(and(...conditions))
+        .orderBy(
+          backwards ? asc(drafts.updatedAt) : desc(drafts.updatedAt),
+          backwards ? asc(drafts.id) : desc(drafts.id),
+        )
+        .limit(limit + 1);
 
-  const hasMore = rows.length > limit;
-  const page = rows.slice(0, limit);
-  if (backwards) page.reverse();
-  const first = page[0];
-  const last = page.at(-1);
-  return {
-    nextCursor:
-      last && (backwards ? Boolean(cursor) : hasMore)
-        ? encodeDraftCursor({
-            at: last.cursorTimestamp,
-            id: last.draft.id,
-            filter,
-            direction: "next",
-          })
-        : null,
-    previousCursor:
-      first && (backwards ? hasMore : Boolean(cursor))
-        ? encodeDraftCursor({
-            at: first.cursorTimestamp,
-            id: first.draft.id,
-            filter,
-            direction: "previous",
-          })
-        : null,
-    drafts: page.map((row) => ({
-      ...row.draft,
-      currentVersion:
-        row.versionNumber === null
-          ? null
-          : {
-              versionNumber: row.versionNumber,
-              sizeBytes: row.sizeBytes ?? 0,
-              contentSha256: row.contentSha256 ?? "",
-              isBundle: row.isBundle ?? false,
-            },
-    })),
-  };
+      const hasMore = rows.length > limit;
+      const page = rows.slice(0, limit);
+      if (backwards) page.reverse();
+      const first = page[0];
+      const last = page.at(-1);
+      return {
+        nextCursor:
+          last && (backwards ? Boolean(cursor) : hasMore)
+            ? encodeDraftCursor({
+                at: last.cursorTimestamp,
+                id: last.draft.id,
+                filter,
+                direction: "next",
+              })
+            : null,
+        previousCursor:
+          first && (backwards ? hasMore : Boolean(cursor))
+            ? encodeDraftCursor({
+                at: first.cursorTimestamp,
+                id: first.draft.id,
+                filter,
+                direction: "previous",
+              })
+            : null,
+        drafts: page.map((row) => ({
+          ...row.draft,
+          currentVersion:
+            row.versionNumber === null
+              ? null
+              : {
+                  versionNumber: row.versionNumber,
+                  sizeBytes: row.sizeBytes ?? 0,
+                  contentSha256: row.contentSha256 ?? "",
+                  isBundle: row.isBundle ?? false,
+                },
+        })),
+      };
+    },
+    { isolationLevel: "repeatable read", accessMode: "read only" },
+  );
 }
 
 export async function getVersionById(

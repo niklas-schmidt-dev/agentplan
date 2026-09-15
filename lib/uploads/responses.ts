@@ -12,6 +12,7 @@ import {
 } from "@/lib/drafts/service";
 import { MediaValidationError } from "@/lib/validation/media";
 import { recordRequestError } from "@/lib/diagnostics/request";
+import { GroupNotFoundError } from "@/lib/groups/errors";
 import {
   UploadIntentConflictError,
   UploadIntentExpiredError,
@@ -20,7 +21,11 @@ import {
 
 export function uploadErrorResponse(error: unknown): Response {
   recordRequestError(error);
-  if (error instanceof UploadIntentNotFoundError || error instanceof DraftNotFoundError) {
+  if (
+    error instanceof UploadIntentNotFoundError ||
+    error instanceof DraftNotFoundError ||
+    error instanceof GroupNotFoundError
+  ) {
     return notFound();
   }
   if (error instanceof PasswordRequiredError || error instanceof PasswordVisibilityConflictError) {

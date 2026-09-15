@@ -167,6 +167,34 @@ export const uploadIntentMode = pgEnum("upload_intent_mode", [
   "bundle_restore",
 ]);
 
+export const groups = pgTable(
+  "groups",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    ownerId: text("owner_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    parentId: uuid("parent_id").references((): AnyPgColumn => groups.id, { onDelete: "no action" }),
+    name: varchar("name", { length: 120 }).notNull(),
+    description: varchar("description", { length: 1000 }),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .$onUpdate(() => new Date())
+      .notNull(),
+  },
+  (table) => [
+    index("groups_owner_parent_created_idx").on(
+      table.ownerId,
+      table.parentId,
+      table.createdAt.desc(),
+      table.id.desc(),
+    ),
+    index("groups_parent_idx").on(table.parentId),
+    check("groups_not_own_parent", sql`${table.id} <> ${table.parentId}`),
+  ],
+);
+
 export const drafts = pgTable(
   "drafts",
   {
@@ -175,6 +203,7 @@ export const drafts = pgTable(
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
     slug: varchar("slug", { length: 80 }).notNull().unique(),
+    groupId: uuid("group_id").references(() => groups.id, { onDelete: "set null" }),
     title: varchar("title", { length: 200 }).notNull(),
     kind: draftKind("kind").notNull().default("html"),
     visibility: draftVisibility("visibility").notNull().default("private"),
@@ -193,6 +222,13 @@ export const drafts = pgTable(
   },
   (table) => [
     index("drafts_expires_at_idx").on(table.expiresAt),
+    index("drafts_group_idx").on(table.groupId),
+    index("drafts_owner_group_updated_idx").on(
+      table.ownerId,
+      table.groupId,
+      table.updatedAt.desc(),
+      table.id.desc(),
+    ),
     index("drafts_owner_updated_idx").on(table.ownerId, table.updatedAt.desc(), table.id.desc()),
   ],
 );
@@ -261,6 +297,7 @@ export const uploadIntents = pgTable(
     targetDraftId: uuid("target_draft_id").references(() => drafts.id, {
       onDelete: "set null",
     }),
+    targetGroupId: uuid("target_group_id").references(() => groups.id, { onDelete: "set null" }),
     draftId: uuid("draft_id").notNull(),
     versionId: uuid("version_id").notNull(),
     mode: uploadIntentMode("mode").notNull().default("single"),
@@ -302,6 +339,7 @@ export const uploadIntents = pgTable(
       table.expiresAt,
     ),
     index("upload_intents_target_draft_idx").on(table.targetDraftId),
+    index("upload_intents_target_group_idx").on(table.targetGroupId),
   ],
 );
 
@@ -482,6 +520,7 @@ export const rateLimits = pgTable(
 );
 
 export type User = typeof users.$inferSelect;
+export type Group = typeof groups.$inferSelect;
 export type Draft = typeof drafts.$inferSelect;
 export type DraftVersion = typeof draftVersions.$inferSelect;
 export type DraftVersionAsset = typeof draftVersionAssets.$inferSelect;

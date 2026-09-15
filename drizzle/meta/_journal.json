@@ -120,6 +120,13 @@
       "when": 1789500074608,
       "tag": "0016_next_midnight",
       "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1789504462028,
+      "tag": "0017_handy_blazing_skull",
+      "breakpoints": true
     }
   ]
 }

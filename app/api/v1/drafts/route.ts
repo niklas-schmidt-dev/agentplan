@@ -1,4 +1,5 @@
 import { InvalidDraftCursorError } from "@/lib/api/draft-cursor";
+import { GroupNotFoundError, InvalidGroupError } from "@/lib/groups/errors";
 import { listDraftsPageForOwner } from "@/db/queries/drafts";
 import { authenticateApiRequest, isFailure } from "@/lib/api/auth";
 import {
@@ -6,6 +7,7 @@ import {
   internalError,
   invalidRequest,
   limitErrorResponse,
+  notFound,
   unauthorized,
 } from "@/lib/api/responses";
 import { serializeDraft } from "@/lib/api/serialize";
@@ -46,6 +48,7 @@ export async function POST(req: Request): Promise<Response> {
       visibility,
       password: upload.password,
       expiresInSeconds: upload.expiresInSeconds,
+      groupId: upload.groupId,
       bytes: upload.bytes,
       originalFilename: upload.originalFilename,
       source: actor.kind === "token" ? "api_token" : "browser",
@@ -54,6 +57,7 @@ export async function POST(req: Request): Promise<Response> {
     });
     return Response.json({ draft: serializeDraft(draft, version.versionNumber) }, { status: 201 });
   } catch (error) {
+    if (error instanceof GroupNotFoundError) return notFound();
     if (error instanceof PasswordRequiredError) {
       return invalidRequest("A password is required for password-protected drafts.");
     }
@@ -79,6 +83,8 @@ export async function GET(req: Request): Promise<Response> {
     limit: url.searchParams.get("limit") ?? undefined,
     cursor: url.searchParams.get("cursor") ?? undefined,
     visibility: url.searchParams.get("visibility") ?? undefined,
+    groupId: url.searchParams.get("groupId") ?? undefined,
+    includeDescendants: url.searchParams.get("includeDescendants") ?? undefined,
   });
   if (!query.success) {
     return invalidRequest(query.error.issues[0]?.message ?? "Invalid query.");
@@ -95,6 +101,8 @@ export async function GET(req: Request): Promise<Response> {
     });
   } catch (error) {
     if (error instanceof InvalidDraftCursorError) return invalidRequest(error.message);
+    if (error instanceof GroupNotFoundError) return notFound();
+    if (error instanceof InvalidGroupError) return invalidRequest(error.message);
     throw error;
   }
 }

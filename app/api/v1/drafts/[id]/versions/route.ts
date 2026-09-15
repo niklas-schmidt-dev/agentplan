@@ -52,6 +52,8 @@ export async function POST(req: Request, { params }: Params): Promise<Response> 
   if (upload instanceof Response) return upload;
   if (upload.expiresInSeconds !== undefined)
     return invalidRequest("New versions inherit the draft’s auto-expiry.");
+  if (upload.groupId !== undefined)
+    return invalidRequest("New versions inherit the draft’s group.");
 
   try {
     const { version, draft: updatedDraft } = await addVersionToDraft({
