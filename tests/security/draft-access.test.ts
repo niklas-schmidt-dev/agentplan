@@ -76,11 +76,29 @@ function draft(overrides: Partial<Draft>): Draft {
     createdAt: new Date(),
     updatedAt: new Date(),
     deletedAt: null,
+    expiresAt: null,
     ...overrides,
   };
 }
 
 describe("resolveDraftView", () => {
+  it.each(["public", "private", "password"] as const)(
+    "denies expired %s drafts even to their owner or an existing password grant",
+    (visibility) => {
+      const expired = draft({
+        visibility,
+        passwordHash: HASH_A,
+        expiresAt: new Date(Date.now() - 1),
+      });
+      for (const userId of [null, expired.ownerId]) {
+        expect(
+          resolveDraftView(expired, { userId, accessToken: issueDraftAccess(DRAFT_A, HASH_A) })
+            .state,
+        ).toBe("not-found");
+      }
+    },
+  );
+
   it("not-found for missing draft or no current version", () => {
     expect(resolveDraftView(null, { userId: null, accessToken: undefined }).state).toBe(
       "not-found",

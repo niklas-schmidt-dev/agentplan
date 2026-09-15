@@ -195,6 +195,11 @@ export default async function DashboardPage({
                     : "no version"}
                   {" · updated "}
                   {formatRelativeTime(draft.updatedAt)}
+                  {draft.expiresAt ? (
+                    <span className="ml-2" title={draft.expiresAt.toISOString()}>
+                      expires {draft.expiresAt.toISOString().replace("T", " ").slice(0, 16)} UTC
+                    </span>
+                  ) : null}
                   {" · "}
                   <Suspense fallback={<span>loading views…</span>}>
                     <DraftViewCount counts={viewCounts} draftId={draft.id} />

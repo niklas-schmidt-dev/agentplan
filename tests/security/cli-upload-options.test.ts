@@ -15,6 +15,8 @@ describe("CLI existing-draft upload options", () => {
     { "password-stdin": true },
     { title: "Renamed" },
     { title: "" },
+    { "expires-in": "1h" },
+    { "expires-in": "" },
   ])("rejects silently ignored new-draft option %o", (option) => {
     expect(hasNewDraftOnlyOptions({ draft: "draft-id", ...option })).toBe(true);
   });

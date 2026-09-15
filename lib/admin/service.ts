@@ -1,3 +1,4 @@
+import { liveDraftCondition } from "@/lib/drafts/expiration";
 import { finalObjectCleanupDeadline } from "@/lib/uploads/cleanup-deadline";
 import {
   and,
@@ -50,7 +51,7 @@ const activeTokenFilter = and(
   or(isNull(apiTokens.expiresAt), gt(apiTokens.expiresAt, sql`now()`)),
 );
 
-const liveDraftFilter = isNull(drafts.deletedAt);
+const liveDraftFilter = liveDraftCondition;
 
 export type AdminStats = {
   users: number;

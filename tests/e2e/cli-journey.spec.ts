@@ -54,12 +54,21 @@ test("dashboard token drives the shipped CLI through publishing, versions, and r
       .textContent())!.trim();
     await page.getByRole("button", { name: "I have copied the token" }).click();
     const uploaded = await runCli(
-      ["upload", publishingFixture("plan.html"), "--public", "--json"],
+      ["upload", publishingFixture("plan.html"), "--public", "--expires-in", "1h", "--json"],
       token,
       configRoot,
     );
     expect(uploaded.code, uploaded.stderr).toBe(0);
-    const { draft } = JSON.parse(uploaded.stdout) as { draft: { id: string; url: string } };
+    const { draft } = JSON.parse(uploaded.stdout) as {
+      draft: { id: string; url: string; expiresAt: string };
+    };
+    expect(Date.parse(draft.expiresAt)).toBeGreaterThan(Date.now() + 3500000);
+    const invalidExpiry = await runCli(
+      ["upload", publishingFixture("plan.html"), "--expires-in", "0h", "--json"],
+      token,
+      configRoot,
+    );
+    expect(invalidExpiry.code).toBe(2);
     const viewer = await anonymous.newPage();
     await viewer.goto(draft.url);
     await expect(
@@ -71,6 +80,7 @@ test("dashboard token drives the shipped CLI through publishing, versions, and r
       configRoot,
     );
     expect(updated.code, updated.stderr).toBe(0);
+    expect(JSON.parse(updated.stdout).draft.expiresAt).toBe(draft.expiresAt);
     expect(JSON.parse(updated.stdout).draft.id).toBe(draft.id);
     await viewer.reload();
     await expect(
@@ -120,11 +130,14 @@ test("dashboard token drives the shipped CLI through publishing, versions, and r
     expect(missing.code).toBe(1);
     expect(JSON.parse(missing.stderr).error.status).toBe(404);
     const bundled = await runCli(
-      ["upload", publishingFixture("folder"), "--public", "--json"],
+      ["upload", publishingFixture("folder"), "--public", "--expires-in", "30d", "--json"],
       token,
       configRoot,
     );
     expect(bundled.code, bundled.stderr).toBe(0);
+    expect(Date.parse(JSON.parse(bundled.stdout).draft.expiresAt)).toBeGreaterThan(
+      Date.now() + 29 * 86400000,
+    );
     await viewer.goto(JSON.parse(bundled.stdout).draft.url);
     await expect(viewer.frameLocator("iframe").getByAltText("Relative image")).toHaveJSProperty(
       "naturalWidth",

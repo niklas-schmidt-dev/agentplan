@@ -191,3 +191,26 @@ export function validateBundleManifest(input) {
   }
   return { entryPath, files, totalBytes };
 }
+
+// Published draft lifetimes are independent of upload capability expiry.
+export const MIN_DRAFT_EXPIRY_SECONDS = 60;
+export const MAX_DRAFT_EXPIRY_SECONDS = 365 * 24 * 60 * 60;
+
+export function validateExpirySeconds(value) {
+  if (value === undefined || value === null) return null;
+  if (
+    !Number.isInteger(value) ||
+    value < MIN_DRAFT_EXPIRY_SECONDS ||
+    value > MAX_DRAFT_EXPIRY_SECONDS
+  ) {
+    throw new Error("Auto-expiry must be between 1 minute and 365 days, in whole seconds.");
+  }
+  return value;
+}
+
+export function parseExpiryDuration(value) {
+  const match = /^(\d+)(m|h|d)$/.exec(value);
+  if (!match) throw new Error("Use an auto-expiry duration such as 30m, 1h, 1d, or 30d.");
+  const units = { m: 60, h: 3600, d: 86400 };
+  return validateExpirySeconds(Number(match[1]) * units[match[2]]);
+}

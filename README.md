@@ -236,7 +236,7 @@ returns to the current version. The dashboard offers **view**, **copy version
 link**, and **restore as current** for past versions. Restore creates another
 version; it does not change existing version links.
 
-Version links use the draft's current visibility, password, and moderation rules.
+Version links use the draft's current visibility, password, expiry, and moderation rules.
 Changing a public draft to protected visibility rotates its slug and invalidates
 previous links, including version links. Saved versions are never automatically
 pruned to make room for an upload. At storage or version limits, new uploads and
@@ -289,6 +289,21 @@ it needs no extra infrastructure and is correct across serverless instances.
 
 Soft-deleted drafts (and their stored objects) are hard-deleted after 7 days by a
 daily cron (`/api/cron/purge`, authorized via `CRON_SECRET`).
+
+Uploads can optionally expire after 1 hour, 1 day, 30 days, or a custom duration
+between 1 minute and 365 days. Choose **auto-expiry** in the dashboard or run
+`agentplan upload plan.html --expires-in 1h`. The lifetime starts after a successful
+upload. New versions and restores keep the original deadline. Omit the option
+for a permanent draft.
+
+API clients set `target.expiresInSeconds` when creating a single-file or bundle
+upload intent, or the `expiresInSeconds` form field on `POST /api/v1/drafts`.
+Draft responses include `expiresAt` (UTC ISO timestamp or `null`). Expiry applies
+to the entire draft: viewer, content, asset, version, and owner API requests stop
+working at the deadline, and its committed bytes no longer count toward quota.
+The daily purge permanently removes all versions and assets without the normal
+7-day soft-delete retention. Storage failures retain the deletion for retry;
+pending uploads are cancelled with durable cleanup for any in-flight transfers.
 
 The Free defaults also apply to existing self-hosted deployments after an
 upgrade unless the `AP_*` variables are set; existing uploads above a limit stay

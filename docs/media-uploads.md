@@ -12,6 +12,16 @@ larger HTML uploads use `/api/v1/uploads/intents`. Provider transport limits,
 image pixel checks, and bundle asset-count limits still apply.
 Run the checks below before relying on media uploads in production.
 
+Published drafts can have an optional lifetime (`target.expiresInSeconds`,
+60–31536000 seconds). This is separate from the upload capability's expiry.
+Apply migration `0016_next_midnight` before deploying auto-expiry support.
+The deadline starts at publication and covers every version. Access checks reject
+expired drafts immediately; daily cleanup deletes their private objects. Verify
+this on staging with `--expires-in 1m`: check viewer, version, asset, HEAD, and
+ranged requests after the deadline, then confirm all objects disappear after the
+next purge. Previously downloaded content cannot be recalled, and responses
+already streaming at the deadline may finish.
+
 With one provider's credentials and `STORAGE_DRIVER` loaded, run its live
 immutable-write/range/copy/delete contract with:
 

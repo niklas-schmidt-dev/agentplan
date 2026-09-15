@@ -1,3 +1,5 @@
+import { validateExpirySeconds } from "@agentplan/upload-contract";
+import { draftExpiration, liveDraftCondition } from "@/lib/drafts/expiration";
 import { withDiagnosticStage } from "@/lib/diagnostics/request";
 import { finalObjectCleanupDeadline } from "./cleanup-deadline";
 import { drainBatches } from "@/lib/maintenance/drain";
@@ -85,12 +87,15 @@ export async function createUploadIntent(input: {
         title?: string;
         visibility: Visibility;
         password?: string;
+        expiresInSeconds?: number | null;
       }
     | { type: "draft"; draftId: string };
   baseUrl: string;
 }): Promise<{ intent: UploadIntent; upload: DirectUploadTarget }> {
   const spec = validateDirectUploadMetadata(input);
   const intentId = randomUUID();
+  const draftExpiresInSeconds =
+    input.target.type === "new" ? validateExpirySeconds(input.target.expiresInSeconds) : null;
   const draftId = input.target.type === "draft" ? input.target.draftId : randomUUID();
   const versionId = randomUUID();
   const expiresAt = new Date(Date.now() + INTENT_TTL_MS);
@@ -128,7 +133,7 @@ export async function createUploadIntent(input: {
           and(
             eq(drafts.id, input.target.draftId),
             eq(drafts.ownerId, input.ownerId),
-            isNull(drafts.deletedAt),
+            liveDraftCondition,
           ),
         )
         .for("update");
@@ -176,6 +181,7 @@ export async function createUploadIntent(input: {
         contentType: spec.contentType,
         expectedBytes: input.sizeBytes,
         title,
+        draftExpiresInSeconds,
         visibility,
         passwordHash,
         source: input.source,
@@ -245,10 +251,14 @@ export async function getUploadIntentForOwner(
 
 async function completedResult(intent: UploadIntent): Promise<UploadIntentResult> {
   const [[draft], [version]] = await Promise.all([
-    getDb().select().from(drafts).where(eq(drafts.id, intent.draftId)).limit(1),
+    getDb()
+      .select()
+      .from(drafts)
+      .where(and(eq(drafts.id, intent.draftId), liveDraftCondition))
+      .limit(1),
     getDb().select().from(draftVersions).where(eq(draftVersions.id, intent.versionId)).limit(1),
   ]);
-  if (!draft || !version) throw new Error("Completed upload metadata is missing");
+  if (!draft || !version) throw new DraftNotFoundError();
   return { intent, draft, version };
 }
 
@@ -427,7 +437,7 @@ export async function completeUploadIntent(
               and(
                 eq(drafts.id, intent.targetDraftId),
                 eq(drafts.ownerId, intent.ownerId),
-                isNull(drafts.deletedAt),
+                liveDraftCondition,
               ),
             )
             .for("update");
@@ -450,6 +460,7 @@ export async function completeUploadIntent(
               kind: intent.kind,
               visibility: intent.visibility ?? "private",
               passwordHash: intent.passwordHash,
+              expiresAt: draftExpiration(intent.draftExpiresInSeconds),
             })
             .returning();
           if (!createdDraft) throw new Error("Draft insert returned no row");

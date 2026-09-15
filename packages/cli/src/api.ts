@@ -10,6 +10,7 @@ export type ApiDraft = {
   url: string;
   createdAt: string;
   updatedAt: string;
+  expiresAt: string | null;
 };
 
 export type ApiVersion = {
@@ -166,6 +167,7 @@ export class AgentPlanApi {
           title?: string;
           visibility: "public" | "private" | "password";
           password?: string;
+          expiresInSeconds?: number | null;
         }
       | { type: "draft"; draftId: string };
   }): Promise<{
@@ -202,6 +204,7 @@ export class AgentPlanApi {
           title?: string;
           visibility: "public" | "private" | "password";
           password?: string;
+          expiresInSeconds?: number | null;
         }
       | { type: "draft"; draftId: string };
   }): Promise<{

@@ -1,5 +1,5 @@
 import { apiError, invalidRequest } from "@/lib/api/responses";
-import { draftFieldsSchema } from "@/lib/validation/api";
+import { draftExpirySchema, draftFieldsSchema } from "@/lib/validation/api";
 import { titleFromFilename, validateUpload } from "@/lib/validation/upload";
 import type { Visibility } from "@/db/schema";
 
@@ -14,6 +14,7 @@ export type ParsedUpload = {
   title: string;
   visibility: Visibility | undefined;
   password: string | undefined;
+  expiresInSeconds: number | null | undefined;
 };
 
 async function boundedRequest(req: Request): Promise<Request | Response> {
@@ -85,6 +86,16 @@ export async function readUpload(req: Request): Promise<ParsedUpload | Response>
   const titleField = form.get("title");
   const visibilityField = form.get("visibility");
   const passwordField = form.get("password");
+  const expiryField = form.get("expiresInSeconds");
+  const expiry = draftExpirySchema.safeParse(
+    expiryField === null
+      ? undefined
+      : typeof expiryField === "string" && expiryField.trim()
+        ? Number(expiryField)
+        : NaN,
+  );
+  if (!expiry.success)
+    return invalidRequest("Auto-expiry must be between 60 and 31536000 seconds.");
   const fields = draftFieldsSchema.safeParse({
     title: typeof titleField === "string" && titleField ? titleField : undefined,
     visibility:
@@ -101,5 +112,6 @@ export async function readUpload(req: Request): Promise<ParsedUpload | Response>
     title: fields.data.title ?? titleFromFilename(file.name),
     visibility: fields.data.visibility,
     password: fields.data.password,
+    expiresInSeconds: expiry.data,
   };
 }

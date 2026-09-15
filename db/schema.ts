@@ -189,8 +189,10 @@ export const drafts = pgTable(
       .$onUpdate(() => new Date())
       .notNull(),
     deletedAt: timestamp("deleted_at", { withTimezone: true }),
+    expiresAt: timestamp("expires_at", { withTimezone: true }),
   },
   (table) => [
+    index("drafts_expires_at_idx").on(table.expiresAt),
     index("drafts_owner_updated_idx").on(table.ownerId, table.updatedAt.desc(), table.id.desc()),
   ],
 );
@@ -271,6 +273,7 @@ export const uploadIntents = pgTable(
     entryPath: varchar("entry_path", { length: 512 }),
     fileCount: integer("file_count").notNull().default(1),
     title: varchar("title", { length: 200 }),
+    draftExpiresInSeconds: integer("draft_expires_in_seconds"),
     visibility: draftVisibility("visibility"),
     passwordHash: text("password_hash"),
     source: versionSource("source").notNull(),
