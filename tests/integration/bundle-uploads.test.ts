@@ -16,6 +16,7 @@ import { draftVersions, storageDeletionJobs, uploadIntents, users } from "@/db/s
 import { removeDraftAsAdmin } from "@/lib/admin/service";
 import { createDraftWithFirstVersion } from "@/lib/drafts/service";
 import { getStorage } from "@/lib/storage";
+import { withUploadDiagnostics } from "@/lib/uploads/diagnostics";
 import {
   completeBundleUpload,
   createBundleUpload,
@@ -187,13 +188,39 @@ describe.skipIf(!hasDb)("bundle upload lifecycle (integration)", () => {
     const original = getStorage().open.bind(getStorage());
     const missingKey = bundle.files[2]!.finalKey;
     const read = vi.spyOn(getStorage(), "open").mockImplementation(async (key, options) => {
-      if (key === missingKey) throw new Error("temporary provider failure");
+      if (key === missingKey) {
+        throw Object.assign(new Error("secret signed-url?token=private"), {
+          name: "AccessDenied",
+          $metadata: { httpStatusCode: 403 },
+        });
+      }
       return original(key, options);
     });
     try {
-      await expect(completeBundleUpload(created.intent.id, ownerId)).rejects.toThrow(
-        "temporary provider failure",
+      const log = vi.spyOn(console, "error").mockImplementation(() => {});
+      const complete = withUploadDiagnostics("/api/v1/uploads/bundles/[id]/complete", async () => {
+        await completeBundleUpload(created.intent.id, ownerId);
+        return Response.json({ ok: true });
+      });
+      const response = await complete(
+        new Request(`http://localhost/api/v1/uploads/bundles/${created.intent.id}/complete`, {
+          method: "POST",
+        }),
       );
+      expect(response.status).toBe(500);
+      const raw = log.mock.calls[0]![0] as string;
+      expect(JSON.parse(raw)).toMatchObject({
+        requestId: response.headers.get("x-request-id"),
+        uploadIntentId: created.intent.id,
+        errorStage: "storage.open",
+        errorFileId: bundle.files[2]!.id,
+        errorCode: "AccessDenied",
+        errorSummary: "Storage access was denied.",
+        errorHttpStatus: 403,
+      });
+      expect(raw).not.toMatch(/secret|private|signed-url/);
+      expect(raw).not.toContain(missingKey);
+      expect(log).toHaveBeenCalledTimes(1);
     } finally {
       read.mockRestore();
     }

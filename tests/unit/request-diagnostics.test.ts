@@ -3,6 +3,7 @@ import {
   recordRequestError,
   recordUploadResource,
   withRequestDiagnostics,
+  withDiagnosticStage,
 } from "@/lib/diagnostics/request";
 
 const intentId = "d141072a-37f6-4f2b-8dc4-d0f00fe5b8e8";
@@ -126,5 +127,102 @@ describe("request diagnostics", () => {
     });
     expect(secondLog).not.toHaveProperty("errorType");
     expect(firstLog.requestId).not.toBe(secondLog.requestId);
+  });
+
+  it("explains a wrapped database failure without logging SQL, parameters or credentials", async () => {
+    const cause = Object.assign(new Error('column "private-column" does not exist'), {
+      code: "42703",
+      detail: "private@example.test",
+      query: "secret sql",
+    });
+    const error = new Error("Failed query: secret sql; params: secret-token", { cause });
+    const handler = withRequestDiagnostics("/complete", async () =>
+      withDiagnosticStage("completion.persist", async () => {
+        throw error;
+      }),
+    );
+    const response = await handler(new Request("http://localhost/complete"));
+    const raw = vi.mocked(console.error).mock.calls[0]![0] as string;
+    expect(JSON.parse(raw)).toMatchObject({
+      errorStage: "completion.persist",
+      errorCode: "42703",
+      errorSummary: "Database column is missing.",
+      errorCauses: [expect.objectContaining({ code: "42703" })],
+    });
+    expect(response.status).toBe(500);
+    expect(raw).not.toMatch(/secret|private|params|Failed query/);
+    expect(await response.text()).not.toMatch(/42703|Database|completion/);
+  });
+
+  it("retains a provider's name and HTTP status through an unknown wrapper", async () => {
+    const cause = Object.assign(new Error("signed-url?token=secret"), {
+      name: "AccessDenied",
+      $metadata: { httpStatusCode: 403, requestId: "secret" },
+    });
+    const handler = withRequestDiagnostics("/complete", async () => {
+      throw new Error("secret wrapper", { cause });
+    });
+    await handler(new Request("http://localhost/complete"));
+    const raw = vi.mocked(console.error).mock.calls[0]![0] as string;
+    expect(JSON.parse(raw)).toMatchObject({
+      errorCode: "AccessDenied",
+      errorSummary: "Storage access was denied.",
+      errorCauses: [expect.objectContaining({ type: "AccessDenied", httpStatus: 403 })],
+    });
+    expect(raw).not.toMatch(/secret|signed-url/);
+  });
+
+  it("identifies an unknown failure's operation and UUID across parallel assets and cleanup", async () => {
+    const handler = withRequestDiagnostics("/complete", async () => {
+      let failure: unknown;
+      await Promise.all([
+        withDiagnosticStage(
+          "storage.head",
+          async () => {
+            await Promise.resolve();
+            throw new Error("unrecognised decoder output secret-filename.png");
+          },
+          fileId,
+        ).catch((error) => {
+          failure = error;
+        }),
+        withDiagnosticStage("media.validate", async () => {}, intentId),
+      ]);
+      await withDiagnosticStage("completion.release", async () => {});
+      throw failure;
+    });
+    await handler(new Request("http://localhost/complete"));
+    const raw = vi.mocked(console.error).mock.calls[0]![0] as string;
+    expect(JSON.parse(raw)).toMatchObject({
+      errorStage: "storage.head",
+      errorFileId: fileId,
+      errorSummary: "Could not read stored file metadata; the error has no recognized safe reason.",
+    });
+    expect(raw).not.toMatch(/secret|decoder|filename/);
+  });
+
+  it("bounds cyclic causes and ignores hostile getters and untrusted metadata", async () => {
+    const error = Object.assign(new Error("secret"), { name: "secret-name", statusCode: 999 });
+    Object.defineProperty(error, "code", {
+      get() {
+        throw new Error("secret getter");
+      },
+    });
+    error.cause = error;
+    const handler = withRequestDiagnostics("/complete", async () => {
+      return withDiagnosticStage(
+        "storage.open",
+        async () => {
+          throw error;
+        },
+        "secret-id",
+      );
+    });
+    const response = await handler(new Request("http://localhost/complete"));
+    expect(response.status).toBe(500);
+    const raw = vi.mocked(console.error).mock.calls[0]![0] as string;
+    expect(raw).not.toMatch(/secret|999/);
+    expect(JSON.parse(raw)).not.toHaveProperty("errorFileId");
+    expect(JSON.parse(raw)).not.toHaveProperty("errorCauses");
   });
 });
