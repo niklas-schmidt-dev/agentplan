@@ -67,6 +67,7 @@ function draft(overrides: Partial<Draft>): Draft {
   return {
     id: DRAFT_A,
     ownerId: "owner-1",
+    groupId: null,
     slug: "s",
     title: "t",
     kind: "html",

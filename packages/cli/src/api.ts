@@ -11,6 +11,21 @@ export type ApiDraft = {
   createdAt: string;
   updatedAt: string;
   expiresAt: string | null;
+  groupId: string | null;
+};
+
+export type ApiGroup = {
+  id: string;
+  parentId: string | null;
+  name: string;
+  description: string | null;
+  createdAt: string;
+  updatedAt: string;
+  path: Array<{ id: string; name: string }>;
+  directDraftCount: number;
+  subtreeDraftCount: number;
+  childGroupCount: number;
+  pendingUploadCount: number;
 };
 
 export type ApiVersion = {
@@ -113,13 +128,71 @@ export class AgentPlanApi {
   }
 
   listDrafts(
-    options: { limit?: number; cursor?: string; search?: string; visibility?: string } = {},
+    options: {
+      limit?: number;
+      cursor?: string;
+      search?: string;
+      visibility?: string;
+      groupId?: string;
+      includeDescendants?: boolean;
+    } = {},
   ): Promise<{ drafts: ApiDraft[]; nextCursor?: string | null }> {
     const query = new URLSearchParams();
     for (const [key, value] of Object.entries(options)) {
       if (value !== undefined) query.set(key, String(value));
     }
     return this.request(`/api/v1/drafts${query.size ? `?${query}` : ""}`);
+  }
+
+  listGroups(
+    options: {
+      parentId?: string;
+      scope?: "children" | "subtree";
+      search?: string;
+      limit?: number;
+      cursor?: string;
+    } = {},
+  ): Promise<{ groups: ApiGroup[]; nextCursor: string | null }> {
+    const query = new URLSearchParams();
+    for (const [key, value] of Object.entries(options)) {
+      if (value !== undefined) query.set(key, String(value));
+    }
+    return this.request(`/api/v1/groups${query.size ? `?${query}` : ""}`);
+  }
+
+  createGroup(input: {
+    name: string;
+    description?: string;
+    parentId?: string | null;
+  }): Promise<{ group: ApiGroup }> {
+    return this.request("/api/v1/groups", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(input),
+    });
+  }
+
+  updateGroup(
+    id: string,
+    patch: { name?: string; description?: string | null; parentId?: string | null },
+  ): Promise<{ group: ApiGroup }> {
+    return this.request(`/api/v1/groups/${encodeURIComponent(id)}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(patch),
+    });
+  }
+
+  dissolveGroup(id: string): Promise<void> {
+    return this.request(`/api/v1/groups/${encodeURIComponent(id)}`, { method: "DELETE" });
+  }
+
+  moveDrafts(draftIds: string[], groupId: string | null): Promise<{ movedCount: number }> {
+    return this.request("/api/v1/drafts/move", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ draftIds, groupId }),
+    });
   }
 
   listVersions(id: string): Promise<{ versions: ApiVersion[] }> {
@@ -168,6 +241,7 @@ export class AgentPlanApi {
           visibility: "public" | "private" | "password";
           password?: string;
           expiresInSeconds?: number | null;
+          groupId?: string | null;
         }
       | { type: "draft"; draftId: string };
   }): Promise<{
@@ -205,6 +279,7 @@ export class AgentPlanApi {
           visibility: "public" | "private" | "password";
           password?: string;
           expiresInSeconds?: number | null;
+          groupId?: string | null;
         }
       | { type: "draft"; draftId: string };
   }): Promise<{

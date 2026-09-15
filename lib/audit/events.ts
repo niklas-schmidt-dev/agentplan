@@ -5,6 +5,11 @@ import { auditEvents } from "@/db/schema";
 import { auditRetentionDays } from "@/lib/limits/plans";
 
 export type AuditEventType =
+  | "group.created"
+  | "group.updated"
+  | "group.moved"
+  | "group.dissolved"
+  | "draft.moved"
   | "draft.created"
   | "draft.version_created"
   | "draft.version_restored"

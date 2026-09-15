@@ -5,6 +5,7 @@ import { mapWithConcurrency } from "@/lib/uploads/concurrency";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { UpgradePrompt } from "./upgrade-prompt";
+import { GroupSelector, type GroupPath } from "./group-controls";
 import {
   normalizeBundlePath,
   parseExpiryDuration,
@@ -66,6 +67,7 @@ async function directUpload(
   target:
     | {
         type: "new";
+        groupId?: string | null;
         title?: string;
         visibility: "private" | "public" | "password";
         password?: string;
@@ -190,6 +192,7 @@ async function bundleUpload(
   target:
     | {
         type: "new";
+        groupId?: string | null;
         title?: string;
         visibility: "private" | "public" | "password";
         password?: string;
@@ -386,8 +389,14 @@ function BundlePicker({
   );
 }
 
-export function NewDraftForm({ upgradeHref }: { upgradeHref?: string } = {}) {
+export function NewDraftForm({
+  upgradeHref,
+  defaultGroupId = null,
+  defaultGroupPath = [],
+}: { upgradeHref?: string; defaultGroupId?: string | null; defaultGroupPath?: GroupPath } = {}) {
   const router = useRouter();
+  const [groupId, setGroupId] = useState(defaultGroupId);
+  const [groupPath, setGroupPath] = useState(defaultGroupPath);
   const [error, setError] = useState<FormError | null>(null);
   const [state, setState] = useState<UploadState>("idle");
   const [recoveryPath, setRecoveryPath] = useState<string | null>(null);
@@ -422,6 +431,7 @@ export function NewDraftForm({ upgradeHref }: { upgradeHref?: string } = {}) {
           typeof entryValue === "string" && entryValue ? entryValue : undefined,
           {
             type: "new",
+            groupId,
             expiresInSeconds,
             title: typeof titleValue === "string" && titleValue ? titleValue : undefined,
             visibility,
@@ -442,6 +452,7 @@ export function NewDraftForm({ upgradeHref }: { upgradeHref?: string } = {}) {
           file,
           {
             type: "new",
+            groupId,
             expiresInSeconds,
             title: typeof titleValue === "string" && titleValue ? titleValue : undefined,
             visibility,
@@ -462,6 +473,15 @@ export function NewDraftForm({ upgradeHref }: { upgradeHref?: string } = {}) {
 
   return (
     <form onSubmit={submit} className="flex flex-col gap-3">
+      <GroupSelector
+        groupId={groupId}
+        path={groupPath}
+        disabled={state !== "idle" || !!recoveryPath}
+        onChange={(id, path) => {
+          setGroupId(id);
+          setGroupPath(path);
+        }}
+      />
       <div className="flex gap-2 font-mono text-xs">
         {(["single", "bundle"] as const).map((option) => (
           <button
@@ -759,7 +779,7 @@ export function PendingUploads({
   if (intents.length === 0) return null;
   return (
     <section className="rounded-md border border-edge bg-surface p-4">
-      <h2 className="font-mono text-sm text-ink-muted">active upload reservations</h2>
+      <h2 className="font-mono text-sm text-ink-muted">active upload reservations · all groups</h2>
       <ul className="mt-2 flex flex-col divide-y divide-edge">
         {intents.map((intent) => (
           <li key={intent.id} className="flex flex-wrap items-center gap-3 py-2 font-mono text-xs">

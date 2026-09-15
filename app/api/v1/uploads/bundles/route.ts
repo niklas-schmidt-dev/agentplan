@@ -16,11 +16,17 @@ const targetSchema = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("new"),
     expiresInSeconds: draftExpirySchema,
+    groupId: z.uuid().nullable().optional(),
     title: z.string().max(200).optional(),
     visibility: z.enum(["public", "private", "password"]).default("private"),
     password: z.string().min(6).max(128).optional(),
   }),
-  z.object({ type: z.literal("draft"), draftId: z.uuid(), expiresInSeconds: z.never().optional() }),
+  z.object({
+    type: z.literal("draft"),
+    draftId: z.uuid(),
+    expiresInSeconds: z.never().optional(),
+    groupId: z.never().optional(),
+  }),
 ]);
 
 const createSchema = z.object({

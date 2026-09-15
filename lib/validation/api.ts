@@ -43,12 +43,25 @@ export const patchDraftSchema = draftFieldsSchema.refine(
   { message: "Provide at least one of: title, visibility, password." },
 );
 
-export const listDraftsQuerySchema = z.object({
-  search: z.string().trim().min(1).max(200).optional(),
-  visibility: visibilitySchema.optional(),
-  limit: z.coerce.number().int().min(1).max(200).optional(),
-  cursor: z.string().min(1).max(1024).optional(),
-});
+export const listDraftsQuerySchema = z
+  .object({
+    groupId: z
+      .union([z.uuid(), z.literal("none")])
+      .optional()
+      .transform((value) => (value === "none" ? null : value)),
+    includeDescendants: z
+      .enum(["true", "false"])
+      .optional()
+      .transform((value) => value === "true"),
+    search: z.string().trim().min(1).max(200).optional(),
+    visibility: visibilitySchema.optional(),
+    limit: z.coerce.number().int().min(1).max(200).optional(),
+    cursor: z.string().min(1).max(1024).optional(),
+  })
+  .refine(
+    (input) => !input.includeDescendants || Boolean(input.groupId),
+    "Including subgroups requires a group.",
+  );
 
 export const createTokenSchema = z.object({
   name: z.string().trim().min(1).max(100),

@@ -53,6 +53,7 @@ import {
   type UploadIntentResult,
 } from "./service";
 import { issueUploadIntentToken } from "./tokens";
+import { assertGroupForOwner } from "@/lib/groups/access";
 
 import { mapWithConcurrency } from "./concurrency";
 import { claimCompletion, ownsCompletion, releaseCompletion } from "./completion-lease";
@@ -68,6 +69,7 @@ export type BundleTarget =
       visibility: Visibility;
       password?: string;
       expiresInSeconds?: number | null;
+      groupId?: string | null;
     }
   | { type: "draft"; draftId: string };
 
@@ -209,6 +211,9 @@ export async function createBundleUpload(input: {
       .from(users)
       .where(and(eq(users.id, input.ownerId), isNull(users.blockedAt)));
     if (!owner) throw new DraftNotFoundError();
+    if (input.target.type === "new") {
+      await assertGroupForOwner(tx, input.target.groupId, input.ownerId);
+    }
 
     const [activeBundles] = await tx
       .select({ value: count() })
@@ -275,6 +280,7 @@ export async function createBundleUpload(input: {
         ownerId: input.ownerId,
         targetDraftId: input.target.type === "draft" ? input.target.draftId : null,
         draftId,
+        targetGroupId: input.target.type === "new" ? (input.target.groupId ?? null) : null,
         versionId,
         mode: "bundle",
         stagingKey: null,
@@ -657,11 +663,13 @@ export async function completeBundleUpload(
           versionNumber = (numberRow?.value ?? 0) + 1;
           draft = lockedDraft;
         } else {
+          await assertGroupForOwner(tx, lockedIntent.targetGroupId, lockedIntent.ownerId);
           const [createdDraft] = await tx
             .insert(drafts)
             .values({
               id: lockedIntent.draftId,
               ownerId: lockedIntent.ownerId,
+              groupId: lockedIntent.targetGroupId,
               slug: generateSlug(lockedIntent.title ?? "", lockedIntent.visibility === "public"),
               title: lockedIntent.title ?? titleFromFilename(lockedIntent.originalFilename),
               kind: "html",

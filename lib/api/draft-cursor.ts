@@ -26,6 +26,8 @@ export function draftFilterKey(
     search?: string;
     visibility?: string;
     updatedWithinDays?: number;
+    groupId?: string | null;
+    includeDescendants?: boolean;
   },
 ): string {
   return createHash("sha256")
@@ -35,6 +37,9 @@ export function draftFilterKey(
         filters.search ?? "",
         filters.visibility ?? "",
         filters.updatedWithinDays ?? null,
+        ...(filters.groupId !== undefined
+          ? [filters.groupId, Boolean(filters.includeDescendants)]
+          : []),
       ]),
     )
     .digest("hex");

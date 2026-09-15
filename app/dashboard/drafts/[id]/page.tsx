@@ -18,6 +18,9 @@ import { getEffectivePlanForUser } from "@/lib/billing/service";
 import { formatBytes, formatRelativeTime } from "@/lib/format";
 import { draftUrl, draftVersionPath, draftVersionUrl } from "@/lib/urls";
 import { uuidSchema } from "@/lib/validation/api";
+import Link from "next/link";
+import { getGroupPathsForOwner } from "@/db/queries/groups";
+import { GroupBreadcrumbs, MoveDraftsButton } from "@/components/dashboard/group-controls";
 
 export const metadata = { title: "Draft" };
 
@@ -33,9 +36,10 @@ export default async function DraftDetailPage({
   if (!rawId.success) notFound();
   const draft = await getDraftForOwner(rawId.data, user.id);
   if (!draft) notFound();
-  const [versions, effective] = await Promise.all([
+  const [versions, effective, groupPaths] = await Promise.all([
     listVersions(draft.id),
     getEffectivePlanForUser(user.id),
+    getGroupPathsForOwner(user.id, draft.groupId ? [draft.groupId] : []),
   ]);
   const billingEnabled = isBillingConfigured();
   const upgradeHref =
@@ -55,6 +59,23 @@ export default async function DraftDetailPage({
     <main className="mx-auto flex min-h-dvh w-full max-w-5xl flex-col gap-6 px-6 py-8">
       <DashboardHeader email={user.email} isAdmin={isAdmin(user)} billingEnabled={billingEnabled} />
 
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        {draft.groupId ? (
+          <GroupBreadcrumbs path={groupPaths[draft.groupId] ?? []} />
+        ) : (
+          <Link
+            href="/dashboard?groupId=none"
+            className="font-mono text-xs text-ink-muted hover:text-lime"
+          >
+            Ungrouped
+          </Link>
+        )}
+        <MoveDraftsButton
+          key={draft.groupId ?? "ungrouped"}
+          draftIds={[draft.id]}
+          initialPath={draft.groupId ? groupPaths[draft.groupId] : []}
+        />
+      </div>
       <section className="flex flex-col gap-4">
         <form action={renameDraftAction} className="flex flex-wrap items-center gap-2">
           <input type="hidden" name="draftId" value={draft.id} />

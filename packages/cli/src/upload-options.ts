@@ -6,6 +6,7 @@ export type UploadFlags = {
   title?: string;
   "expires-in"?: string;
   draft?: string;
+  group?: string;
   entry?: string;
   json?: boolean;
 };
@@ -18,6 +19,7 @@ export function hasNewDraftOnlyOptions(flags: UploadFlags): boolean {
     flags.password !== undefined ||
     flags["password-stdin"] ||
     flags.title !== undefined ||
+    flags.group !== undefined ||
     flags["expires-in"] !== undefined,
   );
 }

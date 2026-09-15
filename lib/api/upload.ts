@@ -1,5 +1,5 @@
 import { apiError, invalidRequest } from "@/lib/api/responses";
-import { draftExpirySchema, draftFieldsSchema } from "@/lib/validation/api";
+import { draftExpirySchema, draftFieldsSchema, uuidSchema } from "@/lib/validation/api";
 import { titleFromFilename, validateUpload } from "@/lib/validation/upload";
 import type { Visibility } from "@/db/schema";
 
@@ -15,6 +15,7 @@ export type ParsedUpload = {
   visibility: Visibility | undefined;
   password: string | undefined;
   expiresInSeconds: number | null | undefined;
+  groupId: string | undefined;
 };
 
 async function boundedRequest(req: Request): Promise<Request | Response> {
@@ -87,6 +88,9 @@ export async function readUpload(req: Request): Promise<ParsedUpload | Response>
   const visibilityField = form.get("visibility");
   const passwordField = form.get("password");
   const expiryField = form.get("expiresInSeconds");
+  const groupField = form.get("groupId");
+  const groupId = uuidSchema.optional().safeParse(groupField === null ? undefined : groupField);
+  if (!groupId.success) return invalidRequest("Group ID must be a UUID.");
   const expiry = draftExpirySchema.safeParse(
     expiryField === null
       ? undefined
@@ -113,5 +117,6 @@ export async function readUpload(req: Request): Promise<ParsedUpload | Response>
     visibility: fields.data.visibility,
     password: fields.data.password,
     expiresInSeconds: expiry.data,
+    groupId: groupId.data,
   };
 }

@@ -122,6 +122,55 @@ rotates its URL, so use the URL returned by `update`. Read commands need
 List follows every page by default. Pass `--limit <1-200>` or `--cursor <cursor>`
 to get one page with a `nextCursor`; `--search` and `--visibility` filter results.
 
+## Organize files in nested groups
+
+Groups may contain files and other groups at any depth. They are private
+organization for your account; moving files preserves their URLs, visibility,
+passwords, expiry, versions, and bundle assets.
+
+```sh
+agentplan groups create "Customer" --description "Website work" --json
+agentplan groups create "Relaunch" --parent <customer-id> --json
+agentplan groups create "Design" --parent <relaunch-id> --json
+agentplan groups list --parent <customer-id> --json
+agentplan groups list --recursive --search "Design" --json
+agentplan upload plan.html --group <design-id> --json
+agentplan upload ./launch-plan --group <design-id> --json
+agentplan list --group <relaunch-id> --recursive --json
+agentplan list --ungrouped --json
+agentplan move <draft-id> --group <design-id> --json
+agentplan move <draft-id> <another-draft-id> --ungrouped --json
+agentplan groups move <design-id> --parent <destination-id> --json
+agentplan groups move <design-id> --root --json
+agentplan groups dissolve <relaunch-id> --yes --json
+```
+
+Use group UUIDs returned by these commands. Names and paths may repeat; they are
+never resolved implicitly. New uploads without `--group` are ungrouped. A new
+version (`--draft`) keeps its draft's current group and rejects `--group`.
+
+`groups list` defaults to root groups. `--parent` selects direct children and
+`--recursive` includes all descendants below that parent (or all your groups
+without a parent). `list --group` defaults to files directly in that group;
+`--recursive` includes descendant files and requires `--group`. Search respects
+this scope, so include `--recursive` to search a subtree. Group listings include
+full paths, IDs, and direct/total file counts; JSON also includes parent IDs,
+descriptions, timestamps, child counts, and pending upload counts.
+
+Both group and file lists follow all pages unless you specify `--limit <1-200>`
+or `--cursor`; then they return one page with `nextCursor`. Keep the same filters
+when continuing a page. `--group`/`--ungrouped` and `--parent`/`--root` are mutually
+exclusive. `--root` is for moving groups; create a root group by omitting `--parent`.
+File moves accept 1–50 distinct IDs and are atomic. JSON returns `movedCount` for
+assignments that actually changed. Moving a group moves its complete subtree;
+the destination cannot be itself or one of its descendants.
+
+Dissolving removes only the chosen group container. Direct files, direct
+subgroups, and pending new-upload targets move one level up. Dissolving a root
+group makes its direct files ungrouped and its child groups roots. Contents are
+preserved, including every file version. `--yes` is required; JSON success is
+`{ "dissolved": true, "id": "..." }`.
+
 ## Errors and upload recovery
 
 With `--json`, command errors emit one JSON object to stderr while successful
