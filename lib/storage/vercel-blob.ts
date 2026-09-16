@@ -35,14 +35,6 @@ export class VercelBlobStorage implements ObjectStorage {
     });
   }
 
-  async get(key: string): Promise<Uint8Array | null> {
-    const result = await getBlob(key, { access: "private" });
-    if (!result || result.statusCode !== 200) return null;
-
-    const bytes = await new Response(result.stream).arrayBuffer();
-    return new Uint8Array(bytes);
-  }
-
   async createUploadTarget(input: {
     key: string;
     contentType: string;

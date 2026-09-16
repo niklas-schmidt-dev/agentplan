@@ -23,8 +23,6 @@ export interface ObjectStorage {
   put(key: string, body: Uint8Array, contentType: string): Promise<void>;
   /** Creates an immutable object and fails when the key already exists. */
   putIfAbsent(key: string, body: Uint8Array, contentType: string): Promise<void>;
-  /** Returns null when the object does not exist. */
-  get(key: string): Promise<Uint8Array | null>;
   createUploadTarget(input: {
     key: string;
     contentType: string;
@@ -35,6 +33,7 @@ export interface ObjectStorage {
     localUploadUrl?: string;
   }): Promise<DirectUploadTarget>;
   head(key: string): Promise<StorageObjectMetadata | null>;
+  /** Returns null when the object does not exist. */
   open(key: string, range?: { start: number; end: number }): Promise<StorageOpenResult | null>;
   copy(sourceKey: string, destinationKey: string, contentType: string): Promise<void>;
   delete(key: string): Promise<void>;

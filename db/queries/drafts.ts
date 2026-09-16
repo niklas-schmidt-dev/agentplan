@@ -64,13 +64,6 @@ export type DraftListFilters = {
   cursor?: string;
 };
 
-export async function listDraftsForOwner(
-  ownerId: string,
-  filters: DraftListFilters = {},
-): Promise<DraftListItem[]> {
-  return (await listDraftsPageForOwner(ownerId, filters)).drafts;
-}
-
 export async function listDraftsPageForOwner(
   ownerId: string,
   filters: DraftListFilters = {},

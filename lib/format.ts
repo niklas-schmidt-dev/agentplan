@@ -42,7 +42,3 @@ export function formatRelativeTime(date: Date, now: Date = new Date()): string {
   }
   return "just now";
 }
-
-export function shortHash(sha256: string): string {
-  return sha256.slice(0, 12);
-}

@@ -2,20 +2,12 @@ import { liveDraftCondition } from "@/lib/drafts/expiration";
 import { createHmac } from "node:crypto";
 import { and, eq, gt, isNull, ne, or, sql } from "drizzle-orm";
 import { getDb, type Database } from "@/db/client";
-import { apiTokens, draftVersions, drafts, uploadIntents, type UserPlan } from "@/db/schema";
+import { apiTokens, draftVersions, drafts, uploadIntents } from "@/db/schema";
 import { getEffectivePlanForUser } from "@/lib/billing/service";
 import { limitsForEffectivePlan } from "@/lib/billing/plan";
 import { QuotaExceededError, RateLimitedError } from "./errors";
 import { passwordAttemptsPerWindow, type EffectiveLimits } from "./plans";
 import { consumeRateLimit, consumeRateLimits } from "./rate-limit";
-
-/** Effective plan name (granted plan combined with any current subscription). */
-export async function getUserPlan(
-  userId: string,
-  db: Pick<Database, "select"> = getDb(),
-): Promise<UserPlan> {
-  return (await getEffectivePlanForUser(userId, db)).plan;
-}
 
 /** Effective limits for quota checks; billing storage tiers are already folded in. */
 export async function getUserLimits(

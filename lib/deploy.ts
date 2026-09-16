@@ -1,4 +1,4 @@
-export const VERCEL_DEPLOY_PRODUCTS = [
+const VERCEL_DEPLOY_PRODUCTS = [
   {
     type: "integration",
     protocol: "storage",
@@ -8,11 +8,7 @@ export const VERCEL_DEPLOY_PRODUCTS = [
   { type: "blob" },
 ] as const;
 
-export const VERCEL_REQUIRED_ENV = [
-  "ADMIN_BOOTSTRAP_EMAIL",
-  "BETTER_AUTH_SECRET",
-  "CRON_SECRET",
-] as const;
+const VERCEL_REQUIRED_ENV = ["ADMIN_BOOTSTRAP_EMAIL", "BETTER_AUTH_SECRET", "CRON_SECRET"] as const;
 
 export const GITHUB_FORK_URL = "https://github.com/niklas-schmidt-dev/agentplan/fork";
 

@@ -161,7 +161,7 @@ describe.skipIf(!hasDb)("bundle upload lifecycle (integration)", () => {
       .where(eq(draftVersions.draftId, first.draft.id));
     expect(versions.filter((version) => version.isBundle)).toHaveLength(2);
     expect(versions.some((version) => version.id === first.version.id)).toBe(true);
-    expect(await getStorage().get(first.version.storageKey)).not.toBeNull();
+    expect(await getStorage().head(first.version.storageKey)).not.toBeNull();
     vi.unstubAllEnvs();
   });
 

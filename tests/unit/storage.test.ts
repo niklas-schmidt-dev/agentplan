@@ -82,19 +82,29 @@ describe("VercelBlobStorage", () => {
     );
   });
 
-  it("reads and deletes private blobs by storage key", async () => {
+  it("streams and deletes private blobs by storage key", async () => {
     const bytes = new TextEncoder().encode("<p>stored</p>");
     blobMocks.get.mockResolvedValue({
       statusCode: 200,
       stream: new Blob([bytes]).stream(),
+      headers: new Headers(),
+      blob: { size: bytes.byteLength, contentType: "text/html", etag: '"stored"' },
     });
     blobMocks.del.mockResolvedValue(undefined);
     const storage = new VercelBlobStorage();
 
-    const stored = await storage.get("drafts/version.html");
-    expect(stored).not.toBeNull();
-    expect(new TextDecoder().decode(stored!)).toBe("<p>stored</p>");
-    expect(blobMocks.get).toHaveBeenCalledWith("drafts/version.html", { access: "private" });
+    const stored = await storage.open("drafts/version.html");
+    expect(stored).toMatchObject({
+      size: bytes.byteLength,
+      contentType: "text/html",
+      etag: '"stored"',
+      contentRange: null,
+    });
+    expect(await new Response(stored!.body).text()).toBe("<p>stored</p>");
+    expect(blobMocks.get).toHaveBeenCalledWith("drafts/version.html", {
+      access: "private",
+      headers: undefined,
+    });
 
     await storage.delete("drafts/version.html");
     expect(blobMocks.del).toHaveBeenCalledWith("drafts/version.html");
@@ -102,7 +112,28 @@ describe("VercelBlobStorage", () => {
 
   it("returns null when a blob does not exist", async () => {
     blobMocks.get.mockResolvedValue(null);
-    await expect(new VercelBlobStorage().get("missing.html")).resolves.toBeNull();
+    await expect(new VercelBlobStorage().open("missing.html")).resolves.toBeNull();
+  });
+
+  it("uses range response metadata instead of the full blob size", async () => {
+    blobMocks.get.mockResolvedValue({
+      statusCode: 200,
+      stream: new Blob(["2345"]).stream(),
+      headers: new Headers({ "content-length": "4", "content-range": "bytes 2-5/10" }),
+      blob: { size: 10, contentType: "video/mp4", etag: '"video"' },
+    });
+    const partial = await new VercelBlobStorage().open("drafts/video.mp4", { start: 2, end: 5 });
+    expect(partial).toMatchObject({
+      size: 4,
+      contentType: "video/mp4",
+      contentRange: "bytes 2-5/10",
+      etag: '"video"',
+    });
+    expect(await new Response(partial!.body).text()).toBe("2345");
+    expect(blobMocks.get).toHaveBeenCalledWith("drafts/video.mp4", {
+      access: "private",
+      headers: { Range: "bytes=2-5" },
+    });
   });
 
   it("scopes direct uploads and copies to immutable final paths", async () => {
@@ -172,7 +203,8 @@ describe("FsStorage media contract", () => {
           "video/mp4",
         ),
       ).rejects.toMatchObject({ code: "EEXIST" });
-      await expect(storage.get("drafts/immutable.mp4")).resolves.toEqual(bytes);
+      const stored = await storage.open("drafts/immutable.mp4");
+      expect(new Uint8Array(await new Response(stored!.body).arrayBuffer())).toEqual(bytes);
       await expect(storage.head("staging/file.mp4")).resolves.toMatchObject({ size: 10 });
       await storage.copy("staging/file.mp4", "drafts/final.mp4", "video/mp4");
       await expect(

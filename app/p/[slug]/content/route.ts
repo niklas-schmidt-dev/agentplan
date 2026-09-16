@@ -2,7 +2,7 @@ import {
   contentHeaders,
   contentNotFound,
   HTML_SANDBOX,
-  MEDIA_SANDBOX,
+  storedContentResponse,
 } from "@/lib/http/content-response";
 import { uuidSchema } from "@/lib/validation/api";
 import { getDraftBySlug, getVersionById } from "@/db/queries/drafts";
@@ -14,8 +14,6 @@ import {
   issueBundleSessionGrant,
 } from "@/lib/drafts/bundle-view-access";
 import { resolveDraftView } from "@/lib/drafts/view-access";
-import { etagMatches, parseSingleByteRange } from "@/lib/http/range";
-import { getStorage } from "@/lib/storage";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -57,25 +55,6 @@ async function resolveContent(
   return { draft, version, sessionId, userId };
 }
 
-function responseHeaders(
-  draft: NonNullable<Awaited<ReturnType<typeof getDraftBySlug>>>,
-  version: NonNullable<Awaited<ReturnType<typeof getVersionById>>>,
-): Headers {
-  const headers = contentHeaders(draft.kind === "html" ? HTML_SANDBOX : MEDIA_SANDBOX);
-  headers.set(
-    "Content-Type",
-    draft.kind === "html" ? "text/html; charset=utf-8" : version.contentType,
-  );
-  headers.set("Content-Disposition", "inline");
-  headers.set("ETag", `"${version.contentSha256}"`);
-  headers.set(
-    "Cache-Control",
-    draft.visibility === "public" ? "public, max-age=0, must-revalidate" : "private, no-store",
-  );
-  if (draft.kind === "video") headers.set("Accept-Ranges", "bytes");
-  return headers;
-}
-
 function bundleEntryLocation(
   slug: string,
   draft: NonNullable<Awaited<ReturnType<typeof getDraftBySlug>>>,
@@ -109,30 +88,6 @@ function bundleEntryLocation(
 
 type Params = { params: Promise<{ slug: string }> };
 
-export async function HEAD(req: Request, { params }: Params): Promise<Response> {
-  const { slug } = await params;
-  const resolved = await resolveContent(req, slug);
-  if (resolved instanceof Response) return resolved;
-  if (resolved.version.isBundle) {
-    const headers = contentHeaders(HTML_SANDBOX);
-    headers.set(
-      "Location",
-      bundleEntryLocation(
-        slug,
-        resolved.draft,
-        resolved.version,
-        resolved.sessionId,
-        resolved.userId,
-      ),
-    );
-    headers.set("Cache-Control", "private, no-store");
-    return new Response(null, { status: 307, headers });
-  }
-  const headers = responseHeaders(resolved.draft, resolved.version);
-  headers.set("Content-Length", String(resolved.version.sizeBytes));
-  return new Response(null, { status: 200, headers });
-}
-
 export async function GET(req: Request, { params }: Params): Promise<Response> {
   const { slug } = await params;
   const resolved = await resolveContent(req, slug);
@@ -147,33 +102,15 @@ export async function GET(req: Request, { params }: Params): Promise<Response> {
     headers.set("Cache-Control", "private, no-store");
     return new Response(null, { status: 307, headers });
   }
-  const headers = responseHeaders(draft, version);
-  const etag = headers.get("ETag")!;
-  if (etagMatches(req.headers.get("if-none-match"), etag)) {
-    return new Response(null, { status: 304, headers });
-  }
-
-  let range: { start: number; end: number } | undefined;
-  const rangeHeader = draft.kind === "video" ? req.headers.get("range") : null;
-  if (rangeHeader) {
-    const ifRange = req.headers.get("if-range");
-    if (!ifRange || ifRange === etag) {
-      const parsed = parseSingleByteRange(rangeHeader, version.sizeBytes);
-      if (!parsed.ok) {
-        headers.set("Content-Range", `bytes */${version.sizeBytes}`);
-        return new Response(null, { status: 416, headers });
-      }
-      range = { start: parsed.start, end: parsed.end };
-    }
-  }
-
-  const object = await getStorage().open(version.storageKey, range);
-  if (!object) return contentNotFound();
-  if (range) {
-    headers.set("Content-Range", `bytes ${range.start}-${range.end}/${version.sizeBytes}`);
-    headers.set("Content-Length", String(range.end - range.start + 1));
-    return new Response(object.body, { status: 206, headers });
-  }
-  headers.set("Content-Length", String(version.sizeBytes));
-  return new Response(object.body, { status: 200, headers });
+  return storedContentResponse(req, {
+    storageKey: version.storageKey,
+    contentType: draft.kind === "html" ? "text/html; charset=utf-8" : version.contentType,
+    contentSha256: version.contentSha256,
+    sizeBytes: version.sizeBytes,
+    visibility: draft.visibility,
+    isHtml: draft.kind === "html",
+    isVideo: draft.kind === "video",
+  });
 }
+
+export const HEAD = GET;

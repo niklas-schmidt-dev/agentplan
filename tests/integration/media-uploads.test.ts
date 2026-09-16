@@ -314,11 +314,21 @@ describe.skipIf(!hasDb)("media upload lifecycle (integration)", () => {
     const url = `http://localhost:3000/p/${completed.draft.slug}/content`;
 
     const openSpy = vi.spyOn(getStorage(), "open");
-    const head = await headContent(new Request(url, { method: "HEAD" }), params);
-    expect(head.status).toBe(200);
-    expect(head.headers.get("content-length")).toBe(String(mp4.byteLength));
-    expect(openSpy).not.toHaveBeenCalled();
-    openSpy.mockRestore();
+    try {
+      const head = await headContent(new Request(url, { method: "HEAD" }), params);
+      expect(head.status).toBe(200);
+      expect(head.body).toBeNull();
+      expect(head.headers.get("content-length")).toBe(String(mp4.byteLength));
+      const cached = await getContent(
+        new Request(url, { headers: { "if-none-match": head.headers.get("etag")! } }),
+        params,
+      );
+      expect(cached.status).toBe(304);
+      expect(cached.body).toBeNull();
+      expect(openSpy).not.toHaveBeenCalled();
+    } finally {
+      openSpy.mockRestore();
+    }
 
     const partial = await getContent(new Request(url, { headers: { range: "bytes=4-7" } }), params);
     expect(partial.status).toBe(206);
@@ -340,5 +350,39 @@ describe.skipIf(!hasDb)("media upload lifecycle (integration)", () => {
     );
     expect(unsatisfiable.status).toBe(416);
     expect(unsatisfiable.headers.get("content-range")).toBe(`bytes */${mp4.byteLength}`);
+  });
+
+  it("rejects inconsistent storage metadata before serving single-file content", async () => {
+    const created = await imageIntent({ type: "new", title: "Bad metadata", visibility: "public" });
+    const storage = getStorage();
+    await storage.put(created.intent.stagingKey!, png, "image/png");
+    const completed = await completeUploadIntent(created.intent.id, ownerId);
+    const url = `http://localhost/p/${completed.draft.slug}/content`;
+    const params = { params: Promise.resolve({ slug: completed.draft.slug }) };
+    const read = vi.spyOn(storage, "open");
+    const head = vi.spyOn(storage, "head");
+    try {
+      for (const metadata of [
+        { size: png.byteLength + 1, contentType: "image/png", etag: null },
+        { size: png.byteLength, contentType: "text/html", etag: null },
+      ]) {
+        const cancel = vi.fn();
+        read.mockResolvedValueOnce({
+          ...metadata,
+          contentRange: null,
+          body: new ReadableStream({ cancel }),
+        });
+        const response = await getContent(new Request(url), params);
+        expect(response.status).toBe(404);
+        expect(response.headers.get("cache-control")).toBe("private, no-store");
+        expect(cancel).toHaveBeenCalledTimes(1);
+
+        head.mockResolvedValueOnce(metadata);
+        expect((await headContent(new Request(url, { method: "HEAD" }), params)).status).toBe(404);
+      }
+    } finally {
+      read.mockRestore();
+      head.mockRestore();
+    }
   });
 });

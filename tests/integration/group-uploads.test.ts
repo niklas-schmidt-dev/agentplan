@@ -355,7 +355,8 @@ describe.skipIf(!hasDb)("group destinations across upload lifecycles", () => {
         .from(drafts)
         .where(eq(drafts.id, created.draft.id));
       expect(persisted).toMatchObject({ groupId: parent.id, slug: created.draft.slug });
-      expect(await storage.get(created.version.storageKey)).toEqual(html);
+      const stored = await storage.open(created.version.storageKey);
+      expect(new Uint8Array(await new Response(stored!.body).arrayBuffer())).toEqual(html);
       expect(await getGroupForOwner(child.id, ownerId)).toBeNull();
 
       put.mockClear();
@@ -396,7 +397,8 @@ describe.skipIf(!hasDb)("group destinations across upload lifecycles", () => {
       source: "browser",
       groupId: nested.id,
     });
-    expect(await getStorage().get(uploaded.version.storageKey)).toEqual(html);
+    const stored = await getStorage().open(uploaded.version.storageKey);
+    expect(new Uint8Array(await new Response(stored!.body).arrayBuffer())).toEqual(html);
 
     await deleteUserCompletely({ userId: adminId }, victimId);
 
@@ -406,7 +408,7 @@ describe.skipIf(!hasDb)("group destinations across upload lifecycles", () => {
     expect(
       await getDb().select().from(draftVersions).where(eq(draftVersions.id, uploaded.version.id)),
     ).toEqual([]);
-    expect(await getStorage().get(uploaded.version.storageKey)).toBeNull();
+    expect(await getStorage().head(uploaded.version.storageKey)).toBeNull();
     const [deletion] = await getDb()
       .select()
       .from(auditEvents)

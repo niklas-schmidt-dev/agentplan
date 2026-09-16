@@ -1,8 +1,8 @@
-import type { StorageOpenResult } from "@/lib/storage";
+import type { StorageObjectMetadata } from "@/lib/storage";
 
 /** Validate provider response metadata before forwarding a private stream. */
 export function storageResponseMatches(
-  object: StorageOpenResult,
+  object: StorageObjectMetadata & { contentRange?: string | null },
   expected: { sizeBytes: number; contentType: string },
   range?: { start: number; end: number },
 ): boolean {
