@@ -148,7 +148,7 @@ describe.skipIf(!hasDb)("identity blocking (integration)", () => {
       .from(drafts)
       .where(eq(drafts.id, draft.id));
     expect(retainedDraft?.deletedAt).toBeNull();
-    expect(await getStorage().get(version.storageKey)).not.toBeNull();
+    expect(await getStorage().head(version.storageKey)).not.toBeNull();
     expect((await listDraftsForAdmin({ ownerId: victimId })).drafts[0]?.ownerBlocked).toBe(true);
     await expect(setDraftTitle(draft, "Blocked mutation", { userId: victimId })).rejects.toThrow(
       /not found/i,
@@ -196,7 +196,7 @@ describe.skipIf(!hasDb)("identity blocking (integration)", () => {
     await expect(purgeDeletedDrafts()).resolves.toEqual(
       expect.objectContaining({ purged: expect.any(Number), failed: expect.any(Number) }),
     );
-    expect(await getStorage().get(version.storageKey)).not.toBeNull();
+    expect(await getStorage().head(version.storageKey)).not.toBeNull();
     expect(
       await getDb()
         .select()
@@ -273,7 +273,7 @@ describe.skipIf(!hasDb)("identity blocking (integration)", () => {
 
     await deleteAndBlockUser({ userId: adminId }, blockedId, "Delete and retain identity");
     expect(await getDb().select().from(users).where(eq(users.id, blockedId))).toHaveLength(0);
-    expect(await getStorage().get(version.storageKey)).toBeNull();
+    expect(await getStorage().head(version.storageKey)).toBeNull();
     const blockPage = await listIdentityBlocks({ search: blockedEmail });
     expect(blockPage.blocks[0]).toEqual(
       expect.objectContaining({

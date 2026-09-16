@@ -3,6 +3,7 @@ import {
   contentNotFound,
   HTML_SANDBOX,
   MEDIA_SANDBOX,
+  storedContentResponse,
 } from "@/lib/http/content-response";
 import { uuidSchema } from "@/lib/validation/api";
 import { getDraftBySlug, getVersionAsset, getVersionById } from "@/db/queries/drafts";
@@ -16,9 +17,6 @@ import {
   issueBundleSessionGrant,
 } from "@/lib/drafts/bundle-view-access";
 import { resolveDraftView } from "@/lib/drafts/view-access";
-import { etagMatches, parseSingleByteRange } from "@/lib/http/range";
-import { getStorage } from "@/lib/storage";
-import { storageResponseMatches } from "@/lib/http/storage-metadata";
 import { normalizeBundlePath } from "@agentplan/upload-contract";
 
 export const runtime = "nodejs";
@@ -81,8 +79,7 @@ async function resolveBundleFile(req: Request, params: Awaited<Params["params"]>
     : undefined;
   if (logicalPath === (version.entryPath ?? "index.html")) {
     return {
-      draft,
-      version,
+      visibility: draft.visibility,
       storageKey: version.storageKey,
       contentType: "text/html; charset=utf-8",
       contentSha256: version.contentSha256,
@@ -95,8 +92,7 @@ async function resolveBundleFile(req: Request, params: Awaited<Params["params"]>
   const asset = await getVersionAsset(version.id, logicalPath);
   if (!asset) return null;
   return {
-    draft,
-    version,
+    visibility: draft.visibility,
     storageKey: asset.storageKey,
     contentType: asset.contentType,
     contentSha256: asset.contentSha256,
@@ -105,47 +101,6 @@ async function resolveBundleFile(req: Request, params: Awaited<Params["params"]>
     isHtml: false,
     redirectLocation,
   };
-}
-
-function fileHeaders(file: NonNullable<Awaited<ReturnType<typeof resolveBundleFile>>>): Headers {
-  const headers = contentHeaders(file.isHtml ? HTML_SANDBOX : MEDIA_SANDBOX);
-  headers.set("Content-Type", file.contentType);
-  headers.set("Content-Disposition", "inline");
-  headers.set("ETag", `"${file.contentSha256}"`);
-  headers.set(
-    "Cache-Control",
-    file.draft.visibility === "public" ? "public, max-age=0, must-revalidate" : "private, no-store",
-  );
-  if (file.isVideo) headers.set("Accept-Ranges", "bytes");
-  return headers;
-}
-
-async function storageMatches(
-  file: NonNullable<Awaited<ReturnType<typeof resolveBundleFile>>>,
-): Promise<boolean> {
-  const stored = await getStorage().head(file.storageKey);
-  return Boolean(
-    stored &&
-    stored.size === file.sizeBytes &&
-    (!stored.contentType ||
-      stored.contentType.split(";")[0]?.trim().toLowerCase() ===
-        file.contentType.split(";")[0]?.trim().toLowerCase()),
-  );
-}
-
-export async function HEAD(req: Request, { params }: Params): Promise<Response> {
-  const file = await resolveBundleFile(req, await params);
-  if (!file) return contentNotFound();
-  if (file.redirectLocation) {
-    const headers = contentHeaders(file.isHtml ? HTML_SANDBOX : MEDIA_SANDBOX);
-    headers.set("Location", file.redirectLocation);
-    headers.set("Cache-Control", "private, no-store");
-    return new Response(null, { status: 307, headers });
-  }
-  if (!(await storageMatches(file))) return contentNotFound();
-  const headers = fileHeaders(file);
-  headers.set("Content-Length", String(file.sizeBytes));
-  return new Response(null, { status: 200, headers });
 }
 
 export async function GET(req: Request, { params }: Params): Promise<Response> {
@@ -157,36 +112,7 @@ export async function GET(req: Request, { params }: Params): Promise<Response> {
     headers.set("Cache-Control", "private, no-store");
     return new Response(null, { status: 307, headers });
   }
-  const headers = fileHeaders(file);
-  const etag = headers.get("ETag")!;
-  if (etagMatches(req.headers.get("if-none-match"), etag)) {
-    return new Response(null, { status: 304, headers });
-  }
-  let range: { start: number; end: number } | undefined;
-  const rangeHeader = file.isVideo ? req.headers.get("range") : null;
-  if (rangeHeader) {
-    const ifRange = req.headers.get("if-range");
-    if (!ifRange || ifRange === etag) {
-      const parsed = parseSingleByteRange(rangeHeader, file.sizeBytes);
-      if (!parsed.ok) {
-        headers.set("Content-Range", `bytes */${file.sizeBytes}`);
-        return new Response(null, { status: 416, headers });
-      }
-      range = { start: parsed.start, end: parsed.end };
-    }
-  }
-
-  const object = await getStorage().open(file.storageKey, range);
-  if (!object) return contentNotFound();
-  if (!storageResponseMatches(object, file, range)) {
-    await object.body.cancel().catch(() => undefined);
-    return contentNotFound();
-  }
-  if (range) {
-    headers.set("Content-Range", `bytes ${range.start}-${range.end}/${file.sizeBytes}`);
-    headers.set("Content-Length", String(range.end - range.start + 1));
-    return new Response(object.body, { status: 206, headers });
-  }
-  headers.set("Content-Length", String(file.sizeBytes));
-  return new Response(object.body, { status: 200, headers });
+  return storedContentResponse(req, file);
 }
+
+export const HEAD = GET;

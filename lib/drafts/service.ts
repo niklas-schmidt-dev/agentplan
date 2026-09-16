@@ -210,8 +210,6 @@ export async function addVersionToDraft(params: {
   originalFilename?: string;
   source: UploadSource;
   tokenId?: string;
-  auditType?: "draft.version_created" | "draft.version_restored";
-  auditMetadata?: Record<string, unknown>;
   /** Set only when the caller consumed the budget before resource retrieval. */
   rateLimitConsumed?: boolean;
 }): Promise<{ version: DraftVersion; draft: Draft }> {
@@ -303,14 +301,13 @@ export async function addVersionToDraft(params: {
     });
 
     await recordAuditEvent({
-      type: params.auditType ?? "draft.version_created",
+      type: "draft.version_created",
       userId: params.draft.ownerId,
       draftId: params.draft.id,
       tokenId: params.tokenId,
       metadata: {
         versionNumber: result.version.versionNumber,
         sizeBytes: params.bytes.byteLength,
-        ...params.auditMetadata,
       },
     });
     return { version: result.version, draft: result.draft };

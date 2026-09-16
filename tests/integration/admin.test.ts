@@ -11,7 +11,7 @@ process.env.STORAGE_FS_ROOT = storageRoot;
 
 import { and, eq, inArray, sql } from "drizzle-orm";
 import { closeDb, getDb } from "@/db/client";
-import { appSettings, auditEvents, drafts, users } from "@/db/schema";
+import { appSettings, auditEvents, drafts, users, type UserRole } from "@/db/schema";
 import {
   deleteUserCompletely,
   getAdminStats,
@@ -34,23 +34,24 @@ const html = new TextEncoder().encode("<!doctype html><h1>admin</h1>");
 
 const createdUserIds: string[] = [];
 
-async function createUser(): Promise<string> {
+async function createUser(role: UserRole): Promise<string> {
   const id = `admin-test-${randomUUID()}`;
-  await getDb()
+  const [created] = await getDb()
     .insert(users)
     .values({
       id,
       name: "Admin Test User",
       email: `${id}@example.test`,
       emailVerified: true,
+      // The signup trigger requires admin on bootstrap and rewrites later inserts to user.
       role: "admin",
-    });
+    })
+    .returning({ role: users.role });
+  if (created!.role !== role) {
+    await getDb().update(users).set({ role }).where(eq(users.id, id));
+  }
   createdUserIds.push(id);
   return id;
-}
-
-async function makeAdmin(userId: string): Promise<void> {
-  await getDb().update(users).set({ role: "admin" }).where(eq(users.id, userId));
 }
 
 describe.skipIf(!hasDb)("admin tools (integration)", () => {
@@ -63,8 +64,7 @@ describe.skipIf(!hasDb)("admin tools (integration)", () => {
   });
 
   it("signups setting defaults to enabled and round-trips the toggle", async () => {
-    const actorId = await createUser();
-    await makeAdmin(actorId);
+    const actorId = await createUser("admin");
     await getDb().delete(appSettings).where(eq(appSettings.key, "signups_enabled"));
     expect(await getSignupsEnabled()).toBe(true);
 
@@ -77,8 +77,7 @@ describe.skipIf(!hasDb)("admin tools (integration)", () => {
 
   it("evaluateSignup blocks new users while signups are disabled", async () => {
     // Ensure the users table is non-empty so the first-user path can't apply.
-    const actorId = await createUser();
-    await makeAdmin(actorId);
+    const actorId = await createUser("admin");
 
     await setSignupsEnabled({ userId: actorId }, false);
     await expect(evaluateSignup("candidate@example.test")).rejects.toThrow(SignupsDisabledError);
@@ -88,12 +87,14 @@ describe.skipIf(!hasDb)("admin tools (integration)", () => {
   });
 
   it("setUserRole promotes and demotes, but never the actor themselves", async () => {
-    const actorId = await createUser();
-    const targetId = await createUser();
-    await makeAdmin(actorId);
+    const actorId = await createUser("admin");
+    const targetId = await createUser("user");
+
+    let [target] = await getDb().select().from(users).where(eq(users.id, targetId));
+    expect(target?.role).toBe("user");
 
     await setUserRole({ userId: actorId }, targetId, "admin");
-    let [target] = await getDb().select().from(users).where(eq(users.id, targetId));
+    [target] = await getDb().select().from(users).where(eq(users.id, targetId));
     expect(target?.role).toBe("admin");
 
     await setUserRole({ userId: actorId }, targetId, "user");
@@ -107,10 +108,8 @@ describe.skipIf(!hasDb)("admin tools (integration)", () => {
   });
 
   it("serializes concurrent demotions so an admin always remains", async () => {
-    const firstAdminId = await createUser();
-    const secondAdminId = await createUser();
-    await makeAdmin(firstAdminId);
-    await makeAdmin(secondAdminId);
+    const firstAdminId = await createUser("admin");
+    const secondAdminId = await createUser("admin");
 
     const results = await Promise.allSettled([
       setUserRole({ userId: firstAdminId }, secondAdminId, "user"),
@@ -126,9 +125,8 @@ describe.skipIf(!hasDb)("admin tools (integration)", () => {
   });
 
   it("lets a current admin change plans and records the change", async () => {
-    const actorId = await createUser();
-    const targetId = await createUser();
-    await makeAdmin(actorId);
+    const actorId = await createUser("admin");
+    const targetId = await createUser("user");
 
     await setUserPlan({ userId: actorId }, targetId, "unlimited");
     const [target] = await getDb()
@@ -164,9 +162,8 @@ describe.skipIf(!hasDb)("admin tools (integration)", () => {
   });
 
   it("lists and immediately unpublishes individual uploads for moderation", async () => {
-    const actorId = await createUser();
-    const ownerId = await createUser();
-    await makeAdmin(actorId);
+    const actorId = await createUser("admin");
+    const ownerId = await createUser("user");
     const { draft, version } = await createDraftWithFirstVersion({
       ownerId,
       title: "Reported upload",
@@ -193,7 +190,7 @@ describe.skipIf(!hasDb)("admin tools (integration)", () => {
 
     await removeDraftAsAdmin({ userId: actorId }, draft.id);
     expect(await getDraftBySlug(draft.slug)).toBeNull();
-    expect(await getStorage().get(version.storageKey)).not.toBeNull();
+    expect(await getStorage().head(version.storageKey)).not.toBeNull();
 
     const [event] = await getDb()
       .select({
@@ -220,8 +217,7 @@ describe.skipIf(!hasDb)("admin tools (integration)", () => {
       expect.objectContaining({ id: draft.id }),
     );
 
-    const currentAdminId = await createUser();
-    await makeAdmin(currentAdminId);
+    const currentAdminId = await createUser("admin");
     const { draft: stillLive } = await createDraftWithFirstVersion({
       ownerId,
       title: "Must stay live",
@@ -237,9 +233,8 @@ describe.skipIf(!hasDb)("admin tools (integration)", () => {
   });
 
   it("deleteUserCompletely removes the user, their rows, and their stored objects", async () => {
-    const adminId = await createUser();
-    const victimId = await createUser();
-    await makeAdmin(adminId);
+    const adminId = await createUser("admin");
+    const victimId = await createUser("user");
     const { version } = await createDraftWithFirstVersion({
       ownerId: victimId,
       title: "Doomed draft",
@@ -248,7 +243,7 @@ describe.skipIf(!hasDb)("admin tools (integration)", () => {
       source: "browser",
     });
     await createToken({ userId: victimId, name: "doomed", scopes: ["drafts:write"] });
-    expect(await getStorage().get(version.storageKey)).not.toBeNull();
+    expect(await getStorage().head(version.storageKey)).not.toBeNull();
 
     await expect(deleteUserCompletely({ userId: adminId }, adminId)).rejects.toThrow(/own account/);
 
@@ -257,16 +252,15 @@ describe.skipIf(!hasDb)("admin tools (integration)", () => {
     expect(gone).toBeUndefined();
     const ownedDrafts = await getDb().select().from(drafts).where(eq(drafts.ownerId, victimId));
     expect(ownedDrafts).toHaveLength(0);
-    expect(await getStorage().get(version.storageKey)).toBeNull();
+    expect(await getStorage().head(version.storageKey)).toBeNull();
 
     // Deleting a user that no longer exists is a no-op, not an error.
     await expect(deleteUserCompletely({ userId: adminId }, victimId)).resolves.toBeUndefined();
   });
 
   it("serializes an in-flight upload with account deletion so no object is orphaned", async () => {
-    const adminId = await createUser();
-    const victimId = await createUser();
-    await makeAdmin(adminId);
+    const adminId = await createUser("admin");
+    const victimId = await createUser("user");
     const storage = getStorage();
     const realPut = storage.put.bind(storage);
     let releasePut!: () => void;
@@ -302,7 +296,7 @@ describe.skipIf(!hasDb)("admin tools (integration)", () => {
 
       releasePut();
       const [{ version }] = await Promise.all([upload, deletion]);
-      expect(await storage.get(version.storageKey)).toBeNull();
+      expect(await storage.head(version.storageKey)).toBeNull();
       const [gone] = await getDb().select().from(users).where(eq(users.id, victimId));
       expect(gone).toBeUndefined();
     } finally {
@@ -312,10 +306,8 @@ describe.skipIf(!hasDb)("admin tools (integration)", () => {
   });
 
   it("rechecks the actor's current role before deleting", async () => {
-    const actorId = await createUser();
-    const targetId = await createUser();
-    await makeAdmin(actorId);
-    await makeAdmin(targetId);
+    const actorId = await createUser("admin");
+    const targetId = await createUser("admin");
 
     await setUserRole({ userId: actorId }, targetId, "user");
     await expect(deleteUserCompletely({ userId: targetId }, actorId)).rejects.toThrow(
@@ -331,9 +323,8 @@ describe.skipIf(!hasDb)("admin tools (integration)", () => {
   });
 
   it("queues partial storage cleanup without leaving a live user with broken drafts", async () => {
-    const adminId = await createUser();
-    const victimId = await createUser();
-    await makeAdmin(adminId);
+    const adminId = await createUser("admin");
+    const victimId = await createUser("user");
     const { draft, version: firstVersion } = await createDraftWithFirstVersion({
       ownerId: victimId,
       title: "Partially doomed draft",
@@ -391,8 +382,8 @@ describe.skipIf(!hasDb)("admin tools (integration)", () => {
     await expect(purgePendingUserDeletionObjects()).resolves.toEqual(
       expect.objectContaining({ purged: expect.any(Number), failed: 0 }),
     );
-    expect(await storage.get(firstVersion.storageKey)).toBeNull();
-    expect(await storage.get(secondVersion.storageKey)).toBeNull();
+    expect(await storage.head(firstVersion.storageKey)).toBeNull();
+    expect(await storage.head(secondVersion.storageKey)).toBeNull();
     const [completed] = await getDb()
       .select({
         eventType: auditEvents.eventType,
@@ -408,10 +399,8 @@ describe.skipIf(!hasDb)("admin tools (integration)", () => {
   });
 
   it("rejects signup changes from a demoted admin's stale session", async () => {
-    const currentAdminId = await createUser();
-    const staleAdminId = await createUser();
-    await makeAdmin(currentAdminId);
-    await makeAdmin(staleAdminId);
+    const currentAdminId = await createUser("admin");
+    const staleAdminId = await createUser("admin");
 
     await setUserRole({ userId: currentAdminId }, staleAdminId, "user");
     await expect(setSignupsEnabled({ userId: staleAdminId }, false)).rejects.toThrow(
@@ -421,7 +410,7 @@ describe.skipIf(!hasDb)("admin tools (integration)", () => {
   });
 
   it("stats and per-user usage reflect created data", async () => {
-    const userId = await createUser();
+    const userId = await createUser("user");
     await createDraftWithFirstVersion({
       ownerId: userId,
       title: "Stats draft",

@@ -5,7 +5,7 @@ import { and, eq, inArray, sql } from "drizzle-orm";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { closeDb, getDb } from "@/db/client";
 import { drafts, draftVersions, storageDeletionJobs, uploadIntents, users } from "@/db/schema";
-import { getDraftBySlug, getDraftForOwner, listDraftsForOwner } from "@/db/queries/drafts";
+import { getDraftBySlug, getDraftForOwner, listDraftsPageForOwner } from "@/db/queries/drafts";
 import { purgeDeletedDrafts } from "@/lib/drafts/purge";
 import {
   addVersionToDraft,
@@ -99,7 +99,9 @@ describe.skipIf(!process.env.DATABASE_URL)("draft auto-expiry", () => {
     await expire(draft.id);
     expect(await getDraftBySlug(draft.slug)).toBeNull();
     expect(await getDraftForOwner(draft.id, ownerId)).toBeNull();
-    expect((await listDraftsForOwner(ownerId)).some((item) => item.id === draft.id)).toBe(false);
+    expect(
+      (await listDraftsPageForOwner(ownerId)).drafts.some((item) => item.id === draft.id),
+    ).toBe(false);
     expect((await getUserStorageUsage(ownerId)).committedBytes).toBe(
       usage.committedBytes - bytes.length,
     );

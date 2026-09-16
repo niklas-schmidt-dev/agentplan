@@ -1,5 +1,5 @@
 import { constants, createReadStream } from "node:fs";
-import { copyFile, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, rm, stat, writeFile } from "node:fs/promises";
 import { Readable } from "node:stream";
 import path from "node:path";
 import type { ObjectStorage } from "./index";
@@ -28,15 +28,6 @@ export class FsStorage implements ObjectStorage {
     const filePath = this.pathFor(key);
     await mkdir(path.dirname(filePath), { recursive: true });
     await writeFile(filePath, body, { flag: "wx" });
-  }
-
-  async get(key: string): Promise<Uint8Array | null> {
-    try {
-      return new Uint8Array(await readFile(this.pathFor(key)));
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
-      throw error;
-    }
   }
 
   async createUploadTarget(input: {

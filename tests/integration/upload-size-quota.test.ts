@@ -15,7 +15,7 @@ import { POST as completeIntentRoute } from "@/app/api/v1/uploads/intents/[id]/c
 import { GET as getContent } from "@/app/p/[slug]/content/route";
 import { closeDb, getDb } from "@/db/client";
 import { draftVersions, users, type UserPlan } from "@/db/schema";
-import { listDraftsForOwner } from "@/db/queries/drafts";
+import { listDraftsPageForOwner } from "@/db/queries/drafts";
 import { listDraftsForAdmin } from "@/lib/admin/service";
 import { getUserStorageUsage } from "@/lib/limits/enforce";
 import { QuotaExceededError } from "@/lib/limits/errors";
@@ -181,7 +181,7 @@ describe.skipIf(!hasDb)("upload sizes governed by storage quota", () => {
       .update(draftVersions)
       .set({ sizeBytes: large, totalSizeBytes: large })
       .where(eq(draftVersions.id, completed.version.id));
-    expect((await listDraftsForOwner(userId))[0]?.currentVersion?.sizeBytes).toBe(large);
+    expect((await listDraftsPageForOwner(userId)).drafts[0]?.currentVersion?.sizeBytes).toBe(large);
     expect(
       (await listDraftsForAdmin({ ownerId: userId })).drafts[0]?.currentVersion?.sizeBytes,
     ).toBe(large);

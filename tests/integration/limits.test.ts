@@ -340,7 +340,7 @@ describe.skipIf(!hasDb)("abuse limits (integration)", () => {
       scopes: ["drafts:write"],
     });
     const storage = getStorage();
-    const getSpy = vi.spyOn(storage, "get");
+    const copySpy = vi.spyOn(storage, "copy");
 
     try {
       const response = await restoreRoute(
@@ -351,9 +351,9 @@ describe.skipIf(!hasDb)("abuse limits (integration)", () => {
         { params: Promise.resolve({ id: draft.id, versionId: version.id }) },
       );
       expect(response.status).toBe(429);
-      expect(getSpy).not.toHaveBeenCalled();
+      expect(copySpy).not.toHaveBeenCalled();
     } finally {
-      getSpy.mockRestore();
+      copySpy.mockRestore();
     }
   });
 

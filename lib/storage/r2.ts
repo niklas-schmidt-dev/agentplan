@@ -53,19 +53,6 @@ export class R2Storage implements ObjectStorage {
     );
   }
 
-  async get(key: string): Promise<Uint8Array | null> {
-    try {
-      const result = await this.getClient().send(
-        new GetObjectCommand({ Bucket: this.bucket, Key: key }),
-      );
-      if (!result.Body) return null;
-      return await result.Body.transformToByteArray();
-    } catch (error) {
-      if (error instanceof Error && error.name === "NoSuchKey") return null;
-      throw error;
-    }
-  }
-
   async createUploadTarget(input: {
     key: string;
     contentType: string;
