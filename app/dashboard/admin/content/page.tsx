@@ -151,7 +151,7 @@ export default async function AdminContentPage({
           <ul className="flex flex-col divide-y divide-edge rounded-md border border-edge bg-surface">
             {result.drafts.map((draft) => (
               <li key={draft.id} className="flex flex-wrap items-center gap-x-4 gap-y-3 px-4 py-3">
-                <div className="min-w-0 flex-1">
+                <div className="min-w-0 flex-1 basis-56">
                   <p className="truncate text-sm font-medium text-ink">{draft.title}</p>
                   <p className="truncate font-mono text-xs text-ink-faint">
                     <span className="mr-1 rounded-sm border border-edge px-1 py-0.5 text-ink-muted">
@@ -180,7 +180,7 @@ export default async function AdminContentPage({
                     /p/{draft.slug}
                   </code>
                 </div>
-                <div className="flex items-center gap-2">
+                <div className="flex flex-wrap items-center gap-2">
                   {draft.visibility === "public" && !draft.ownerBlocked ? (
                     <a
                       href={`/p/${encodeURIComponent(draft.slug)}`}

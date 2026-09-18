@@ -18,7 +18,7 @@ import {
 } from "@agentplan/upload-contract";
 
 const inputClass =
-  "rounded border border-edge bg-surface px-3 py-2 font-mono text-sm text-ink placeholder:text-ink-faint";
+  "min-w-0 max-w-full rounded border border-edge bg-surface px-3 py-2 font-mono text-sm text-ink placeholder:text-ink-faint";
 
 /** Carries the public API error code so the form can react to quota rejections. */
 class UploadRequestError extends Error {
