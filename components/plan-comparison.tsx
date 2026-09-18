@@ -69,16 +69,76 @@ const rows: Array<{ label: string; cell: (limits: EffectiveLimits) => string }> 
   { label: "api tokens", cell: (limits) => limitCell(limits.maxActiveTokens) },
 ];
 
-/**
- * A spec sheet, not a pricing grid: one hairline table, big numerals, the
- * paid column marked in lime. Server-renderable so it works on the public
- * pricing page and inside the signed-in plan page alike.
- */
-export function PlanComparison({ columns }: { columns: PlanColumn[] }) {
+function valueClass(value: string, highlighted: boolean): string {
+  if (EMPHASISED.has(value) && highlighted) return "text-lime";
+  if (highlighted) return "text-ink";
+  if (value === "—") return "text-ink-faint";
+  return "text-ink-muted";
+}
+
+function ColumnHeading({ column }: { column: PlanColumn }) {
+  return (
+    <>
+      <span
+        className={`font-mono text-xs uppercase tracking-[0.2em] ${
+          column.highlighted ? "text-lime" : "text-ink-faint"
+        }`}
+      >
+        {column.name}
+      </span>
+      <span className="font-mono text-3xl font-medium tabular-nums tracking-tight text-ink sm:text-4xl">
+        {column.price}
+      </span>
+    </>
+  );
+}
+
+/** Phone layout: one stacked card per plan, so nothing scrolls sideways. */
+function PlanCards({ columns }: { columns: PlanColumn[] }) {
+  return (
+    <div className="flex flex-col gap-8 sm:hidden">
+      {columns.map((column) => (
+        <section
+          key={column.key}
+          aria-label={`${column.name} plan`}
+          className={`flex flex-col gap-4 border-t-2 pt-4 ${
+            column.highlighted ? "border-lime" : "border-edge"
+          }`}
+        >
+          <div className="flex flex-col gap-2">
+            <ColumnHeading column={column} />
+          </div>
+          <dl className="divide-y divide-edge border-y border-edge">
+            {rows.map((row) => {
+              const value = row.cell(column.limits);
+              return (
+                <div key={row.label} className="flex items-baseline justify-between gap-4 py-3">
+                  <dt className="font-mono text-xs text-ink-faint">{row.label}</dt>
+                  <dd
+                    className={`text-right font-mono text-sm tabular-nums ${valueClass(
+                      value,
+                      column.highlighted,
+                    )}`}
+                  >
+                    {value}
+                  </dd>
+                </div>
+              );
+            })}
+          </dl>
+          {column.action ? <div className="min-w-0">{column.action}</div> : null}
+        </section>
+      ))}
+    </div>
+  );
+}
+
+/** Tablet and up: one hairline table with the plans side by side. */
+function PlanTable({ columns }: { columns: PlanColumn[] }) {
   const template = `minmax(8rem, 11rem) repeat(${columns.length}, minmax(0, 1fr))`;
   return (
-    <div className="overflow-x-auto">
-      <div className="min-w-[36rem]" role="table" aria-label="Plan comparison">
+    <div className="hidden overflow-x-auto sm:block">
+      <div className="min-w-[30rem]" role="table" aria-label="Plan comparison">
         <div
           role="row"
           className="grid items-end gap-x-6"
@@ -95,16 +155,7 @@ export function PlanComparison({ columns }: { columns: PlanColumn[] }) {
                 column.highlighted ? "border-lime" : "border-edge"
               }`}
             >
-              <span
-                className={`font-mono text-xs uppercase tracking-[0.2em] ${
-                  column.highlighted ? "text-lime" : "text-ink-faint"
-                }`}
-              >
-                {column.name}
-              </span>
-              <span className="font-mono text-3xl font-medium tabular-nums tracking-tight text-ink sm:text-4xl">
-                {column.price}
-              </span>
+              <ColumnHeading column={column} />
             </div>
           ))}
         </div>
@@ -124,15 +175,10 @@ export function PlanComparison({ columns }: { columns: PlanColumn[] }) {
                 <span
                   key={column.key}
                   role="cell"
-                  className={`font-mono text-sm tabular-nums ${
-                    EMPHASISED.has(value) && column.highlighted
-                      ? "text-lime"
-                      : column.highlighted
-                        ? "text-ink"
-                        : value === "—"
-                          ? "text-ink-faint"
-                          : "text-ink-muted"
-                  }`}
+                  className={`font-mono text-sm tabular-nums ${valueClass(
+                    value,
+                    column.highlighted,
+                  )}`}
                 >
                   {value}
                 </span>
@@ -158,5 +204,20 @@ export function PlanComparison({ columns }: { columns: PlanColumn[] }) {
         ) : null}
       </div>
     </div>
+  );
+}
+
+/**
+ * A spec sheet, not a pricing grid: one hairline table, big numerals, the
+ * paid column marked in lime. Server-renderable so it works on the public
+ * pricing page and inside the signed-in plan page alike. Phones get the
+ * same data as stacked cards instead of a sideways-scrolling table.
+ */
+export function PlanComparison({ columns }: { columns: PlanColumn[] }) {
+  return (
+    <>
+      <PlanCards columns={columns} />
+      <PlanTable columns={columns} />
+    </>
   );
 }

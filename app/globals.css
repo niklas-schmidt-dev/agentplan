@@ -61,3 +61,14 @@
     }
   }
 }
+
+/* iOS Safari zooms the whole page when a focused field renders text below
+   16px. Kept outside the cascade layers so it wins over text-xs/text-sm
+   utilities on phones only. */
+@media (max-width: 39.9375rem) {
+  input:not([type="checkbox"]):not([type="radio"]):not([type="hidden"]):not([type="file"]),
+  select,
+  textarea {
+    font-size: 1rem;
+  }
+}

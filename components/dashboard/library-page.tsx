@@ -295,9 +295,10 @@ export async function LibraryPage({
                 className="flex flex-col divide-y divide-edge rounded-md border border-edge bg-surface"
               >
                 {drafts.map((draft) => (
-                  <li key={draft.id} className="flex flex-wrap items-center gap-x-4 gap-y-2 p-4">
+                  <li key={draft.id} className="flex flex-wrap items-center gap-x-4 gap-y-3 p-4">
                     <DraftCheckbox id={draft.id} title={draft.title} />
-                    <div className="min-w-0 flex-1">
+                    {/* basis keeps the text column readable; actions wrap below it on phones. */}
+                    <div className="min-w-0 flex-1 basis-48">
                       <Link
                         href={`/dashboard/drafts/${draft.id}`}
                         className="block truncate font-medium text-ink transition-colors hover:text-lime"
@@ -343,7 +344,7 @@ export async function LibraryPage({
                         </Suspense>
                       </p>
                     </div>
-                    <div className="flex items-center gap-2">
+                    <div className="flex w-full flex-wrap items-center gap-2 pl-8 sm:w-auto sm:pl-0">
                       <CopyButton value={draftUrl(draft.slug)} />
                       <a
                         href={`/p/${draft.slug}`}
