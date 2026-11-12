@@ -35,6 +35,11 @@ export function draftVersionPath(slug: string, versionId?: string): string {
   return versionId ? `${base}/v/${encodeURIComponent(versionId)}` : base;
 }
 
+/** Opens one HTML version top-level and starts the browser's print dialog for "Save as PDF". */
+export function draftPrintPath(slug: string, versionId: string): string {
+  return `/p/${encodeURIComponent(slug)}/content?version=${encodeURIComponent(versionId)}&print=1`;
+}
+
 export function draftVersionUrl(slug: string, versionId: string): string {
   return `${appUrl()}${draftVersionPath(slug, versionId)}`;
 }

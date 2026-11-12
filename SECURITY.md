@@ -19,7 +19,11 @@ The core security invariants are:
    with `allow-scripts allow-forms allow-modals allow-popups` — never
    `allow-same-origin` or any `allow-top-navigation` variant. Uploaded scripts may
    run inside their own document, but cannot read AgentPlan cookies, touch the
-   parent DOM, or navigate the parent page.
+   parent DOM, or navigate the parent page. The response's CSP `sandbox` carries
+   the same flags, so a top-level visit, including the `?print=1` PDF view, also
+   runs in an opaque origin. That view only appends a print trigger inside the
+   sandbox. Browsers may print the page URL in PDF footers, so print views of
+   protected HTML folders carry five-minute access grants instead of 12-hour ones.
 2. **All content lives in private object storage** (private Vercel Blob or a private
    Cloudflare R2 bucket), regardless of draft visibility. Visibility is an
    application-level authorization decision made server-side on every request.

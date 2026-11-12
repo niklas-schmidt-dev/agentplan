@@ -16,7 +16,7 @@ import { isBillingConfigured } from "@/lib/billing/config";
 import { limitsForEffectivePlan } from "@/lib/billing/plan";
 import { getEffectivePlanForUser } from "@/lib/billing/service";
 import { formatBytes, formatRelativeTime } from "@/lib/format";
-import { draftUrl, draftVersionPath, draftVersionUrl } from "@/lib/urls";
+import { draftPrintPath, draftUrl, draftVersionPath, draftVersionUrl } from "@/lib/urls";
 import { uuidSchema } from "@/lib/validation/api";
 import Link from "next/link";
 import { getGroupPathsForOwner } from "@/db/queries/groups";
@@ -233,6 +233,17 @@ export default async function DraftDetailPage({
                 >
                   view ↗
                 </a>
+                {draft.kind === "html" ? (
+                  <a
+                    href={draftPrintPath(draft.slug, version.id)}
+                    target="_blank"
+                    rel="noreferrer"
+                    title="Opens the print dialog. Choose “Save as PDF” as the destination."
+                    className="rounded border border-edge px-2 py-1 text-ink-muted transition-colors hover:border-lime hover:text-lime"
+                  >
+                    save as pdf ↗
+                  </a>
+                ) : null}
                 <CopyButton
                   value={draftVersionUrl(draft.slug, version.id)}
                   label="copy version link"

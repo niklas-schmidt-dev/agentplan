@@ -304,6 +304,12 @@ returns to the current version. The dashboard offers **view**, **copy version
 link**, and **restore as current** for past versions. Restore creates another
 version; it does not change existing version links.
 
+HTML versions also offer **save as pdf**. It opens that version in a new tab
+(`/p/<slug>/content?version=<version-UUID>&print=1`) and starts the browser's
+print dialog. Choose **Save as PDF** as the destination. Background colors are
+kept, and relative images in HTML folders load as usual. The PDF view uses the
+same access rules as the viewer.
+
 Version links use the draft's current visibility, password, expiry, and moderation rules.
 Changing a public draft to protected visibility rotates its slug and invalidates
 previous links, including version links. Saved versions are never automatically

@@ -6,6 +6,34 @@ import { storageResponseMatches } from "./storage-metadata";
 export const HTML_SANDBOX = "sandbox allow-scripts allow-forms allow-modals allow-popups";
 export const MEDIA_SANDBOX = "sandbox";
 
+/**
+ * `?print=1` on an HTML document opens the browser's print dialog, whose
+ * "Save as PDF" destination produces the PDF. The snippet is appended after the
+ * uploaded bytes and runs inside the same CSP sandbox, so it gains nothing the
+ * upload's own scripts could not do. Exact color adjustment keeps backgrounds,
+ * which dark or tinted pages need to stay legible. The delay after `load` lets
+ * entrance animations and script-rendered charts settle before the snapshot.
+ */
+export const PRINT_QUERY_PARAM = "print";
+const PRINT_SUFFIX = new TextEncoder().encode(
+  "<style>:root{-webkit-print-color-adjust:exact;print-color-adjust:exact}</style>" +
+    '<script>addEventListener("load",function(){setTimeout(function(){print()},1000)},{once:true})</script>',
+);
+
+export function isPrintRequest(req: Request): boolean {
+  return new URL(req.url).searchParams.get(PRINT_QUERY_PARAM) === "1";
+}
+
+function appendBytes(body: ReadableStream<Uint8Array>, suffix: Uint8Array) {
+  return body.pipeThrough(
+    new TransformStream<Uint8Array, Uint8Array>({
+      flush(controller) {
+        controller.enqueue(suffix);
+      },
+    }),
+  );
+}
+
 export function contentHeaders(contentSecurityPolicy: string): Headers {
   return new Headers({
     "X-Content-Type-Options": "nosniff",
@@ -36,11 +64,13 @@ export async function storedContentResponse(
     isHtml: boolean;
     isVideo: boolean;
   },
+  options: { print?: boolean } = {},
 ): Promise<Response> {
+  const suffix = file.isHtml && options.print ? PRINT_SUFFIX : null;
   const headers = contentHeaders(file.isHtml ? HTML_SANDBOX : MEDIA_SANDBOX);
   headers.set("Content-Type", file.contentType);
   headers.set("Content-Disposition", "inline");
-  const etag = `"${file.contentSha256}"`;
+  const etag = suffix ? `"${file.contentSha256}-print"` : `"${file.contentSha256}"`;
   headers.set("ETag", etag);
   headers.set(
     "Cache-Control",
@@ -51,7 +81,7 @@ export async function storedContentResponse(
   if (req.method === "HEAD") {
     const metadata = await getStorage().head(file.storageKey);
     if (!metadata || !storageResponseMatches(metadata, file)) return contentNotFound();
-    headers.set("Content-Length", String(file.sizeBytes));
+    headers.set("Content-Length", String(file.sizeBytes + (suffix?.byteLength ?? 0)));
     return new Response(null, { status: 200, headers });
   }
   if (etagMatches(req.headers.get("if-none-match"), etag)) {
@@ -82,6 +112,10 @@ export async function storedContentResponse(
     headers.set("Content-Range", `bytes ${range.start}-${range.end}/${file.sizeBytes}`);
     headers.set("Content-Length", String(range.end - range.start + 1));
     return new Response(object.body, { status: 206, headers });
+  }
+  if (suffix) {
+    headers.set("Content-Length", String(file.sizeBytes + suffix.byteLength));
+    return new Response(appendBytes(object.body, suffix), { status: 200, headers });
   }
   headers.set("Content-Length", String(file.sizeBytes));
   return new Response(object.body, { status: 200, headers });

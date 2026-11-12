@@ -103,6 +103,27 @@ test("uploads and renders a version-pinned HTML bundle", async ({ page, browser 
     )
     .toBe(1);
 
+  // The PDF view prints the entry document top-level and still loads relative assets.
+  const printView = await page.context().newPage();
+  await printView.addInitScript(() => {
+    window.print = () => {
+      document.documentElement.dataset.printed = "1";
+    };
+  });
+  await printView.goto(
+    `/p/${completed.draft.slug}/content?version=${completed.version.id}&print=1`,
+  );
+  expect(printView.url()).toMatch(/\/__ap\/[^/]+\/nested\/index\.html\?print=1$/);
+  await expect(printView.locator("#hero")).toHaveJSProperty("naturalWidth", 1);
+  await expect(printView.locator("html")).toHaveAttribute("data-printed", "1");
+  // PDF footers can show this URL, so its grant must expire within minutes.
+  const grant = decodeURIComponent(/\/__ap\/([^/]+)\//.exec(printView.url())![1]!);
+  const { expiresAt } = JSON.parse(
+    Buffer.from(grant.slice(0, grant.lastIndexOf(".")), "base64url").toString("utf8"),
+  ) as { expiresAt: number };
+  expect(expiresAt - Date.now() / 1000).toBeLessThanOrEqual(5 * 60);
+  await printView.close();
+
   // The shareable wrapper also grants access to all relative assets of an old bundle.
   const update = await page.request.post(`/api/v1/drafts/${completed.draft.id}/versions`, {
     headers: { origin },

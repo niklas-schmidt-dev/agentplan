@@ -5,6 +5,12 @@ import { sessions, users, type Draft } from "@/db/schema";
 
 export const BUNDLE_VIEW_PATH_PREFIX = "__ap";
 const DEFAULT_TTL_SECONDS = 12 * 60 * 60;
+/**
+ * Browsers may print the document URL, including this grant, in PDF footers.
+ * The print view loads its assets within seconds, so a short grant limits what
+ * a shared PDF can expose.
+ */
+export const PRINT_VIEW_GRANT_TTL_SECONDS = 5 * 60;
 
 type BundleViewGrantPayload =
   | {

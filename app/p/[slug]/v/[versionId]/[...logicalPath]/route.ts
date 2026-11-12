@@ -2,7 +2,9 @@ import {
   contentHeaders,
   contentNotFound,
   HTML_SANDBOX,
+  isPrintRequest,
   MEDIA_SANDBOX,
+  PRINT_QUERY_PARAM,
   storedContentResponse,
 } from "@/lib/http/content-response";
 import { uuidSchema } from "@/lib/validation/api";
@@ -15,6 +17,7 @@ import {
   bundleVersionPath,
   issueBundlePasswordGrant,
   issueBundleSessionGrant,
+  PRINT_VIEW_GRANT_TTL_SECONDS,
 } from "@/lib/drafts/bundle-view-access";
 import { resolveDraftView } from "@/lib/drafts/view-access";
 import { normalizeBundlePath } from "@agentplan/upload-contract";
@@ -37,6 +40,7 @@ async function resolveBundleFile(req: Request, params: Awaited<Params["params"]>
     segments[0] === BUNDLE_VIEW_PATH_PREFIX && segments.length >= 3 ? segments[1]! : null;
   const logicalSegments = grantToken ? segments.slice(2) : segments;
   let redirectGrant: string | undefined;
+  const ttlSeconds = isPrintRequest(req) ? PRINT_VIEW_GRANT_TTL_SECONDS : undefined;
   if (draft.visibility !== "public") {
     if (grantToken) {
       if (!(await authorizeBundleViewGrant(grantToken, draft, version.id))) return null;
@@ -53,12 +57,14 @@ async function resolveBundleFile(req: Request, params: Awaited<Params["params"]>
           draftId: draft.id,
           versionId: version.id,
           sessionId: session.sessionId,
+          ttlSeconds,
         });
       } else if (draft.visibility === "password" && draft.passwordHash) {
         redirectGrant = issueBundlePasswordGrant({
           draftId: draft.id,
           versionId: version.id,
           passwordHash: draft.passwordHash,
+          ttlSeconds,
         });
       }
     }
@@ -106,13 +112,18 @@ async function resolveBundleFile(req: Request, params: Awaited<Params["params"]>
 export async function GET(req: Request, { params }: Params): Promise<Response> {
   const file = await resolveBundleFile(req, await params);
   if (!file) return contentNotFound();
+  // Only the entry document is printable; asset requests ignore the flag.
+  const print = file.isHtml && isPrintRequest(req);
   if (file.redirectLocation) {
     const headers = contentHeaders(file.isHtml ? HTML_SANDBOX : MEDIA_SANDBOX);
-    headers.set("Location", file.redirectLocation);
+    headers.set(
+      "Location",
+      print ? `${file.redirectLocation}?${PRINT_QUERY_PARAM}=1` : file.redirectLocation,
+    );
     headers.set("Cache-Control", "private, no-store");
     return new Response(null, { status: 307, headers });
   }
-  return storedContentResponse(req, file);
+  return storedContentResponse(req, file, { print });
 }
 
 export const HEAD = GET;
