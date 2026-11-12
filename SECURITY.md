@@ -22,7 +22,8 @@ The core security invariants are:
    parent DOM, or navigate the parent page. The response's CSP `sandbox` carries
    the same flags, so a top-level visit, including the `?print=1` PDF view, also
    runs in an opaque origin. That view only appends a print trigger inside the
-   sandbox.
+   sandbox. Browsers may print the page URL in PDF footers, so print views of
+   protected HTML folders carry five-minute access grants instead of 12-hour ones.
 2. **All content lives in private object storage** (private Vercel Blob or a private
    Cloudflare R2 bucket), regardless of draft visibility. Visibility is an
    application-level authorization decision made server-side on every request.

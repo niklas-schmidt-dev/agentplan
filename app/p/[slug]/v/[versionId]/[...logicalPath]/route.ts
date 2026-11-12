@@ -17,6 +17,7 @@ import {
   bundleVersionPath,
   issueBundlePasswordGrant,
   issueBundleSessionGrant,
+  PRINT_VIEW_GRANT_TTL_SECONDS,
 } from "@/lib/drafts/bundle-view-access";
 import { resolveDraftView } from "@/lib/drafts/view-access";
 import { normalizeBundlePath } from "@agentplan/upload-contract";
@@ -39,6 +40,7 @@ async function resolveBundleFile(req: Request, params: Awaited<Params["params"]>
     segments[0] === BUNDLE_VIEW_PATH_PREFIX && segments.length >= 3 ? segments[1]! : null;
   const logicalSegments = grantToken ? segments.slice(2) : segments;
   let redirectGrant: string | undefined;
+  const ttlSeconds = isPrintRequest(req) ? PRINT_VIEW_GRANT_TTL_SECONDS : undefined;
   if (draft.visibility !== "public") {
     if (grantToken) {
       if (!(await authorizeBundleViewGrant(grantToken, draft, version.id))) return null;
@@ -55,12 +57,14 @@ async function resolveBundleFile(req: Request, params: Awaited<Params["params"]>
           draftId: draft.id,
           versionId: version.id,
           sessionId: session.sessionId,
+          ttlSeconds,
         });
       } else if (draft.visibility === "password" && draft.passwordHash) {
         redirectGrant = issueBundlePasswordGrant({
           draftId: draft.id,
           versionId: version.id,
           passwordHash: draft.passwordHash,
+          ttlSeconds,
         });
       }
     }

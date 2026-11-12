@@ -14,6 +14,7 @@ import {
   bundleVersionPath,
   issueBundlePasswordGrant,
   issueBundleSessionGrant,
+  PRINT_VIEW_GRANT_TTL_SECONDS,
 } from "@/lib/drafts/bundle-view-access";
 import { resolveDraftView } from "@/lib/drafts/view-access";
 
@@ -63,20 +64,24 @@ function bundleEntryLocation(
   version: NonNullable<Awaited<ReturnType<typeof getVersionById>>>,
   sessionId: string | null,
   userId: string | null,
+  print: boolean,
 ): string {
   let grant: string | undefined;
+  const ttlSeconds = print ? PRINT_VIEW_GRANT_TTL_SECONDS : undefined;
   if (draft.visibility !== "public") {
     if (userId === draft.ownerId && sessionId) {
       grant = issueBundleSessionGrant({
         draftId: draft.id,
         versionId: version.id,
         sessionId,
+        ttlSeconds,
       });
     } else if (draft.visibility === "password" && draft.passwordHash) {
       grant = issueBundlePasswordGrant({
         draftId: draft.id,
         versionId: version.id,
         passwordHash: draft.passwordHash,
+        ttlSeconds,
       });
     }
   }
@@ -98,7 +103,14 @@ export async function GET(req: Request, { params }: Params): Promise<Response> {
   const print = isPrintRequest(req);
   if (version.isBundle) {
     const headers = contentHeaders(HTML_SANDBOX);
-    const location = bundleEntryLocation(slug, draft, version, resolved.sessionId, resolved.userId);
+    const location = bundleEntryLocation(
+      slug,
+      draft,
+      version,
+      resolved.sessionId,
+      resolved.userId,
+      print,
+    );
     headers.set("Location", print ? `${location}?${PRINT_QUERY_PARAM}=1` : location);
     headers.set("Cache-Control", "private, no-store");
     return new Response(null, { status: 307, headers });
