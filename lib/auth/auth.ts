@@ -120,11 +120,18 @@ function createAuth() {
               // Email sign-up turns a 403 from this hook into Better Auth's
               // generic duplicate response. Operator policy failures must stay
               // visible, so they use 422; blocked identities stay generic.
+              // The OAuth callback redirects only errors that carry a code.
               if (error instanceof SignupsDisabledError) {
-                throw new APIError("UNPROCESSABLE_ENTITY", { message: error.message });
+                throw new APIError("UNPROCESSABLE_ENTITY", {
+                  message: error.message,
+                  code: "SIGNUPS_DISABLED",
+                });
               }
               if (error instanceof BootstrapAuthorizationError) {
-                throw new APIError("UNPROCESSABLE_ENTITY", { message: error.message });
+                throw new APIError("UNPROCESSABLE_ENTITY", {
+                  message: error.message,
+                  code: "BOOTSTRAP_RESTRICTED",
+                });
               }
               if (error instanceof IdentityBlockedError) {
                 throw new APIError("FORBIDDEN", {

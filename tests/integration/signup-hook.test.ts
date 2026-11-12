@@ -75,9 +75,10 @@ describe.skipIf(!hasDb)("better-auth signup hook (integration)", () => {
         emailVerified: true,
       }),
     ).rejects.toThrow();
-    await expect(signUp(`unauthorized-${randomUUID()}@example.test`)).rejects.toThrow(
-      /restricted/i,
-    );
+    await expect(signUp(`unauthorized-${randomUUID()}@example.test`)).rejects.toMatchObject({
+      statusCode: 422,
+      body: { code: "BOOTSTRAP_RESTRICTED", message: expect.stringMatching(/restricted/i) },
+    });
     const results = await Promise.allSettled([signUp(first), signUp(second)]);
     expect(results[0]?.status).toBe("fulfilled");
     if (!(await roleOf(second))) await signUp(second);
@@ -187,7 +188,10 @@ describe.skipIf(!hasDb)("better-auth signup hook (integration)", () => {
 
     await setSignupsEnabled({ userId: admin!.id }, false);
     const email = `hook-${randomUUID()}@example.test`;
-    await expect(signUp(email)).rejects.toThrow(/disabled/i);
+    await expect(signUp(email)).rejects.toMatchObject({
+      statusCode: 422,
+      body: { code: "SIGNUPS_DISABLED", message: expect.stringMatching(/disabled/i) },
+    });
     expect(await roleOf(email)).toBeUndefined();
 
     // Re-enabling lets the same address through.
