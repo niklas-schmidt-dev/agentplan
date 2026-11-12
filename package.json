@@ -59,13 +59,14 @@
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
     "resend": "^6.18.0",
-    "sharp": "0.35.4",
+    "sharp": "0.35.5",
     "standardwebhooks": "^1.1.1",
-    "zod": "^4.4.3"
+    "zod": "^4.6.6"
   },
   "overrides": {
     "postcss": "8.5.28",
-    "sharp": "0.35.4"
+    "sharp": "0.35.5",
+    "zod": "$zod"
   },
   "devDependencies": {
     "@playwright/test": "^1.61.1",

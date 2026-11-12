@@ -117,11 +117,14 @@ function createAuth() {
               const { role } = await evaluateSignup(user.email);
               return { data: { ...user, role } };
             } catch (error) {
+              // Email sign-up turns a 403 from this hook into Better Auth's
+              // generic duplicate response. Operator policy failures must stay
+              // visible, so they use 422; blocked identities stay generic.
               if (error instanceof SignupsDisabledError) {
-                throw new APIError("FORBIDDEN", { message: error.message });
+                throw new APIError("UNPROCESSABLE_ENTITY", { message: error.message });
               }
               if (error instanceof BootstrapAuthorizationError) {
-                throw new APIError("FORBIDDEN", { message: error.message });
+                throw new APIError("UNPROCESSABLE_ENTITY", { message: error.message });
               }
               if (error instanceof IdentityBlockedError) {
                 throw new APIError("FORBIDDEN", {
