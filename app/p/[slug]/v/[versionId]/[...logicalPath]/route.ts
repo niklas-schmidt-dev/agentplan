@@ -2,7 +2,9 @@ import {
   contentHeaders,
   contentNotFound,
   HTML_SANDBOX,
+  isPrintRequest,
   MEDIA_SANDBOX,
+  PRINT_QUERY_PARAM,
   storedContentResponse,
 } from "@/lib/http/content-response";
 import { uuidSchema } from "@/lib/validation/api";
@@ -106,13 +108,18 @@ async function resolveBundleFile(req: Request, params: Awaited<Params["params"]>
 export async function GET(req: Request, { params }: Params): Promise<Response> {
   const file = await resolveBundleFile(req, await params);
   if (!file) return contentNotFound();
+  // Only the entry document is printable; asset requests ignore the flag.
+  const print = file.isHtml && isPrintRequest(req);
   if (file.redirectLocation) {
     const headers = contentHeaders(file.isHtml ? HTML_SANDBOX : MEDIA_SANDBOX);
-    headers.set("Location", file.redirectLocation);
+    headers.set(
+      "Location",
+      print ? `${file.redirectLocation}?${PRINT_QUERY_PARAM}=1` : file.redirectLocation,
+    );
     headers.set("Cache-Control", "private, no-store");
     return new Response(null, { status: 307, headers });
   }
-  return storedContentResponse(req, file);
+  return storedContentResponse(req, file, { print });
 }
 
 export const HEAD = GET;
