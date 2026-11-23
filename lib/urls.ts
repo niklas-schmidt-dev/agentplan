@@ -43,3 +43,32 @@ export function draftPrintPath(slug: string, versionId: string): string {
 export function draftVersionUrl(slug: string, versionId: string): string {
   return `${appUrl()}${draftVersionPath(slug, versionId)}`;
 }
+
+const RETURN_PATH_BASE = "http://return-path.invalid";
+
+/**
+ * Accepts only a same-origin path (e.g. `/p/slug`) to continue to after
+ * sign-in. Absolute, protocol-relative, and backslash forms are rejected so a
+ * `?next=` parameter can never become an open redirect.
+ */
+export function safeReturnPath(value: unknown): string | undefined {
+  if (typeof value !== "string" || !value.startsWith("/") || value.startsWith("//")) {
+    return undefined;
+  }
+  if (/[\\\u0000-\u001f\u007f]/.test(value)) return undefined;
+  try {
+    const url = new URL(value, RETURN_PATH_BASE);
+    // Dot segments can normalize "/.//host" into a protocol-relative "//host".
+    // Better Auth also rejects encoded separators in a relative callbackURL.
+    if (
+      url.origin !== RETURN_PATH_BASE ||
+      url.pathname.startsWith("//") ||
+      /%2f|%5c/i.test(url.pathname)
+    ) {
+      return undefined;
+    }
+    return `${url.pathname}${url.search}${url.hash}`;
+  } catch {
+    return undefined;
+  }
+}

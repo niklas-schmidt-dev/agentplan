@@ -28,8 +28,11 @@ The core security invariants are:
    Cloudflare R2 bucket), regardless of draft visibility. Visibility is an
    application-level authorization decision made server-side on every request.
    Private drafts return `404` to non-owners and are served with
-   `Cache-Control: private, no-store`. The Blob adapter explicitly requests
-   private access and fails closed when connected to a public store.
+   `Cache-Control: private, no-store`. The viewer's 404 page is identical for
+   missing, expired, deleted, and private drafts; its sign-in prompt depends
+   only on the visitor's own session, and `/login?next=` accepts same-origin
+   paths only. The Blob adapter explicitly requests private access and fails
+   closed when connected to a public store.
 3. **Direct media capabilities expose staging keys only.** Signed PUT URLs are
    short-lived and bound to one key. Completion copies to an unexposed final key,
    then validates magic bytes, MIME, exact size, image dimensions, and SHA-256

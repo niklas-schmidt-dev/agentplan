@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { expect, test } from "@playwright/test";
 import { readProbeResults, signUp, uploadDraft } from "./helpers";
 
@@ -130,6 +131,57 @@ test.describe("hostile HTML isolation", () => {
     expect(shell.status()).toBe(404);
     const content = await anon.request.get(`/p/${draft.slug}/content`);
     expect(content.status()).toBe(404);
+    await anon.close();
+  });
+
+  test("private and missing drafts share one 404 that offers sign-in back to the URL", async ({
+    page,
+    browser,
+  }) => {
+    const owner = await signUp(page.request);
+    const draft = await uploadDraft(page.request, "<!doctype html><h1>owner only</h1>", {
+      title: "Signed-out owner",
+      visibility: "private",
+    });
+
+    const anon = await browser.newContext();
+    const visitor = await anon.newPage();
+    const missing = await visitor.goto("/p/does-not-exist-sign-in");
+    expect(missing?.status()).toBe(404);
+    const missingText = await visitor.locator("main").innerText();
+    const missingTitle = await visitor.title();
+
+    const versionPath = `/p/${draft.slug}/v/${randomUUID()}`;
+    expect((await visitor.goto(versionPath))?.status()).toBe(404);
+    await expect(visitor.getByRole("link", { name: "sign in", exact: true })).toHaveAttribute(
+      "href",
+      `/login?next=${encodeURIComponent(versionPath)}`,
+    );
+
+    const shell = await visitor.goto(`/p/${draft.slug}`);
+    expect(shell?.status()).toBe(404);
+    // The signed-out hint depends only on the visitor's session, so a private
+    // draft must be indistinguishable from a URL that never existed.
+    expect(await visitor.locator("main").innerText()).toBe(missingText);
+    expect(await visitor.title()).toBe(missingTitle);
+    await expect(visitor.getByRole("heading", { name: "404" })).toBeVisible();
+    await expect(visitor.getByText("You’re not signed in — that may be why.")).toBeVisible();
+
+    await visitor.getByRole("link", { name: "sign in", exact: true }).click();
+    await expect(visitor).toHaveURL(`/login?next=${encodeURIComponent(`/p/${draft.slug}`)}`);
+    await visitor.getByLabel("email", { exact: true }).fill(owner.email);
+    await visitor.getByLabel("password", { exact: true }).fill("e2e-password-123");
+    await visitor.getByRole("button", { name: "sign in", exact: true }).click();
+    await expect(visitor).toHaveURL(`/p/${draft.slug}`);
+    await expect(visitor.locator("iframe")).toHaveAttribute("title", draft.title);
+
+    const signedInMissing = await visitor.goto("/p/does-not-exist-sign-in");
+    expect(signedInMissing?.status()).toBe(404);
+    await expect(visitor.getByText("You’re not signed in — that may be why.")).toHaveCount(0);
+    await expect(visitor.getByRole("link", { name: "go to dashboard →" })).toBeVisible();
+
+    await visitor.goto("/login?next=https://evil.example/");
+    await expect(visitor).toHaveURL(/\/dashboard$/);
     await anon.close();
   });
 });
