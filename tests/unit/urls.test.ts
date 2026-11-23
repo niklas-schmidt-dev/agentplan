@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { appUrl } from "@/lib/urls";
+import { appUrl, safeReturnPath } from "@/lib/urls";
 
 describe("appUrl", () => {
   afterEach(() => vi.unstubAllEnvs());
@@ -29,5 +29,31 @@ describe("appUrl", () => {
     vi.stubEnv("VERCEL_PROJECT_PRODUCTION_URL", "agentplan.vercel.app");
 
     expect(appUrl()).toBe("https://agentplan-preview.vercel.app");
+  });
+});
+
+describe("safeReturnPath", () => {
+  it("keeps same-origin paths with their query and hash", () => {
+    expect(safeReturnPath("/p/abc123")).toBe("/p/abc123");
+    expect(safeReturnPath("/p/abc/v/123?x=1#top")).toBe("/p/abc/v/123?x=1#top");
+  });
+
+  it.each([
+    undefined,
+    ["/p/abc"],
+    "",
+    "p/abc",
+    "https://evil.example/p/abc",
+    "//evil.example",
+    "/.//evil.example",
+    "/a/..//evil.example",
+    "/%2e//evil.example",
+    "/p/archived%2Fcopy",
+    "/p/a%5cb",
+    "/\\evil.example",
+    "/\tevil.example",
+    "javascript:alert(1)",
+  ])("rejects %j", (value) => {
+    expect(safeReturnPath(value)).toBeUndefined();
   });
 });

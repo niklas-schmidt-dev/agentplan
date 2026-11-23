@@ -3,11 +3,17 @@
 import { useRouter } from "next/navigation";
 import { authClient } from "@/lib/auth/client";
 
-export function SignInButton({ label = "sign in with github" }: { label?: string }) {
+export function SignInButton({
+  label = "sign in with github",
+  callbackURL,
+}: {
+  label?: string;
+  callbackURL: string;
+}) {
   return (
     <button
       type="button"
-      onClick={() => authClient.signIn.social({ provider: "github", callbackURL: "/dashboard" })}
+      onClick={() => authClient.signIn.social({ provider: "github", callbackURL })}
       className="w-fit rounded-md border border-lime bg-lime px-4 py-2 font-mono text-sm font-medium text-canvas transition-colors hover:bg-lime-dim"
     >
       {label}

@@ -1,7 +1,6 @@
 "use client";
 
 import { useState } from "react";
-import { useRouter } from "next/navigation";
 import { SignInButton } from "@/components/auth-buttons";
 import { authClient } from "@/lib/auth/client";
 
@@ -12,12 +11,14 @@ export function AuthForm({
   emailDeliveryEnabled,
   githubEnabled,
   signupsEnabled,
+  returnTo,
 }: {
   emailDeliveryEnabled: boolean;
   githubEnabled: boolean;
   signupsEnabled: boolean;
+  /** Same-origin path validated by the login page; defaults to the dashboard there. */
+  returnTo: string;
 }) {
-  const router = useRouter();
   const [mode, setMode] = useState<"signin" | "signup">("signin");
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -39,9 +40,11 @@ export function AuthForm({
             email,
             password,
             name: name || email.split("@")[0] || email,
-            callbackURL: "/dashboard",
+            callbackURL: returnTo,
           })
-        : await authClient.signIn.email({ email, password });
+        : // Better Auth navigates to callbackURL on success and also uses it in
+          // the verification email it sends to an unverified account.
+          await authClient.signIn.email({ email, password, callbackURL: returnTo });
     setPending(false);
 
     if (authError) {
@@ -59,15 +62,13 @@ export function AuthForm({
       }
       return;
     }
-    router.push("/dashboard");
-    router.refresh();
   }
 
   return (
     <div className="flex flex-col gap-5">
       {githubEnabled ? (
         <>
-          <SignInButton label="continue with github" />
+          <SignInButton label="continue with github" callbackURL={returnTo} />
           <div className="flex items-center gap-3 font-mono text-xs text-ink-faint">
             <span className="h-px flex-1 bg-edge" />
             or with email

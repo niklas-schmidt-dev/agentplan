@@ -5,12 +5,18 @@ import { isGithubConfigured } from "@/lib/auth/auth";
 import { isEmailDeliveryConfigured } from "@/lib/auth/email";
 import { getOptionalUser } from "@/lib/auth/session";
 import { getSignupsEnabled } from "@/lib/settings/service";
+import { safeReturnPath } from "@/lib/urls";
 
 export const metadata = { title: "Sign in" };
 
-export default async function LoginPage() {
+export default async function LoginPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ next?: string | string[] }>;
+}) {
+  const returnTo = safeReturnPath((await searchParams).next) ?? "/dashboard";
   const user = await getOptionalUser();
-  if (user) redirect("/dashboard");
+  if (user) redirect(returnTo);
   const signupsEnabled = await getSignupsEnabled();
 
   return (
@@ -23,6 +29,7 @@ export default async function LoginPage() {
         emailDeliveryEnabled={isEmailDeliveryConfigured()}
         githubEnabled={isGithubConfigured()}
         signupsEnabled={signupsEnabled}
+        returnTo={returnTo}
       />
     </main>
   );
